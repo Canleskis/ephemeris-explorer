@@ -1,0 +1,44 @@
+{
+    "Solar System": {
+        "Sun": {
+            "Mercury": {},
+            "Venus": {},
+            "Earth": {
+                "Moon": {},
+                "Ship": {}
+            },
+            "Mars": {
+                "Phobos": {},
+                "Deimos": {}
+            },
+            "Jupiter": {
+                "Io": {},
+                "Europa": {},
+                "Ganymede": {},
+                "Callisto": {}
+            },
+            "Saturn": {
+                "Mimas": {},
+                "Enceladus": {},
+                "Tethys": {},
+                "Dione": {},
+                "Rhea": {},
+                "Titan": {},
+                "Iapetus": {}
+            },
+            "Uranus": {
+                "Miranda": {},
+                "Ariel": {},
+                "Umbriel": {},
+                "Titania": {},
+                "Oberon": {}
+            },
+            "Neptune": {
+                "Triton": {}
+            },
+            "Pluto": {
+                "Charon": {}
+            }
+        }
+    }
+}

@@ -1,0 +1,9 @@
+[physical]
+radii = [2440.53, 2440.53, 2438.26]
+
+[material]
+base_color_texture = "textures/mercury/base.jpg"
+
+[orbit]
+reference = "Sun"
+color = "#64646480"

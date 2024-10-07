@@ -1,0 +1,37 @@
+[package]
+name = "Orbitism"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "0.14.2", features = ["jpeg"] }
+bevy_egui = { version = "0.29.0", features = ["immutable_ctx"]}
+egui_extras = { version = "0.28.1" }
+big_space = "0.7.0"
+bevy_file_dialog = "0.6.0"
+bevy-inspector-egui = "0.26.0"
+
+particular = { path = "../particular-copy/particular", features = ["parallel", "glam"] }
+rand = "0"
+humantime = "2"
+crossbeam-channel = "0.5"
+polynomial = "0.2.6"
+bacon-sci = "0.16.1"
+# anise = "0.3"
+hifitime = "4.0.0-alpha"
+rayon = "1"
+poly_it = { version = "0.2.3", features = ["smallvec", "tinyvec", "serde"] }
+smallvec = { version = "1.13.2", features = ["serde"] }
+thousands = "0.2.0"
+num = "0.4.3"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = { version = "2", features = ["serde"] }
+toml = "0.8"
+thiserror = "1.0.63"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,6 @@
+[physical]
+radii = [13.0, 11.4, 9.1]
+
+[orbit]
+reference = "Mars"
+color = "#c8c8c880"

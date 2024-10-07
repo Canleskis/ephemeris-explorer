@@ -1,0 +1,14 @@
+[physical]
+radii = [695700.0, 695700.0, 695700.0]
+
+[material]
+base_color_texture = "textures/sun/base.jpg"
+emissive = "#FFFFFF"
+emissive_intensity = 20.0
+emissive_texture = "textures/sun/emissive.jpg"
+
+[light]
+color = "#FFFFFF"
+
+[orbit]
+color = "#fcba0380"

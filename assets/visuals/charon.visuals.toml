@@ -1,0 +1,6 @@
+[physical]
+radii = [606, 606, 606]
+
+[orbit]
+reference = "Pluto"
+color = "#c8c8c880"

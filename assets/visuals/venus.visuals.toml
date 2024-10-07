@@ -1,0 +1,9 @@
+[physical]
+radii = [6051.8, 6051.8, 6051.8]
+
+[material]
+base_color_texture = "textures/venus/base.jpg"
+
+[orbit]
+reference = "Sun"
+color = "#f2ddb180"

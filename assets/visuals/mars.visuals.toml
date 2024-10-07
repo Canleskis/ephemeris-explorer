@@ -1,0 +1,9 @@
+[physical]
+radii = [3396.19, 3396.19, 3376.2]
+
+[material]
+base_color_texture = "textures/mars/base.jpg"
+
+[orbit]
+reference = "Sun"
+color = "#993d0080"

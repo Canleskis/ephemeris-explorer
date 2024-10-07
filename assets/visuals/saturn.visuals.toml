@@ -1,0 +1,9 @@
+[physical]
+radii = [60268, 60268, 54364]
+
+[material]
+base_color_texture = "textures/saturn/base.jpg"
+
+[orbit]
+reference = "Sun"
+color = "#b08f3680"

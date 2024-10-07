@@ -1,0 +1,9 @@
+[physical]
+radii = [2631.2, 2631.2, 2631.2]
+
+[material]
+base_color_texture = "textures/jupiter/ganymede/base.jpg"
+
+[orbit]
+reference = "Jupiter"
+color = "#c8c8c880"

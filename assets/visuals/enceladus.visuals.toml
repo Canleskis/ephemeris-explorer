@@ -1,0 +1,9 @@
+[physical]
+radii = [256.6, 251.4, 248.3]
+
+[material]
+base_color_texture = "textures/saturn/enceladus/base.jpg"
+
+[orbit]
+reference = "Saturn"
+color = "#c8c8c880"

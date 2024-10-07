@@ -1,0 +1,6 @@
+[physical]
+radii = [1352.6, 1352.6, 1352.6]
+
+[orbit]
+reference = "Neptune"
+color = "#c8c8c880"

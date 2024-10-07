@@ -1,0 +1,6 @@
+[physical]
+radii = [584.7, 584.7, 584.7]
+
+[orbit]
+reference = "Uranus"
+color = "#c8c8c880"

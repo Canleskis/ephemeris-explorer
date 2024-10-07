@@ -1,0 +1,9 @@
+[physical]
+radii = [2410.3, 2410.3, 2410.3]
+
+[material]
+base_color_texture = "textures/jupiter/callisto/base.jpg"
+
+[orbit]
+reference = "Jupiter"
+color = "#c8c8c880"

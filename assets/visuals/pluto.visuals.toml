@@ -1,0 +1,6 @@
+[physical]
+radii = [1188.3, 1188.3, 1188.3]
+
+[orbit]
+reference = "Sun"
+color = "#a08c82"

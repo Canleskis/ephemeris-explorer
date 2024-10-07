@@ -1,0 +1,9 @@
+[physical]
+radii = [1737.4, 1737.4, 1737.4]
+
+[material]
+base_color_texture = "textures/earth/moon/base.jpg"
+
+[orbit]
+reference = "Earth"
+color = "#c8c8c880"

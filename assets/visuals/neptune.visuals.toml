@@ -1,0 +1,9 @@
+[physical]
+radii = [24764, 24764, 24341]
+
+[material]
+base_color_texture = "textures/neptune/base.jpg"
+
+[orbit]
+reference = "Sun"
+color = "#36689680"

@@ -1,0 +1,6 @@
+[physical]
+radii = [2575.15, 2574.78, 2574.47]
+
+[orbit]
+reference = "Saturn"
+color = "#c8c8c880"

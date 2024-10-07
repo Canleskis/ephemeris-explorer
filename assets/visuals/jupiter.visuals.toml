@@ -1,0 +1,9 @@
+[physical]
+radii = [71492, 71492, 66854]
+
+[material]
+base_color_texture = "textures/jupiter/base.jpg"
+
+[orbit]
+reference = "Sun"
+color = "#b07f3580"

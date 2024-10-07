@@ -1,0 +1,134 @@
+{
+    "div": 8,
+    "dt": "10 minutes",
+    "settings": {
+        "Sun": {
+            "degree": 6,
+            "count": 450
+        },
+        "Ship": {
+            "degree": 6,
+            "count": 1
+        },
+        "Mercury": {
+            "degree": 7,
+            "count": 72
+        },
+        "Venus": {
+            "degree": 7,
+            "count": 360
+        },
+        "Earth": {
+            "degree": 7,
+            "count": 90
+        },
+        "Moon": {
+            "degree": 6,
+            "count": 36
+        },
+        "Mars": {
+            "degree": 7,
+            "count": 450
+        },
+        "Phobos": {
+            "degree": 6,
+            "count": 1
+        },
+        "Deimos": {
+            "degree": 7,
+            "count": 6
+        },
+        "Jupiter": {
+            "degree": 7,
+            "count": 18
+        },
+        "Io": {
+            "degree": 6,
+            "count": 4
+        },
+        "Europa": {
+            "degree": 6,
+            "count": 7
+        },
+        "Ganymede": {
+            "degree": 6,
+            "count": 12
+        },
+        "Callisto": {
+            "degree": 6,
+            "count": 22
+        },
+        "Saturn": {
+            "degree": 6,
+            "count": 30
+        },
+        "Mimas": {
+            "degree": 7,
+            "count": 3
+        },
+        "Enceladus": {
+            "degree": 7,
+            "count": 4
+        },
+        "Tethys": {
+            "degree": 6,
+            "count": 4
+        },
+        "Dione": {
+            "degree": 7,
+            "count": 7
+        },
+        "Rhea": {
+            "degree": 7,
+            "count": 11
+        },
+        "Titan": {
+            "degree": 6,
+            "count": 30
+        },
+        "Iapetus": {
+            "degree": 6,
+            "count": 72
+        },
+        "Uranus": {
+            "degree": 6,
+            "count": 30
+        },
+        "Ariel": {
+            "degree": 6,
+            "count": 7
+        },
+        "Umbriel": {
+            "degree": 6,
+            "count": 9
+        },
+        "Titania": {
+            "degree": 6,
+            "count": 18
+        },
+        "Oberon": {
+            "degree": 6,
+            "count": 30
+        },
+        "Miranda": {
+            "degree": 6,
+            "count": 4
+        },
+        "Neptune": {
+            "degree": 6,
+            "count": 36
+        },
+        "Triton": {
+            "degree": 6,
+            "count": 12
+        },
+        "Pluto": {
+            "degree": 6,
+            "count": 30
+        },
+        "Charon": {
+            "degree": 6,
+            "count": 24
+        }
+    }
+}

@@ -1,0 +1,13 @@
+debug/
+target/
+**/*.rs.bk
+*.pdb
+.cargo
+
+.timetracker
+.[Vv][Ss][Cc]ode*
+.idea
+
+.markdownlint.yml
+
+assets/skybox

@@ -1,0 +1,18 @@
+{
+    "div": 8,
+    "dt": "1 hour",
+    "settings": {
+        "Sun": {
+            "degree": 6,
+            "count": 75
+        },
+        "Earth": {
+            "degree": 7,
+            "count": 15
+        },
+        "Moon": {
+            "degree": 6,
+            "count": 6
+        }
+    }
+}
