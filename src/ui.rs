@@ -46,7 +46,13 @@ impl Plugin for UiPlugin {
                 .with_save_file::<ExportFile>(),
         )
         .add_event::<ExportSolarSystemEvent>()
-        .add_systems(First, (spawn_labels, despawn_labels).chain())
+        .add_systems(
+            PreUpdate,
+            (
+                (spawn_labels, despawn_labels).chain(),
+                BodyInfo::init.run_if(in_state(MainState::Running)),
+            ),
+        )
         .add_systems(
             Update,
             (
@@ -64,7 +70,7 @@ impl Plugin for UiPlugin {
                     ExportSettings::window,
                     PredictionPlanner::window,
                     EphemeridesDebug::window,
-                    body_info_window,
+                    BodyInfo::window,
                     limit_to_period,
                 ),
             )
@@ -308,6 +314,52 @@ impl History {
     }
 }
 
+#[expect(clippy::type_complexity)]
+struct ParsedTextEdit<'t, T> {
+    text: &'t mut String,
+    parsed: &'t mut T,
+    parse: Box<dyn 't + Fn(&str) -> Option<T>>,
+    format: Box<dyn 't + Fn(&T) -> String>,
+}
+
+impl<'t, T> ParsedTextEdit<'t, T> {
+    pub fn singleline(
+        text: &'t mut String,
+        parsed: &'t mut T,
+        parse: impl 't + Fn(&str) -> Option<T>,
+        format: impl 't + Fn(&T) -> String,
+    ) -> Self {
+        Self {
+            text,
+            parsed,
+            parse: Box::new(parse),
+            format: Box::new(format),
+        }
+    }
+}
+
+impl egui::Widget for ParsedTextEdit<'_, Epoch> {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let edit = ui.add(egui::TextEdit::singleline(self.text));
+
+        if let Some(val) = (self.parse)(self.text) {
+            *self.parsed = val;
+        } else if !edit.has_focus() {
+            *self.text = (self.format)(self.parsed);
+        }
+
+        edit
+    }
+}
+
+fn epoch_clamped_parser(min: Epoch, max: Epoch) -> impl Fn(&str) -> Option<Epoch> {
+    move |buf: &str| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
+}
+
+fn epoch_tai_formatter(t: &Epoch) -> String {
+    format!("{:x}", t)
+}
+
 fn time_controls(
     mut contexts: EguiContexts,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
@@ -325,7 +377,7 @@ fn time_controls(
     egui::TopBottomPanel::bottom("Time").show(ctx, |ui| {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().text_edit_width = 215.0;
-            let edit = ui.text_edit_singleline(&mut *buffer);
+            let edit = ui.add(egui::TextEdit::singleline(&mut *buffer));
 
             if edit.lost_focus() {
                 if let Ok(buffer) = Epoch::from_str(&buffer) {
@@ -404,7 +456,7 @@ fn time_controls(
     });
 }
 
-#[allow(unused)]
+#[expect(unused)]
 fn limit_to_period(
     config: Res<EphemerisPlotConfig>,
     mut query: Query<(&OrbitalPeriod, &mut EphemerisPlot)>,
@@ -414,7 +466,7 @@ fn limit_to_period(
     }
 }
 
-fn show_tree_query(
+fn show_tree(
     root: Entity,
     query: &Query<(Entity, &Name, Option<&hierarchy::Children>)>,
     default_open: impl Fn(usize) -> bool + Copy,
@@ -507,131 +559,184 @@ impl<T> EphemerisInfo<T> {
     }
 }
 
-fn body_info_window(
-    mut contexts: EguiContexts,
-    mut selected: ResMut<Selected>,
-    mut plot_query: Query<&mut EphemerisPlot>,
-    eph_time: Res<EphemeridesTime>,
-    query_trajectory: Query<&Trajectory>,
-    query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
-    root: Query<Entity, With<SystemRoot>>,
-) {
-    let mut open = selected.is_some();
+#[derive(Component)]
+struct BodyInfo {
+    plot_start_buffer: String,
+    plot_end_buffer: String,
+}
 
-    if let Some(selected) = **selected {
-        let Some(ctx) = contexts.try_ctx_mut() else {
-            return;
-        };
+impl BodyInfo {
+    fn init(
+        mut commands: Commands,
+        eph_time: Res<EphemeridesTime>,
+        query: Query<Entity, Added<EphemerisPlot>>,
+    ) {
+        for entity in &query {
+            commands.entity(entity).insert(Self {
+                plot_start_buffer: format!("{:x}", eph_time.start()),
+                plot_end_buffer: format!("{:x}", eph_time.end()),
+            });
+        }
+    }
 
-        let root = root.single();
+    fn window(
+        mut contexts: EguiContexts,
+        mut selected: ResMut<Selected>,
+        eph_time: Res<EphemeridesTime>,
+        query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
+        query_trajectory: Query<&Trajectory>,
+        mut query_plot: Query<(&mut EphemerisPlot, &mut Self)>,
+        root: Query<Entity, With<SystemRoot>>,
+    ) {
+        let mut open = selected.is_some();
 
-        let Ok(trajectory) = query_trajectory.get(selected) else {
-            return;
-        };
-        let Ok(mut plot) = plot_query.get_mut(selected) else {
-            return;
-        };
-        let Ok((entity, name, _)) = query_hierarchy.get(selected) else {
-            return;
-        };
+        if let Some(selected) = **selected {
+            let Some(ctx) = contexts.try_ctx_mut() else {
+                return;
+            };
 
-        egui::Window::new(name.as_str())
-            .id("Selected".into())
-            .open(&mut open)
-            .resizable(false)
-            .show(ctx, |ui| {
-                let reference_name = plot
-                    .reference
-                    .and_then(|r| query_hierarchy.get(r).ok())
-                    .map(|(_, name, _)| name.as_str())
-                    .unwrap_or("None");
-                egui::Grid::new("Ephemeris")
-                    .min_col_width(150.0)
-                    .show(ui, |ui| {
-                        let sv = trajectory
-                            .evaluate_state_vector(eph_time.current())
-                            .map(|sv| {
-                                sv - plot
-                                    .reference
-                                    .and_then(|r| query_trajectory.get(r).ok())
-                                    .and_then(|t| t.evaluate_state_vector(eph_time.current()))
-                                    .unwrap_or_default()
-                            });
-                        let position = sv.map(|sv| sv.position);
-                        let velocity = sv.map(|sv| sv.velocity);
-                        let distance = position.map(|pos| pos.length());
-                        let speed = velocity.map(|vel| vel.length());
+            let root = root.single();
 
-                        EphemerisInfo::new("Position", position)
-                            .hover_text(format!("Position relative to {}", reference_name))
-                            .show(ui, |ui, position| {
-                                ui.label(format!("x: {:.2} km", position.x));
-                                ui.label(format!("y: {:.2} km", position.y));
-                                ui.label(format!("z: {:.2} km", position.z));
-                            });
-                        EphemerisInfo::new("Velocity", velocity)
-                            .hover_text(format!("Velocity relative to {}", reference_name))
-                            .show(ui, |ui, velocity| {
-                                ui.label(format!("x: {:.2} km/s", velocity.x));
-                                ui.label(format!("y: {:.2} km/s", velocity.y));
-                                ui.label(format!("z: {:.2} km/s", velocity.z));
-                            });
+            let Ok((entity, name, _)) = query_hierarchy.get(selected) else {
+                return;
+            };
+            let Ok(trajectory) = query_trajectory.get(selected) else {
+                return;
+            };
+            let Ok((mut plot, mut info)) = query_plot.get_mut(selected) else {
+                return;
+            };
 
-                        ui.end_row();
+            egui::Window::new(name.as_str())
+                .id("Selected".into())
+                .open(&mut open)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    let reference_name = plot
+                        .reference
+                        .and_then(|r| query_hierarchy.get(r).ok())
+                        .map(|(_, name, _)| name.as_str())
+                        .unwrap_or("None");
 
-                        EphemerisInfo::new("Distance", distance)
-                            .hover_text(format!("Distance relative to {}", reference_name))
-                            .show(ui, |ui, distance| {
-                                ui.label(format!("{:.2} km", distance));
-                            });
-                        EphemerisInfo::new("Speed", speed)
-                            .hover_text(format!("Speed relative to {}", reference_name))
-                            .show(ui, |ui, speed| {
-                                ui.label(format!("{:.2} km/s", speed));
+                    ui.horizontal(|ui| {
+                        ui.label("Reference:");
+                        egui::ComboBox::from_id_source("Reference")
+                            .wrap_mode(egui::TextWrapMode::Extend)
+                            .selected_text(reference_name)
+                            .show_ui(ui, |ui| {
+                                show_tree(
+                                    root,
+                                    &query_hierarchy,
+                                    |_| true,
+                                    ui,
+                                    |ui, _, (ref_entity, ref_name, _), _| {
+                                        ui.horizontal(|ui| {
+                                            ui.add_enabled_ui(entity != ref_entity, |ui| {
+                                                ui.selectable_value(
+                                                    &mut plot.reference,
+                                                    Some(ref_entity),
+                                                    ref_name.as_str(),
+                                                )
+                                                .on_disabled_hover_text(
+                                                    "Cannot use itself as a reference",
+                                                );
+                                            });
+                                            ui.add_space(10.0);
+                                        });
+                                    },
+                                );
                             });
                     });
 
-                ui.add_space(10.0);
-
-                ui.horizontal(|ui| {
-                    ui.label("Reference:");
-                    egui::ComboBox::from_id_source("Reference")
-                        .wrap_mode(egui::TextWrapMode::Extend)
-                        .selected_text(reference_name)
-                        .show_ui(ui, |ui| {
-                            show_tree_query(
-                                root,
-                                &query_hierarchy,
-                                |_| true,
-                                ui,
-                                |ui, _, (ref_entity, ref_name, _), _| {
-                                    ui.horizontal(|ui| {
-                                        ui.add_enabled_ui(entity != ref_entity, |ui| {
-                                            ui.selectable_value(
-                                                &mut plot.reference,
-                                                Some(ref_entity),
-                                                ref_name.as_str(),
-                                            )
-                                            .on_disabled_hover_text(
-                                                "Cannot use itself as a reference",
-                                            );
-                                        });
-                                        ui.add_space(10.0);
+                    ui.separator();
+                    ui.heading("Info");
+                    egui::Grid::new("Ephemeris")
+                        .min_col_width(150.0)
+                        .show(ui, |ui| {
+                            let sv =
+                                trajectory
+                                    .evaluate_state_vector(eph_time.current())
+                                    .map(|sv| {
+                                        sv - plot
+                                            .reference
+                                            .and_then(|r| query_trajectory.get(r).ok())
+                                            .and_then(|t| {
+                                                t.evaluate_state_vector(eph_time.current())
+                                            })
+                                            .unwrap_or_default()
                                     });
-                                },
-                            );
+                            let position = sv.map(|sv| sv.position);
+                            let velocity = sv.map(|sv| sv.velocity);
+                            let distance = position.map(|pos| pos.length());
+                            let speed = velocity.map(|vel| vel.length());
+
+                            EphemerisInfo::new("Position", position)
+                                .hover_text(format!("Position relative to {}", reference_name))
+                                .show(ui, |ui, position| {
+                                    ui.label(format!("x: {:.2} km", position.x));
+                                    ui.label(format!("y: {:.2} km", position.y));
+                                    ui.label(format!("z: {:.2} km", position.z));
+                                });
+                            EphemerisInfo::new("Velocity", velocity)
+                                .hover_text(format!("Velocity relative to {}", reference_name))
+                                .show(ui, |ui, velocity| {
+                                    ui.label(format!("x: {:.2} km/s", velocity.x));
+                                    ui.label(format!("y: {:.2} km/s", velocity.y));
+                                    ui.label(format!("z: {:.2} km/s", velocity.z));
+                                });
+                            ui.end_row();
+                            EphemerisInfo::new("Distance", distance)
+                                .hover_text(format!("Distance relative to {}", reference_name))
+                                .show(ui, |ui, distance| {
+                                    ui.label(format!("{:.2} km", distance));
+                                });
+                            EphemerisInfo::new("Speed", speed)
+                                .hover_text(format!("Speed relative to {}", reference_name))
+                                .show(ui, |ui, speed| {
+                                    ui.label(format!("{:.2} km/s", speed));
+                                });
                         });
-                });
 
-                ui.horizontal(|ui| {
-                    ui.label("Resolution:");
-                    ui.add(egui::Slider::new(&mut plot.threshold, 0.1..=10.0).logarithmic(true));
-                });
-            });
-    }
+                    ui.add_space(10.0);
 
-    if selected.is_some() && !open {
-        **selected = None;
+                    ui.separator();
+                    ui.heading("Plotting");
+
+                    let end = plot.end;
+                    ui.horizontal(|ui| {
+                        ui.label("Start: ");
+                        ui.add(ParsedTextEdit::singleline(
+                            &mut info.plot_start_buffer,
+                            &mut plot.start,
+                            epoch_clamped_parser(eph_time.start(), end),
+                            epoch_tai_formatter,
+                        ));
+                    });
+                    let start = plot.start;
+                    ui.horizontal(|ui| {
+                        ui.label("End:   ");
+                        ui.add(ParsedTextEdit::singleline(
+                            &mut info.plot_end_buffer,
+                            &mut plot.end,
+                            epoch_clamped_parser(start, eph_time.end()),
+                            epoch_tai_formatter,
+                        ));
+                    });
+
+                    ui.add_space(5.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Resolution:");
+                        ui.add(
+                            egui::Slider::new(&mut plot.threshold, 0.1..=10.0).logarithmic(true),
+                        );
+                    });
+                });
+        }
+
+        if selected.is_some() && !open {
+            **selected = None;
+        }
     }
 }
 
@@ -652,7 +757,7 @@ fn solar_system_explorer(
     egui::SidePanel::left("Explorer")
         .resizable(true)
         .show(ctx, |ui| {
-            show_tree_query(
+            show_tree(
                 root,
                 &query_hierarchy,
                 |_| true,
@@ -723,44 +828,6 @@ fn solar_system_explorer(
         });
 }
 
-#[expect(clippy::type_complexity)]
-struct ParsedTextEdit<'t, T> {
-    text: &'t mut String,
-    parsed: &'t mut T,
-    parse: Box<dyn 't + Fn(&str) -> Option<T>>,
-    format: Box<dyn 't + Fn(&T) -> String>,
-}
-
-impl<'t, T> ParsedTextEdit<'t, T> {
-    pub fn singleline(
-        text: &'t mut String,
-        parsed: &'t mut T,
-        parse: impl 't + Fn(&str) -> Option<T>,
-        format: impl 't + Fn(&T) -> String,
-    ) -> Self {
-        Self {
-            text,
-            parsed,
-            parse: Box::new(parse),
-            format: Box::new(format),
-        }
-    }
-}
-
-impl egui::Widget for ParsedTextEdit<'_, Epoch> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let edit = ui.text_edit_singleline(self.text);
-
-        if let Some(val) = (self.parse)(self.text) {
-            *self.parsed = val;
-        } else if !edit.has_focus() {
-            *self.text = (self.format)(self.parsed);
-        }
-
-        edit
-    }
-}
-
 #[derive(Default, Resource)]
 struct ExportSettings;
 
@@ -819,10 +886,6 @@ impl ExportSettings {
             ui.add_space(5.0);
 
             ui.spacing_mut().text_edit_width = 300.0;
-            let parse = |min, max| {
-                move |buf: &str| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
-            };
-            let format_tai = |t: &Epoch| format!("{:x}", t);
             match &mut export[*current] {
                 ExportType::State { epoch } => {
                     ui.horizontal(|ui| {
@@ -830,8 +893,8 @@ impl ExportSettings {
                         ui.add(ParsedTextEdit::singleline(
                             &mut epoch_buffer,
                             epoch,
-                            parse(eph_time.start(), eph_time.end()),
-                            format_tai,
+                            epoch_clamped_parser(eph_time.start(), eph_time.end()),
+                            epoch_tai_formatter,
                         ));
                     });
                 }
@@ -841,8 +904,8 @@ impl ExportSettings {
                         ui.add(ParsedTextEdit::singleline(
                             &mut start_buffer,
                             start,
-                            parse(eph_time.start(), *end),
-                            format_tai,
+                            epoch_clamped_parser(eph_time.start(), *end),
+                            epoch_tai_formatter,
                         ));
                     });
                     ui.horizontal(|ui| {
@@ -850,15 +913,16 @@ impl ExportSettings {
                         ui.add(ParsedTextEdit::singleline(
                             &mut end_buffer,
                             end,
-                            parse(*start, eph_time.end()),
-                            format_tai,
+                            epoch_clamped_parser(*start, eph_time.end()),
+                            epoch_tai_formatter,
                         ))
                     });
                 }
             }
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                show_tree_query(
+                ui.set_min_width(ui.available_width());
+                show_tree(
                     root,
                     &query_hierarchy,
                     |i| i != 0,
@@ -1067,14 +1131,15 @@ impl PredictionPlanner {
                 ui.horizontal(|ui| {
                     ui.label("Start time:");
                     ui.add_enabled_ui(false, |ui| {
-                        ui.text_edit_singleline(&mut format!("{:x}", eph_time.start()));
+                        let mut start_buffer = format!("{:x}", eph_time.start());
+                        ui.add(egui::TextEdit::singleline(&mut start_buffer))
                     })
                 });
 
                 let edit = ui.horizontal(|ui| {
                     ui.label("End time:  ");
                     ui.add_enabled_ui(prediction.is_none(), |ui| {
-                        ui.text_edit_singleline(&mut *end_buffer)
+                        ui.add(egui::TextEdit::singleline(&mut *end_buffer))
                     })
                     .inner
                 });
