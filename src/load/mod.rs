@@ -69,7 +69,8 @@ impl Plugin for LoadingPlugin {
 
         app.add_systems(
             Update,
-            ephemerides_progress_text.run_if(in_state(LoadingStage::Ephemerides)),
+            (ephemerides_progress_text, bypass_ephemerides_loading)
+                .run_if(in_state(LoadingStage::Ephemerides)),
         )
         .add_systems(
             OnEnter(LoadingStage::Ephemerides),
@@ -417,5 +418,14 @@ fn true_for_frames(frames: usize) -> impl Fn(Local<usize>) -> bool {
     move |mut completed: Local<usize>| {
         *completed += 1;
         *completed > frames
+    }
+}
+
+fn bypass_ephemerides_loading(
+    kb: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<NextState<MainState>>,
+) {
+    if kb.just_pressed(KeyCode::Escape) {
+        state.set(MainState::Running);
     }
 }
