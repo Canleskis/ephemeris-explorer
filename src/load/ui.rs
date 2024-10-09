@@ -1,4 +1,4 @@
-use crate::GameState;
+use crate::MainState;
 
 use bevy::prelude::*;
 
@@ -6,7 +6,7 @@ pub struct LoadingScreenPlugin;
 
 impl Plugin for LoadingScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameState::Loading), add_loading_screen);
+        app.add_systems(OnEnter(MainState::Loading), add_loading_screen);
     }
 }
 
@@ -17,11 +17,20 @@ pub struct LoadingScreen;
 pub struct LoadingText;
 
 fn add_loading_screen(mut commands: Commands) {
-    commands.spawn((StateScoped(GameState::Loading), Camera3dBundle::default()));
+    commands.spawn((
+        StateScoped(MainState::Loading),
+        Camera3dBundle {
+            camera: Camera {
+                order: isize::MAX,
+                ..default()
+            },
+            ..default()
+        },
+    ));
 
     commands
         .spawn((
-            StateScoped(GameState::Loading),
+            StateScoped(MainState::Loading),
             NodeBundle {
                 style: Style {
                     width: Val::Percent(100.0),
@@ -49,7 +58,7 @@ fn add_loading_screen(mut commands: Commands) {
         });
 }
 
-pub fn update_loading_text<A: Asset>(
+pub fn text_on_load<A: Asset>(
     asset_server: Res<AssetServer>,
     mut events: EventReader<AssetEvent<A>>,
     mut query: Query<&mut Text, With<LoadingText>>,

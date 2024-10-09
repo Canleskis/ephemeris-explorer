@@ -5,18 +5,21 @@ pub use solar_system::*;
 pub use ui::*;
 
 use crate::{
-    camera::{CanFollow, OrbitCamera},
-    ephemerides::{EphemeridesComputeSettings, EphemerisBuilder, Trajectory, MAX_DIV},
+    camera::{CanFollow, Followed, OrbitCamera},
+    ephemerides::{
+        ComputeEphemeridesEvent, EphemeridesComputeSettings, EphemerisBuilder, PredictionTracking,
+        Trajectory, MAX_DIV,
+    },
     floating_origin::{
         BigReferenceFrameBundle, BigSpace, BigSpaceRootBundle, FloatingOrigin, GridCell,
     },
     hierarchy,
     plot::EphemerisPlot,
-    selection::{Clickable, Followed},
+    selection::Clickable,
     starlight::Star,
     time::EphemeridesTime,
-    ui::{Labelled, OrbitalPeriod},
-    GameState, SystemRoot,
+    ui::{Labelled, OrbitalPeriod, UiCamera},
+    MainState, SystemRoot,
 };
 
 use bevy::asset::RecursiveDependencyLoadState;
@@ -24,33 +27,59 @@ use bevy::core_pipeline::Skybox;
 use bevy::prelude::*;
 use hifitime::{Duration, Epoch};
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, SubStates)]
+#[source(MainState = MainState::Loading)]
+pub enum LoadingStage {
+    #[default]
+    Assets,
+    Ephemerides,
+}
+
 pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(LoadSolarSytemPlugin)
+        app.add_plugins(LoadingScreenPlugin)
+            .add_sub_state::<LoadingStage>()
+            .add_plugins(LoadSolarSytemPlugin)
             .add_event::<LoadSolarSystemEvent>()
-            .add_systems(
-                First,
-                (
-                    handle_load_events,
-                    finish_loading.run_if(
-                        in_state(GameState::Loading)
-                            .and_then(bodies_loaded)
-                            .and_then(eph_settings_loaded)
-                            .and_then(hierarchy_loaded)
-                            .and_then(skybox_loaded),
-                    ),
-                )
-                    .chain(),
-            )
-            .add_systems(
-                OnEnter(GameState::Running),
-                (spawn_bodies, setup_camera, default_follow).chain(),
-            );
-        app.add_plugins(LoadingScreenPlugin).add_systems(
+            .add_systems(First, handle_load_events);
+
+        app.add_systems(
             Update,
-            update_loading_text::<Image>.run_if(in_state(GameState::Loading)),
+            text_on_load::<Image>.run_if(in_state(LoadingStage::Assets)),
+        )
+        .add_systems(
+            First,
+            finish_assets_loading
+                .after(handle_load_events)
+                .run_if(
+                    in_state(LoadingStage::Assets)
+                        .and_then(bodies_loaded)
+                        .and_then(eph_settings_loaded)
+                        .and_then(hierarchy_loaded)
+                        .and_then(skybox_loaded),
+                )
+                .chain(),
+        )
+        .add_systems(
+            OnExit(LoadingStage::Assets),
+            (spawn_bodies, setup_camera, default_follow).chain(),
+        );
+
+        app.add_systems(
+            Update,
+            ephemerides_progress_text.run_if(in_state(LoadingStage::Ephemerides)),
+        )
+        .add_systems(
+            OnEnter(LoadingStage::Ephemerides),
+            compute_default_ephemerides,
+        )
+        .add_systems(
+            First,
+            finish_ephemerides_computing
+                .after(handle_load_events)
+                .run_if(in_state(LoadingStage::Ephemerides).and_then(ephemerides_computed)),
         );
     }
 }
@@ -88,7 +117,7 @@ impl LoadSolarSystemEvent {
 pub fn handle_load_events(
     mut commands: Commands,
     mut events: EventReader<LoadSolarSystemEvent>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: ResMut<NextState<MainState>>,
 ) {
     for event in events.read() {
         commands.insert_resource(UniqueAssetHandle(event.state.clone()));
@@ -99,16 +128,14 @@ pub fn handle_load_events(
             handle: event.skybox.clone(),
         });
 
-        next_state.set(GameState::Loading);
+        next_state.set(MainState::Loading);
     }
 }
 
-fn finish_loading(world: &mut World) {
+fn finish_assets_loading(world: &mut World) {
     world
-        .resource_mut::<NextState<GameState>>()
-        .set(GameState::Running);
-
-    world.run_schedule(StateTransition)
+        .resource_mut::<NextState<LoadingStage>>()
+        .set(LoadingStage::Ephemerides);
 }
 
 fn bodies_loaded(solar_system: UniqueAsset<SolarSystem>) -> bool {
@@ -173,7 +200,7 @@ fn spawn_bodies(
     let (name, tree) = hierachy_tree.first().unwrap();
     let root = commands
         .spawn((
-            StateScoped(GameState::Running),
+            StateScoped(MainState::Running),
             Name::new(name.to_string()),
             BigSpaceRootBundle::default(),
             SystemRoot,
@@ -214,8 +241,6 @@ fn spawn_bodies(
             let radius = ((visual.radii.x + visual.radii.y + visual.radii.z) / 3.0) as f32;
             let granule = eph_settings.granule(name, MAX_DIV - 1);
 
-            // println!("{}: {}", name, granule);
-
             let mut entity = commands.spawn((
                 // No state scope needed as it is always a child of the root.
                 Name::new(name.clone()),
@@ -223,7 +248,10 @@ fn spawn_bodies(
                     transform: Transform::from_translation(body.position.as_vec3()),
                     ..default()
                 },
-                Clickable { radius },
+                Clickable {
+                    radius,
+                    index: depth + 1,
+                },
                 CanFollow {
                     min_distance: radius as f64 * 1.05,
                     max_distance: 5e10,
@@ -312,7 +340,6 @@ fn setup_camera(
     skybox: Res<SkyboxHandle>,
     root: Query<Entity, With<BigSpace>>,
 ) {
-    let root = root.single();
     commands
         .spawn((
             // No state scope needed as it is always a child of the root.
@@ -334,14 +361,15 @@ fn setup_camera(
             },
             FloatingOrigin,
             GridCell::default(),
-            OrbitCamera::default().with_distance(2e4),
+            OrbitCamera::default().with_distance(5e4),
             big_space::camera::CameraController::default()
                 .with_speed_bounds([1e-17, 10e35])
                 .with_smoothness(0.0, 0.0)
                 .with_speed(1.0),
             bevy::core_pipeline::bloom::BloomSettings::NATURAL,
+            UiCamera,
         ))
-        .set_parent(root);
+        .set_parent(root.single());
 }
 
 fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>) {
@@ -349,5 +377,45 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
         if name.contains("Earth") {
             commands.insert_resource(Followed(entity));
         }
+    }
+}
+
+fn ephemerides_progress_text(
+    mut query: Query<&mut Text, With<LoadingText>>,
+    prediction: Query<&PredictionTracking>,
+) {
+    if let Ok(progress) = prediction.get_single().map(PredictionTracking::progress) {
+        for mut text in query.iter_mut() {
+            text.sections[0].value = format!("Computing ephemerides: {:.0}%", progress * 100.0);
+        }
+    }
+}
+
+fn finish_ephemerides_computing(world: &mut World) {
+    world
+        .resource_mut::<NextState<MainState>>()
+        .set(MainState::Running);
+}
+
+fn ephemerides_computed(prediction: Query<&PredictionTracking>) -> bool {
+    prediction.is_empty()
+}
+
+fn compute_default_ephemerides(
+    mut events: EventWriter<ComputeEphemeridesEvent>,
+    root: Query<Entity, With<SystemRoot>>,
+) {
+    events.send(ComputeEphemeridesEvent {
+        root: root.get_single().expect("No root entity found"),
+        duration: Duration::from_days(365.0 * 5.0),
+        sync_count: 100,
+    });
+}
+
+#[expect(unused)]
+fn true_for_frames(frames: usize) -> impl Fn(Local<usize>) -> bool {
+    move |mut completed: Local<usize>| {
+        *completed += 1;
+        *completed > frames
     }
 }

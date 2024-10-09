@@ -6,7 +6,8 @@ pub type Precision = i32;
 pub type FloatingOriginPlugin = big_space::BigSpacePlugin<Precision>;
 pub type BigSpaceRootBundle = big_space::BigSpaceRootBundle<Precision>;
 pub type BigReferenceFrameBundle = big_space::BigReferenceFrameBundle<Precision>;
-pub type LocalFloatingOrigin = big_space::reference_frame::local_origin::LocalFloatingOrigin<Precision>;
+pub type LocalFloatingOrigin =
+    big_space::reference_frame::local_origin::LocalFloatingOrigin<Precision>;
 pub type GridCell = big_space::GridCell<Precision>;
 pub type ReferenceFrame = big_space::reference_frame::ReferenceFrame<Precision>;
 pub type ReferenceFrameCommands<'a> = big_space::commands::ReferenceFrameCommands<'a, Precision>;

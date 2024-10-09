@@ -1,7 +1,7 @@
 use crate::{
     ephemerides::{StateVector, Trajectory},
     floating_origin::{BigSpace, ReferenceFrame},
-    GameState,
+    MainState,
 };
 
 use bevy::math::DVec3;
@@ -31,14 +31,14 @@ impl Plugin for EphemerisPlotPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
-            plot_ephemerides
-                .run_if(in_state(GameState::Running))
+            plot_trajectories
+                .run_if(in_state(MainState::Running))
                 .after(bevy::transform::TransformSystem::TransformPropagate),
         );
     }
 }
 
-fn plot_ephemerides(
+fn plot_trajectories(
     mut gizmos: Gizmos,
     config: Res<EphemerisPlotConfig>,
     query: Query<(&Trajectory, &EphemerisPlot)>,
@@ -49,7 +49,7 @@ fn plot_ephemerides(
     let root = root.single();
 
     let global = |sv: StateVector<DVec3>| StateVector {
-        // The velocity needs to be rotated.
+        // The velocity might need to be rotated.
         velocity: root
             .local_floating_origin()
             .reference_frame_transform()
@@ -63,8 +63,8 @@ fn plot_ephemerides(
         },
     };
 
-    for (ephemeris, plot) in query.iter() {
-        if !plot.enabled || ephemeris.is_empty() {
+    for (trajectory, plot) in query.iter() {
+        if !plot.enabled || trajectory.is_empty() {
             continue;
         }
 
@@ -81,28 +81,28 @@ fn plot_ephemerides(
             _ => unreachable!(),
         };
 
-        let (eval, min, max): (&dyn Fn(_) -> _, _, _) = if let Some((ref_ephemeris, _)) =
-            plot.reference.and_then(|r| query.get(r).ok())
-        {
-            let Some(ref_current_pos) = ref_ephemeris.evaluate_position(config.current_time) else {
-                continue;
+        let (eval, min, max): (&dyn Fn(_) -> _, _, _) =
+            if let Some((ref_trajectory, _)) = plot.reference.and_then(|r| query.get(r).ok()) {
+                let Some(ref_current_pos) = ref_trajectory.evaluate_position(config.current_time)
+                else {
+                    continue;
+                };
+                (
+                    &move |at| {
+                        let sv = trajectory.evaluate_state_vector(at).unwrap();
+                        let ref_sv = ref_trajectory.evaluate_state_vector(at).unwrap();
+                        global(sv - ref_sv + StateVector::from_position(ref_current_pos))
+                    },
+                    start.max(trajectory.start()).max(ref_trajectory.start()),
+                    plot.end.min(trajectory.end()).min(ref_trajectory.end()),
+                )
+            } else {
+                (
+                    &|at| global(trajectory.evaluate_state_vector(at).unwrap()),
+                    start.max(trajectory.start()),
+                    plot.end.min(trajectory.end()),
+                )
             };
-            (
-                &move |at| {
-                    let sv = ephemeris.evaluate_state_vector(at).unwrap();
-                    let ref_sv = ref_ephemeris.evaluate_state_vector(at).unwrap();
-                    global(sv - ref_sv + StateVector::from_position(ref_current_pos))
-                },
-                start.max(ephemeris.start()).max(ref_ephemeris.start()),
-                plot.end.min(ephemeris.end()).min(ref_ephemeris.end()),
-            )
-        } else {
-            (
-                &|at| global(ephemeris.evaluate_state_vector(at).unwrap()),
-                start.max(ephemeris.start()),
-                plot.end.min(ephemeris.end()),
-            )
-        };
 
         let points = plot_points(eval, min, max, camera_transform, threshold);
         // for &p in &points {

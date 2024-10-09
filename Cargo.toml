@@ -10,7 +10,7 @@ big_space = "0.7.0"
 bevy_file_dialog = "0.6.0"
 bevy-inspector-egui = "0.26.0"
 
-particular = { path = "../particular-copy/particular", features = ["parallel", "glam"] }
+particular = { git = "https://github.com/Canleskis/particular.git", features = ["glam"] }
 rand = "0"
 humantime = "2"
 crossbeam-channel = "0.5"
@@ -19,7 +19,7 @@ bacon-sci = "0.16.1"
 # anise = "0.3"
 hifitime = "4.0.0-alpha"
 rayon = "1"
-poly_it = { version = "0.2.3", features = ["smallvec", "tinyvec", "serde"] }
+poly_it = { version = "0.2.3", features = ["smallvec", "serde"] }
 smallvec = { version = "1.13.2", features = ["serde"] }
 thousands = "0.2.0"
 num = "0.4.3"

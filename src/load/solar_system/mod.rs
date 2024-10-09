@@ -2,7 +2,7 @@ pub mod loaders;
 
 pub use loaders::*;
 
-use crate::GameState;
+use crate::MainState;
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
@@ -81,7 +81,7 @@ impl Plugin for LoadSolarSytemPlugin {
             .add_systems(
                 PreUpdate,
                 (reconfigure_skybox_image, handle_missing_visuals)
-                    .run_if(in_state(GameState::Loading)),
+                    .run_if(in_state(MainState::Loading)),
             );
 
         let mut default_visuals = BodyVisuals::default();

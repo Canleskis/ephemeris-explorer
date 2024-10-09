@@ -1,14 +1,12 @@
 use crate::{
-    ephemerides::{
-        ComputeEphemeridesEvent, EphemerisBuilder,
-        PredictionTracking, Trajectory,
-    },
-    plot::{EphemerisPlot, EphemerisPlotConfig},
+    camera::Followed,
+    ephemerides::{ComputeEphemeridesEvent, EphemerisBuilder, PredictionTracking, Trajectory},
     hierarchy,
     load::LoadSolarSystemEvent,
-    selection::{Followed, Selected},
+    plot::{EphemerisPlot, EphemerisPlotConfig},
+    selection::Selected,
     time::EphemeridesTime,
-    GameState, SystemRoot,
+    MainState, SystemRoot,
 };
 
 use std::str::FromStr;
@@ -18,6 +16,9 @@ use bevy_egui::{egui, EguiContexts};
 use bevy_file_dialog::prelude::*;
 use hifitime::{Duration, Epoch};
 use thousands::Separable;
+
+#[derive(Component)]
+pub struct UiCamera;
 
 #[derive(Component, Default)]
 pub struct Labelled {
@@ -68,7 +69,7 @@ impl Plugin for UiPlugin {
                 ),
             )
                 .chain()
-                .run_if(in_state(GameState::Running)),
+                .run_if(in_state(MainState::Running)),
         )
         .add_systems(
             Update,
@@ -126,11 +127,13 @@ fn despawn_labels(
 }
 
 fn update_labels_position(
-    query_camera: Query<(&Camera, &GlobalTransform)>,
+    query_camera: Query<(&Camera, &GlobalTransform), With<UiCamera>>,
     query_labelled: Query<(&LabelEntity, &Labelled, &GlobalTransform)>,
     mut query_labels: Query<(&mut Style, &Node)>,
 ) {
-    let (camera, camera_transform) = query_camera.single();
+    let Ok((camera, camera_transform)) = query_camera.get_single() else {
+        return;
+    };
 
     for (entity, label, transform) in &query_labelled {
         let Ok((mut style, node)) = query_labels.get_mut(**entity) else {
@@ -160,14 +163,16 @@ fn update_labels_position(
 }
 
 fn hide_overlapped_labels(
-    query_camera: Query<&GlobalTransform, With<Camera>>,
+    query_camera: Query<&GlobalTransform, With<UiCamera>>,
     query_labels: Query<(&GlobalTransform, &Node), With<Label>>,
     query_labelled: Query<(&GlobalTransform, &Labelled, &LabelEntity)>,
     mut query_visibility: Query<&mut Visibility, With<Label>>,
     kb: Res<ButtonInput<KeyCode>>,
     mut hide_all: Local<bool>,
 ) {
-    let camera_transform = query_camera.single();
+    let Ok(camera_transform) = query_camera.get_single() else {
+        return;
+    };
 
     if kb.just_pressed(KeyCode::KeyH) {
         *hide_all = !*hide_all;
@@ -348,8 +353,8 @@ fn time_controls(
 
                 let slider = egui::Slider::new(&mut eph_time.time_scale, -1e10..=1e10)
                     .logarithmic(true)
-                    .fixed_decimals(2)
-                    .smallest_positive(0.01)
+                    .fixed_decimals(1)
+                    .smallest_positive(1e-3)
                     .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.6 });
 
                 let slider = match *scale {
@@ -368,7 +373,15 @@ fn time_controls(
                     }),
                 };
 
-                ui.add(slider);
+                let slider = ui.add(slider);
+                if slider.is_pointer_button_down_on() {
+                    egui::show_tooltip_at_pointer(&slider.ctx, slider.layer_id, slider.id, |ui| {
+                        ui.add(
+                            egui::Label::new(format!("x{}", eph_time.time_scale))
+                                .wrap_mode(egui::TextWrapMode::Extend),
+                        );
+                    });
+                }
             });
 
             egui::ComboBox::from_id_source("time_scale")
@@ -790,15 +803,18 @@ impl ExportSettings {
             });
             let bodies = bodies.get_or_insert_with(|| query_trajectory.iter().collect());
 
-            if egui::ComboBox::from_id_source("export type")
-                .show_index(ui, &mut current, export.len(), |i| export[i].to_string())
-                .changed()
-            {
+            if ui.button("Export").clicked() {
                 event.send(ExportSolarSystemEvent {
                     export: export[*current],
                     bodies: bodies.iter().copied().collect(),
                 });
-            };
+            }
+            egui::ComboBox::from_id_source("export type").show_index(
+                ui,
+                &mut current,
+                export.len(),
+                |i| export[i].to_string(),
+            );
 
             ui.add_space(5.0);
 

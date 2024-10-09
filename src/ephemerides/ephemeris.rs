@@ -7,7 +7,7 @@ use particular::prelude::*;
 use std::collections::VecDeque;
 
 pub const MAX_DIV: usize = 9;
-type SegmentStorage = poly_it::storage::tinyvec::TinyVec<[f64; MAX_DIV - 1]>;
+type SegmentStorage = poly_it::storage::smallvec::SmallVec<[f64; MAX_DIV - 1]>;
 
 #[derive(Clone, Debug)]
 pub struct Segment {

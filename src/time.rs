@@ -2,7 +2,7 @@ use crate::{
     ephemerides::Trajectory,
     floating_origin::{BigSpace, GridCell, ReferenceFrame},
     plot::EphemerisPlotConfig,
-    GameState,
+    MainState,
 };
 
 use bevy::prelude::*;
@@ -70,11 +70,11 @@ impl Plugin for EphemerisTimePlugin {
             (flow_time, sync_eph_time, sync_plot_config)
                 .chain()
                 .after(bevy::time::TimeSystem)
-                .run_if(in_state(GameState::Running)),
+                .run_if(in_state(MainState::Running)),
         )
         .add_systems(
             Update,
-            (sync_position_to_time, sync_rotation_to_time).run_if(in_state(GameState::Running)),
+            (sync_position_to_time, sync_rotation_to_time).run_if(in_state(MainState::Running)),
         );
     }
 }

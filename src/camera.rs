@@ -1,7 +1,6 @@
 use crate::{
     floating_origin::{BigSpace, GridCell, Precision, ReferenceFrame},
-    selection::Followed,
-    GameState,
+    MainState,
 };
 
 use bevy::{
@@ -23,6 +22,9 @@ pub struct CanFollow {
     pub min_distance: f64,
     pub max_distance: f64,
 }
+
+#[derive(Resource, Deref, DerefMut, Default)]
+pub struct Followed(pub Option<Entity>);
 
 #[derive(Component, Default)]
 pub struct OrbitCamera {
@@ -71,57 +73,59 @@ pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(CameraInput {
-            defaults_disabled: true,
-            ..default()
-        })
-        .insert_resource(AdditionalCameraInput::default())
-        .insert_resource(DisabledControls::default())
-        .insert_state(CameraState::Orbit)
-        .add_systems(
-            PreUpdate,
-            disable_controls_ui.run_if(in_state(GameState::Running)),
-        )
-        .add_systems(
-            Update,
-            (
-                (
-                    mouse_controls.run_if(|disabled: Res<DisabledControls>| !disabled.mouse),
-                    keyboard_controls.run_if(|disabled: Res<DisabledControls>| !disabled.keyboard),
-                ),
-                (
-                    change_camera_state,
-                    hide_cursor.run_if(|input: Res<CameraInput>| input.any_mouse_input()),
-                    show_cursor.run_if(|mouse: Res<ButtonInput<MouseButton>>| {
-                        mouse.any_just_released([MouseButton::Left, MouseButton::Right])
-                    }),
-                ),
+        app.init_resource::<Followed>()
+            .insert_resource(CameraInput {
+                defaults_disabled: true,
+                ..default()
+            })
+            .insert_resource(AdditionalCameraInput::default())
+            .insert_resource(DisabledControls::default())
+            .insert_state(CameraState::Orbit)
+            .add_systems(
+                PreUpdate,
+                disable_controls_ui.run_if(in_state(MainState::Running)),
             )
-                .chain()
-                .run_if(in_state(GameState::Running)),
-        )
-        .add_systems(
-            PostUpdate,
-            (
-                scale_mouse_to_zoom,
-                zoom_camera,
-                follow_changed,
+            .add_systems(
+                Update,
                 (
-                    orbit_controls.chain().run_if(in_state(CameraState::Orbit)),
                     (
-                        sync_camera_distance,
-                        nearest_objects_in_frame::<Precision>,
-                        camera_controller::<Precision>,
-                    )
-                        .chain()
-                        .run_if(in_state(CameraState::Follow)),
-                ),
-                reset_controls,
+                        mouse_controls.run_if(|disabled: Res<DisabledControls>| !disabled.mouse),
+                        keyboard_controls
+                            .run_if(|disabled: Res<DisabledControls>| !disabled.keyboard),
+                    ),
+                    (
+                        change_camera_state,
+                        hide_cursor.run_if(|input: Res<CameraInput>| input.any_mouse_input()),
+                        show_cursor.run_if(|mouse: Res<ButtonInput<MouseButton>>| {
+                            mouse.any_just_released([MouseButton::Left, MouseButton::Right])
+                        }),
+                    ),
+                )
+                    .chain()
+                    .run_if(in_state(MainState::Running)),
             )
-                .chain()
-                .before(bevy::transform::TransformSystem::TransformPropagate)
-                .run_if(in_state(GameState::Running)),
-        );
+            .add_systems(
+                PostUpdate,
+                (
+                    scale_mouse_to_zoom,
+                    zoom_camera,
+                    follow_changed,
+                    (
+                        orbit_controls.chain().run_if(in_state(CameraState::Orbit)),
+                        (
+                            sync_camera_distance,
+                            nearest_objects_in_frame::<Precision>,
+                            camera_controller::<Precision>,
+                        )
+                            .chain()
+                            .run_if(in_state(CameraState::Follow)),
+                    ),
+                    reset_controls,
+                )
+                    .chain()
+                    .before(bevy::transform::TransformSystem::TransformPropagate)
+                    .run_if(in_state(MainState::Running)),
+            );
     }
 }
 

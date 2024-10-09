@@ -28,7 +28,7 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use hifitime::Duration;
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum GameState {
+pub enum MainState {
     #[default]
     Loading,
     Running,
@@ -68,8 +68,8 @@ fn main() {
             UiPlugin,
             LoadingPlugin,
         ))
-        .init_state::<GameState>()
-        .enable_state_scoped_entities::<GameState>()
+        .init_state::<MainState>()
+        .enable_state_scoped_entities::<MainState>()
         .insert_resource(Msaa::Sample8)
         .insert_resource(EphemerisPlotConfig {
             plot_history: false,
@@ -79,7 +79,7 @@ fn main() {
         .add_systems(First, delay_window_visiblity)
         .add_systems(
             PostUpdate,
-            shortcut_send_prediction.run_if(in_state(GameState::Running)),
+            shortcut_send_prediction.run_if(in_state(MainState::Running)),
         )
         .run();
 }

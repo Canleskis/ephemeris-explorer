@@ -4,13 +4,11 @@ use bevy::prelude::*;
 #[derive(Component, Default)]
 pub struct Clickable {
     pub radius: f32,
+    pub index: usize,
 }
 
 #[derive(Event, Deref, DerefMut)]
 pub struct ClickEvent(pub Option<Entity>);
-
-#[derive(Resource, Deref, DerefMut, Default)]
-pub struct Followed(pub Option<Entity>);
 
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct Selected(pub Option<Entity>);
@@ -19,21 +17,23 @@ pub struct SelectionPlugin;
 
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Followed>()
-            .init_resource::<Selected>()
+        app.init_resource::<Selected>()
             .add_event::<ClickEvent>()
             .add_systems(PostUpdate, (entity_picker, select_clicked).chain());
     }
 }
 
 fn entity_picker(
+    ctx: bevy_egui::EguiContexts,
     mut click_entity_events: EventWriter<ClickEvent>,
     mouse_input: Res<ButtonInput<MouseButton>>,
     query_window: Query<&Window>,
     query_camera: Query<(&GlobalTransform, &Camera)>,
     query_can_select: Query<(Entity, &GlobalTransform, &Clickable)>,
 ) {
-    if !mouse_input.just_pressed(MouseButton::Left) {
+    if !mouse_input.just_pressed(MouseButton::Left)
+        || ctx.try_ctx().is_some_and(|ctx| ctx.is_pointer_over_area())
+    {
         return;
     }
 
@@ -55,9 +55,11 @@ fn entity_picker(
                     let proj = ray.direction.dot(distance);
                     let mag = distance.length_squared();
                     let radius = clickable.radius + mag.sqrt() / 100.0;
-                    let d = (proj * proj + radius * radius >= mag).then_some((entity, mag));
+                    let d =
+                        (proj * proj + radius * radius >= mag).then_some((entity, clickable.index));
 
-                    acc.filter(|&(_, mag2)| d.is_none() || mag2 < mag).or(d)
+                    acc.filter(|&(_, index)| d.is_none() || index < clickable.index)
+                        .or(d)
                 })
                 .map(|(entity, _)| entity)
         });
