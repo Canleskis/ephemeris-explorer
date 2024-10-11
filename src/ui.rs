@@ -353,7 +353,7 @@ impl egui::Widget for ParsedTextEdit<'_, Epoch> {
 }
 
 fn epoch_clamped_parser(min: Epoch, max: Epoch) -> impl Fn(&str) -> Option<Epoch> {
-    move |buf: &str| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
+    move |buf| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
 }
 
 fn epoch_tai_formatter(t: &Epoch) -> String {
@@ -566,15 +566,11 @@ struct BodyInfo {
 }
 
 impl BodyInfo {
-    fn init(
-        mut commands: Commands,
-        eph_time: Res<EphemeridesTime>,
-        query: Query<Entity, Added<EphemerisPlot>>,
-    ) {
-        for entity in &query {
+    fn init(mut commands: Commands, query: Query<(Entity, &EphemerisPlot), Added<EphemerisPlot>>) {
+        for (entity, plot) in &query {
             commands.entity(entity).insert(Self {
-                plot_start_buffer: format!("{:x}", eph_time.start()),
-                plot_end_buffer: format!("{:x}", eph_time.end()),
+                plot_start_buffer: format!("{:x}", plot.start),
+                plot_end_buffer: format!("{:x}", plot.end),
             });
         }
     }
@@ -702,23 +698,21 @@ impl BodyInfo {
                     ui.separator();
                     ui.heading("Plotting");
 
-                    let end = plot.end;
                     ui.horizontal(|ui| {
                         ui.label("Start: ");
                         ui.add(ParsedTextEdit::singleline(
                             &mut info.plot_start_buffer,
                             &mut plot.start,
-                            epoch_clamped_parser(eph_time.start(), end),
+                            |buf| Epoch::from_str(buf).ok(),
                             epoch_tai_formatter,
                         ));
                     });
-                    let start = plot.start;
                     ui.horizontal(|ui| {
                         ui.label("End:   ");
                         ui.add(ParsedTextEdit::singleline(
                             &mut info.plot_end_buffer,
                             &mut plot.end,
-                            epoch_clamped_parser(start, eph_time.end()),
+                            |buf| Epoch::from_str(buf).ok(),
                             epoch_tai_formatter,
                         ));
                     });
@@ -728,8 +722,13 @@ impl BodyInfo {
                     ui.horizontal(|ui| {
                         ui.label("Resolution:");
                         ui.add(
-                            egui::Slider::new(&mut plot.threshold, 0.1..=10.0).logarithmic(true),
+                            egui::Slider::new(&mut plot.threshold, 0.5..=10.0).logarithmic(true),
                         );
+
+                        ui.label("Color:");
+                        let mut color = plot.color.to_linear().to_f32_array();
+                        ui.color_edit_button_rgba_unmultiplied(&mut color);
+                        plot.color = Color::LinearRgba(LinearRgba::from_f32_array(color));
                     });
                 });
         }
@@ -1116,7 +1115,7 @@ impl PredictionPlanner {
         mut time_taken: Local<Option<std::time::Duration>>,
     ) {
         // One system for now (maybe ever).
-        let (root, prediction) = prediction.single();
+        let (root, prediction) = prediction.get_single().expect("No root entity found");
 
         let Some(ctx) = contexts.try_ctx_mut() else {
             return;

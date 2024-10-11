@@ -6,10 +6,6 @@
             "degree": 6,
             "count": 450
         },
-        "Ship": {
-            "degree": 6,
-            "count": 1
-        },
         "Mercury": {
             "degree": 7,
             "count": 72

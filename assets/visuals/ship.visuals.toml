@@ -1,6 +1,0 @@
-[physical]
-radii = [0.1, 0.05, 0.05]
-
-[orbit]
-reference = "Sun"
-color = "#c8c8c880"

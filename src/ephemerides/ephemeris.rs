@@ -244,7 +244,7 @@ where
     }
 }
 
-#[derive(Debug, Component, serde::Serialize)]
+#[derive(Clone, Debug, Component, serde::Serialize)]
 pub struct Trajectory {
     start: Epoch,
     granule: Duration,
@@ -301,32 +301,32 @@ impl Trajectory {
     }
 
     pub fn split_off(&mut self, at: usize) -> Self {
+        let old_start = self.start;
+        self.start += self.granule * (self.segments.len() - at) as i64;
         Self {
+            start: old_start + self.granule * at as i64,
             segments: self.segments.split_off(at),
             ..*self
         }
     }
 
-    pub fn prepend(&mut self, segments: Vec<Segment>) {
-        self.start -= self.granule * segments.len() as i64;
+    pub fn prepend(&mut self, data: Self) {
+        assert_eq!(self.start, data.end());
+        assert_eq!(self.granule, data.granule);
 
-        self.segments.reserve(segments.len());
-        for segment in segments {
+        self.start -= self.granule * data.segments.len() as i64;
+
+        self.segments.reserve(data.segments.len());
+        for segment in data.segments.into_iter().rev() {
             self.segments.push_front(segment);
         }
     }
 
     pub fn append(&mut self, data: Self) {
-        assert!(self.granule == data.granule);
+        assert_eq!(self.end(), data.start);
+        assert_eq!(self.granule, data.granule);
 
-        self.extend(data.segments);
-    }
-
-    pub fn extend<I>(&mut self, segments: I)
-    where
-        I: IntoIterator<Item = Segment>,
-    {
-        self.segments.extend(segments);
+        self.segments.extend(data.segments);
     }
 
     pub fn contains(&self, time: Epoch) -> bool {
@@ -469,6 +469,104 @@ impl std::ops::Sub for &Trajectory {
     }
 }
 
+// Unused because too slow. Faster to subtract the evaluated values.
+// Also not thoroughly tested.
+impl std::ops::Add for &Trajectory {
+    type Output = Trajectory;
+
+    #[inline]
+    fn add(self, rhs: &Trajectory) -> Self::Output {
+        let granule = gcd_duration(self.granule, rhs.granule);
+        let start = self.start.max(rhs.start);
+
+        let mut segments = VecDeque::new();
+
+        let mut t = start;
+        while let Some((a, b)) = self
+            .segment_index_inclusive(t - self.start)
+            .zip(rhs.segment_index_inclusive(t - rhs.start))
+        {
+            // Polynomials are defined in the range [0, 1] so we need to redefine them because
+            // they might have different granules.
+            let redef = |data: &Trajectory, idx| {
+                let data_granule = data.granule.to_seconds();
+                let sub = {
+                    let mut coeffs = SegmentStorage::new();
+                    coeffs.push(((t - data.start).to_seconds() % data_granule) / data_granule);
+                    coeffs.push(granule.to_seconds() / data_granule);
+
+                    Polynomial::new(coeffs)
+                };
+
+                Segment {
+                    x: substitute(&data.segments[idx].x, &sub),
+                    y: substitute(&data.segments[idx].y, &sub),
+                    z: substitute(&data.segments[idx].z, &sub),
+                }
+            };
+
+            let s = redef(self, a);
+            let r = redef(rhs, b);
+            let segment = Segment {
+                x: s.x + r.x,
+                y: s.y + r.y,
+                z: s.z + r.z,
+            };
+
+            segments.push_back(segment);
+            t += granule;
+        }
+
+        Trajectory {
+            start,
+            granule,
+            segments,
+        }
+    }
+}
+
+impl std::ops::Mul<f64> for &Trajectory {
+    type Output = Trajectory;
+
+    #[inline]
+    fn mul(self, rhs: f64) -> Self::Output {
+        Trajectory {
+            start: self.start,
+            granule: self.granule,
+            segments: self
+                .segments
+                .iter()
+                .map(|segment| Segment {
+                    x: polynomial_mul(segment.x.clone(), rhs),
+                    y: polynomial_mul(segment.y.clone(), rhs),
+                    z: polynomial_mul(segment.z.clone(), rhs),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl std::ops::Div<f64> for &Trajectory {
+    type Output = Trajectory;
+
+    #[inline]
+    fn div(self, rhs: f64) -> Self::Output {
+        Trajectory {
+            start: self.start,
+            granule: self.granule,
+            segments: self
+                .segments
+                .iter()
+                .map(|segment| Segment {
+                    x: polynomial_div(segment.x.clone(), rhs),
+                    y: polynomial_div(segment.y.clone(), rhs),
+                    z: polynomial_div(segment.z.clone(), rhs),
+                })
+                .collect(),
+        }
+    }
+}
+
 fn gcd_duration(a: Duration, b: Duration) -> Duration {
     let mut a = a.total_nanoseconds();
     let mut b = b.total_nanoseconds();
@@ -487,6 +585,32 @@ use poly_it::{
     storage::{Storage, StorageProvider},
     Polynomial,
 };
+
+#[inline]
+fn polynomial_mul<T, S>(mut poly: Polynomial<T, S>, rhs: T) -> Polynomial<T, S>
+where
+    T: Clone + std::ops::Mul<T, Output = T>,
+    S: Storage<T>,
+{
+    for coeff in poly.coeffs_mut() {
+        *coeff = coeff.clone() * rhs.clone();
+    }
+
+    poly
+}
+
+#[inline]
+fn polynomial_div<T, S>(mut poly: Polynomial<T, S>, rhs: T) -> Polynomial<T, S>
+where
+    T: Clone + std::ops::Div<T, Output = T>,
+    S: Storage<T>,
+{
+    for coeff in poly.coeffs_mut() {
+        *coeff = coeff.clone() / rhs.clone();
+    }
+
+    poly
+}
 
 #[inline]
 fn polynomial_pow<T, S>(poly: Polynomial<T, S>, exp: usize) -> Polynomial<T, S>

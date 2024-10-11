@@ -119,13 +119,12 @@ fn shortcut_send_prediction(
     root: Query<Entity, With<SystemRoot>>,
 ) {
     if input.just_pressed(KeyCode::Comma) {
-        let root = root.single();
         let duration = Duration::from_days(365.0 * 1.0);
         let sync_count =
             (duration.total_nanoseconds() / Duration::from_days(25.0).total_nanoseconds()) as usize;
 
         event_writer.send(ComputeEphemeridesEvent {
-            root,
+            root: root.get_single().expect("No root entity found"),
             duration,
             sync_count,
         });

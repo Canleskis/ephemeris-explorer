@@ -4,8 +4,7 @@
             "Mercury": {},
             "Venus": {},
             "Earth": {
-                "Moon": {},
-                "Ship": {}
+                "Moon": {}
             },
             "Mars": {
                 "Phobos": {},

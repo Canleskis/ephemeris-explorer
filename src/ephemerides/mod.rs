@@ -30,7 +30,7 @@ impl Plugin for EphemerisComputePlugin {
 
 pub fn adjusted_duration(duration: Duration, granules: impl Iterator<Item = Duration>) -> Duration {
     granules
-        .map(|granule| (duration.to_seconds() / granule.to_seconds()).ceil() * granule)
+        .map(|granule| granule * (duration.to_seconds() / granule.to_seconds()).ceil())
         .max()
         .unwrap()
 }
@@ -76,12 +76,12 @@ pub fn compute_ephemerides(
 ) {
     for ComputeEphemeridesEvent {
         root,
-        duration,
+        duration: requested_duration,
         sync_count,
     } in compute_events.read().copied()
     {
         let Ok((root, entities, prediction)) = prediction_query.get(root) else {
-            bevy::log::warn!("Root entity not found");
+            bevy::log::error!("Root entity not found, cannot compute ephemerides");
             continue;
         };
         if prediction.is_some() {
@@ -95,13 +95,9 @@ pub fn compute_ephemerides(
         // time. To prevent this we could sort the queried bodies before computing the ephemerides.
         let (entities, (mut builders, mut trajectories)): (Vec<_>, (Vec<_>, Vec<_>)) = query
             .iter_many(entities)
+            .filter(|(_, builder, _)| builder.mu != 0.0)
             .map(|(entity, builder, trajectory)| (entity, (*builder, trajectory.continued())))
             .unzip();
-
-        let duration = adjusted_duration(duration, trajectories.iter().map(Trajectory::granule));
-
-        let steps = (duration.to_seconds() / dt.to_seconds()).ceil() as usize;
-        let sync_count = sync_count.clamp(1, steps);
 
         let (sender, receiver) = crossbeam_channel::unbounded();
 
@@ -109,6 +105,15 @@ pub fn compute_ephemerides(
         let thread = {
             let paused = std::sync::Arc::downgrade(&paused);
             std::thread::spawn(move || {
+                // This isn't exactly what we want, but it will do for now.
+                let duration = adjusted_duration(
+                    requested_duration,
+                    trajectories.iter().map(Trajectory::granule),
+                );
+
+                let steps = (duration.to_seconds() / dt.to_seconds()).ceil() as usize;
+                let sync_count = sync_count.clamp(1, steps);
+
                 bevy::log::info!("Computing ephemerides for {}", duration);
                 let t0 = std::time::Instant::now();
                 for step in (0..steps).rev() {
@@ -119,7 +124,7 @@ pub fn compute_ephemerides(
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
 
-                    Perfl::integrate(dt, &mut builders, EphemerisBuilder::acceleration);
+                    PEFRL::integrate(dt, &mut builders, EphemerisBuilder::acceleration);
                     builders
                         .iter_mut()
                         .zip(trajectories.iter_mut())

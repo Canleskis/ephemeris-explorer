@@ -13,9 +13,10 @@ pub trait IntegrationState {
 pub struct SymplecticEuler;
 
 #[derive(Default, Clone, Copy)]
-pub struct Perfl;
+#[expect(clippy::upper_case_acronyms)]
+pub struct PEFRL;
 
-impl Perfl {
+impl PEFRL {
     const LAMBDA: f64 = -0.2123418310626054;
 
     const XI: f64 = 0.1786178958448091;
@@ -39,7 +40,7 @@ impl Perfl {
         }
 
         for i in 0..states.len() {
-            let acc = evaluate(&states[i], states, h1);
+            let acc = evaluate(&states[i], states, Self::XI * dt);
             *states[i].velocity() += h1 * acc;
         }
 
@@ -49,7 +50,7 @@ impl Perfl {
         }
 
         for i in 0..states.len() {
-            let acc = evaluate(&states[i], states, h2);
+            let acc = evaluate(&states[i], states, (Self::XI + Self::CHI) * dt);
             *states[i].velocity() += h2 * acc;
         }
 
@@ -59,7 +60,7 @@ impl Perfl {
         }
 
         for i in 0..states.len() {
-            let acc = evaluate(&states[i], states, h2);
+            let acc = evaluate(&states[i], states, (1.0 - Self::XI - Self::CHI) * dt);
             *states[i].velocity() += h2 * acc;
         }
 
@@ -69,7 +70,7 @@ impl Perfl {
         }
 
         for i in 0..states.len() {
-            let acc = evaluate(&states[i], states, h1);
+            let acc = evaluate(&states[i], states, (1.0 - Self::XI) * dt);
             *states[i].velocity() += h1 * acc;
         }
 
