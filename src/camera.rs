@@ -338,12 +338,13 @@ pub fn orbit_controls(
     let mut rotation = camera_transform.rotation.as_dquat();
 
     let dt = time.delta_seconds_f64();
-    let speed = 1.0;
+    let speed = 0.01;
+    let roll_speed = 1.0;
     rotation *= DQuat::from_euler(
         EulerRot::XYZ,
-        input.pitch * dt * speed,
-        input.yaw * dt * speed,
-        input.roll * dt * speed,
+        input.pitch * speed,
+        input.yaw * speed,
+        input.roll * dt * roll_speed,
     );
 
     let (new_cell, translation) =

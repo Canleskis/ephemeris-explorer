@@ -1,6 +1,6 @@
 use crate::{
-    ephemerides::{StateVector, Trajectory},
     floating_origin::{BigSpace, ReferenceFrame},
+    prediction::{StateVector, Trajectory},
     MainState,
 };
 
@@ -9,13 +9,13 @@ use bevy::prelude::*;
 use hifitime::Epoch;
 
 #[derive(Resource, Default)]
-pub struct EphemerisPlotConfig {
+pub struct TrajectoryPlotConfig {
     pub current_time: Epoch,
     pub plot_history: bool,
 }
 
 #[derive(Component, Default)]
-pub struct EphemerisPlot {
+pub struct TrajectoryPlot {
     pub enabled: bool,
     pub color: Color,
     pub start: Epoch,
@@ -25,9 +25,9 @@ pub struct EphemerisPlot {
 }
 
 #[derive(Default)]
-pub struct EphemerisPlotPlugin;
+pub struct TrajectoryPlotPlugin;
 
-impl Plugin for EphemerisPlotPlugin {
+impl Plugin for TrajectoryPlotPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
@@ -40,8 +40,8 @@ impl Plugin for EphemerisPlotPlugin {
 
 fn plot_trajectories(
     mut gizmos: Gizmos,
-    config: Res<EphemerisPlotConfig>,
-    query: Query<(&Trajectory, &EphemerisPlot)>,
+    config: Res<TrajectoryPlotConfig>,
+    query: Query<(&Trajectory, &TrajectoryPlot)>,
     root: Query<&ReferenceFrame, With<BigSpace>>,
     camera: Query<(&GlobalTransform, &Projection)>,
 ) {

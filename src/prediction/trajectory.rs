@@ -1,9 +1,6 @@
-use super::integration::IntegrationState;
-
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use hifitime::{Duration, Epoch};
-use particular::prelude::*;
 use std::collections::VecDeque;
 
 pub const MAX_DIV: usize = 9;
@@ -69,127 +66,6 @@ pub fn interpolate(deg: usize, ts: &[f64], xs: &[f64]) -> poly_it::Polynomial<f6
         std::iter::zip(ts.iter().copied(), xs.iter().copied()),
     )
     .unwrap()
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct SegmentPoints {
-    index: usize,
-    xs: [f64; MAX_DIV],
-    ys: [f64; MAX_DIV],
-    zs: [f64; MAX_DIV],
-}
-
-impl SegmentPoints {
-    pub fn with(position: DVec3) -> Self {
-        Self {
-            index: 1,
-            xs: [position.x; MAX_DIV],
-            ys: [position.y; MAX_DIV],
-            zs: [position.z; MAX_DIV],
-        }
-    }
-
-    pub fn push(&mut self, position: DVec3) {
-        assert!(self.index < MAX_DIV, "Too many points in segment.");
-        self.xs[self.index] = position.x;
-        self.ys[self.index] = position.y;
-        self.zs[self.index] = position.z;
-        self.index += 1;
-    }
-
-    pub fn len(&self) -> usize {
-        self.index
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.len() == MAX_DIV
-    }
-
-    fn as_segment(&self, deg: usize) -> Segment {
-        #[expect(dead_code)]
-        const REV_TS: [f64; MAX_DIV] = {
-            let mut out = [0.0; MAX_DIV];
-            let mut i = 0;
-            while i < MAX_DIV {
-                out[i] = (MAX_DIV - i - 1) as f64 / (MAX_DIV - 1) as f64;
-                i += 1;
-            }
-            out
-        };
-
-        const TS: [f64; MAX_DIV] = {
-            let mut out = [0.0; MAX_DIV];
-            let mut i = 0;
-            while i < MAX_DIV {
-                out[i] = (i) as f64 / (MAX_DIV - 1) as f64;
-                i += 1;
-            }
-            out
-        };
-
-        Segment {
-            x: interpolate(deg, &TS, &self.xs),
-            y: interpolate(deg, &TS, &self.ys),
-            z: interpolate(deg, &TS, &self.zs),
-        }
-    }
-}
-
-/// A structure that represents an ephemeris being built.
-#[derive(Clone, Copy, Debug, Component, Position, Mass)]
-pub struct EphemerisBuilder {
-    pub time: Duration,
-    pub deg: usize,
-    pub velocity: DVec3,
-    pub position: DVec3,
-    pub mu: f64,
-    pub points: SegmentPoints,
-}
-
-impl IntegrationState for EphemerisBuilder {
-    fn position(&mut self) -> &mut DVec3 {
-        &mut self.position
-    }
-
-    fn velocity(&mut self) -> &mut DVec3 {
-        &mut self.velocity
-    }
-
-    fn step(&mut self, delta: Duration) {
-        self.time += delta;
-    }
-}
-
-impl EphemerisBuilder {
-    pub fn new(deg: usize, position: DVec3, velocity: DVec3, mu: f64) -> Self {
-        Self {
-            time: Duration::ZERO,
-            deg,
-            points: SegmentPoints::with(position),
-            position,
-            mu,
-            velocity,
-        }
-    }
-
-    pub fn acceleration(&self, slice: &[Self], _: f64) -> DVec3 {
-        Between(self, slice).brute_force(particular::gravity::newtonian::Acceleration::checked())
-    }
-
-    pub fn update_trajectory(&mut self, trajectory: &mut Trajectory) {
-        let time = self.time.total_nanoseconds();
-        let interval = trajectory.granule().total_nanoseconds() / (MAX_DIV - 1) as i128;
-        if time % interval == 0 {
-            self.points.push(self.position);
-            if self.points.is_full() {
-                trajectory
-                    .segments
-                    .push_back(self.points.as_segment(self.deg));
-                self.time = Duration::ZERO;
-                self.points = SegmentPoints::with(self.position);
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -260,14 +136,6 @@ impl Trajectory {
         }
     }
 
-    pub fn continued(&self) -> Self {
-        Self {
-            start: self.end(),
-            segments: VecDeque::new(),
-            ..*self
-        }
-    }
-
     // We could subtract the current trajectory by an identity trajectory to get a trajectory that
     // matches the requested span exactly but depending on the requested span this could result in
     // a big trajectory when we can simply use whole segments with a total span that might be larger
@@ -300,33 +168,32 @@ impl Trajectory {
         })
     }
 
-    pub fn split_off(&mut self, at: usize) -> Self {
-        let old_start = self.start;
-        self.start += self.granule * (self.segments.len() - at) as i64;
-        Self {
-            start: old_start + self.granule * at as i64,
-            segments: self.segments.split_off(at),
-            ..*self
-        }
+    pub fn prepend_segment(&mut self, segment: Segment) {
+        self.segments.push_front(segment);
+        self.start -= self.granule;
     }
 
-    pub fn prepend(&mut self, data: Self) {
-        assert_eq!(self.start, data.end());
-        assert_eq!(self.granule, data.granule);
+    pub fn append_segment(&mut self, segment: Segment) {
+        self.segments.push_back(segment);
+    }
 
-        self.start -= self.granule * data.segments.len() as i64;
+    pub fn prepend(&mut self, trajectory: Self) {
+        assert_eq!(self.start, trajectory.end());
+        assert_eq!(self.granule, trajectory.granule);
 
-        self.segments.reserve(data.segments.len());
-        for segment in data.segments.into_iter().rev() {
+        self.start = trajectory.start;
+
+        self.segments.reserve(trajectory.segments.len());
+        for segment in trajectory.segments.into_iter().rev() {
             self.segments.push_front(segment);
         }
     }
 
-    pub fn append(&mut self, data: Self) {
-        assert_eq!(self.end(), data.start);
-        assert_eq!(self.granule, data.granule);
+    pub fn append(&mut self, trajectory: Self) {
+        assert_eq!(self.end(), trajectory.start);
+        assert_eq!(self.granule, trajectory.granule);
 
-        self.segments.extend(data.segments);
+        self.segments.extend(trajectory.segments);
     }
 
     pub fn contains(&self, time: Epoch) -> bool {
@@ -646,4 +513,12 @@ where
     }
 
     result
+}
+
+pub trait BuildTrajectory<Builder>: Sized {
+    fn continued(&self) -> Self;
+
+    fn build_trajectories(trajectories: &mut [Self], builders: &mut [Builder], dt: Duration);
+
+    fn join(&mut self, trajectory: Self);
 }

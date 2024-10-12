@@ -6,18 +6,18 @@ pub use ui::*;
 
 use crate::{
     camera::{CanFollow, Followed, OrbitCamera},
-    ephemerides::{
-        ComputeEphemeridesEvent, EphemeridesComputeSettings, EphemerisBuilder, PredictionTracking,
-        Trajectory, MAX_DIV,
-    },
     floating_origin::{
         BigReferenceFrameBundle, BigSpace, BigSpaceRootBundle, FloatingOrigin, GridCell,
     },
     hierarchy,
-    plot::EphemerisPlot,
+    plot::TrajectoryPlot,
+    prediction::{
+        Backward, ComputePredictionEvent, EphemerisBuilder, Forward, PredictionSettings,
+        PredictionTracker, Trajectory, MAX_DIV,
+    },
     selection::Clickable,
     starlight::Star,
-    time::EphemeridesTime,
+    time::SimulationTime,
     ui::{Labelled, OrbitalPeriod, UiCamera},
     MainState, SystemRoot,
 };
@@ -68,13 +68,13 @@ impl Plugin for LoadingPlugin {
         );
 
         app.add_systems(
+            OnEnter(LoadingStage::Ephemerides),
+            compute_default_ephemerides,
+        )
+        .add_systems(
             Update,
             (ephemerides_progress_text, bypass_ephemerides_loading)
                 .run_if(in_state(LoadingStage::Ephemerides)),
-        )
-        .add_systems(
-            OnEnter(LoadingStage::Ephemerides),
-            compute_default_ephemerides,
         )
         .add_systems(
             First,
@@ -185,6 +185,9 @@ impl Rotating {
     }
 }
 
+#[derive(Component, Deref, DerefMut)]
+pub struct Mu(pub f64);
+
 fn spawn_bodies(
     mut commands: Commands,
     solar_system: UniqueAsset<SolarSystem>,
@@ -196,6 +199,7 @@ fn spawn_bodies(
     let solar_system = solar_system.get().unwrap();
     let hierachy_tree = hierachy_tree.get().unwrap();
     let eph_settings = eph_settings.get().unwrap();
+    let dt = eph_settings.dt;
 
     // Hierarchy should always have one root element.
     let (name, tree) = hierachy_tree.first().unwrap();
@@ -267,14 +271,21 @@ fn spawn_bodies(
                     index: depth + 1,
                 },
                 OrbitalPeriod(Some(Duration::default())),
-                Trajectory::new(solar_system.epoch, granule),
-                EphemerisBuilder::new(
+                Mu(body.mu),
+                EphemerisBuilder::<Forward>::new(
                     ephemeris_settings.degree,
                     body.position,
                     body.velocity,
                     body.mu,
                 ),
-                EphemerisPlot {
+                EphemerisBuilder::<Backward>::new(
+                    ephemeris_settings.degree,
+                    body.position,
+                    body.velocity,
+                    body.mu,
+                ),
+                Trajectory::new(solar_system.epoch, granule),
+                TrajectoryPlot {
                     enabled: depth <= 1,
                     color: visual.orbit.color,
                     start: Epoch::default(),
@@ -330,10 +341,9 @@ fn spawn_bodies(
         }
     }
 
-    commands.insert_resource(EphemeridesTime::new(solar_system.epoch));
-    commands.insert_resource(EphemeridesComputeSettings {
-        dt: eph_settings.dt,
-    });
+    commands.insert_resource(SimulationTime::new(solar_system.epoch));
+    commands.insert_resource(PredictionSettings::<EphemerisBuilder<Forward>>::new(dt));
+    commands.insert_resource(PredictionSettings::<EphemerisBuilder<Backward>>::new(dt));
 }
 
 fn setup_camera(
@@ -383,12 +393,20 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
 
 fn ephemerides_progress_text(
     mut query: Query<&mut Text, With<LoadingText>>,
-    prediction: Query<&PredictionTracking>,
+    forward: Query<&PredictionTracker<EphemerisBuilder<Forward>>>,
+    backward: Query<&PredictionTracker<EphemerisBuilder<Backward>>>,
 ) {
-    if let Ok(progress) = prediction.get_single().map(PredictionTracking::progress) {
-        for mut text in query.iter_mut() {
-            text.sections[0].value = format!("Computing ephemerides: {:.0}%", progress * 100.0);
-        }
+    let forward_progress = forward
+        .get_single()
+        .map(PredictionTracker::progress)
+        .unwrap_or(1.0);
+    let backward_progress = backward
+        .get_single()
+        .map(PredictionTracker::progress)
+        .unwrap_or(1.0);
+    let progress = (forward_progress + backward_progress) / 2.0;
+    for mut text in query.iter_mut() {
+        text.sections[0].value = format!("Computing ephemerides: {:.0}%", progress * 100.0);
     }
 }
 
@@ -398,19 +416,24 @@ fn finish_ephemerides_computing(world: &mut World) {
         .set(MainState::Running);
 }
 
-fn ephemerides_computed(prediction: Query<&PredictionTracking>) -> bool {
-    prediction.is_empty()
+fn ephemerides_computed(
+    forward: Query<&PredictionTracker<EphemerisBuilder<Forward>>>,
+    backward: Query<&PredictionTracker<EphemerisBuilder<Backward>>>,
+) -> bool {
+    forward.is_empty() && backward.is_empty()
 }
 
 fn compute_default_ephemerides(
-    mut events: EventWriter<ComputeEphemeridesEvent>,
+    mut events_forward: EventWriter<ComputePredictionEvent<EphemerisBuilder<Forward>>>,
+    mut events_backward: EventWriter<ComputePredictionEvent<EphemerisBuilder<Backward>>>,
     root: Query<Entity, With<SystemRoot>>,
 ) {
-    events.send(ComputeEphemeridesEvent {
-        root: root.get_single().expect("No root entity found"),
-        duration: Duration::from_days(365.0 * 5.0),
-        sync_count: 100,
-    });
+    let root = root.get_single().expect("No root entity found");
+    let duration = Duration::from_days(365.0 * 5.0);
+    let sync_count = 100;
+
+    events_forward.send(ComputePredictionEvent::new(root, duration, sync_count));
+    events_backward.send(ComputePredictionEvent::new(root, duration, sync_count));
 }
 
 #[expect(unused)]

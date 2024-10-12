@@ -1,11 +1,13 @@
 use crate::{
     camera::Followed,
-    ephemerides::{ComputeEphemeridesEvent, EphemerisBuilder, PredictionTracking, Trajectory},
     hierarchy,
-    load::LoadSolarSystemEvent,
-    plot::{EphemerisPlot, EphemerisPlotConfig},
+    load::{LoadSolarSystemEvent, Mu},
+    plot::{TrajectoryPlot, TrajectoryPlotConfig},
+    prediction::{
+        Backward, ComputePredictionEvent, EphemerisBuilder, Forward, PredictionTracker, Trajectory,
+    },
     selection::Selected,
-    time::EphemeridesTime,
+    time::SimulationTime,
     MainState, SystemRoot,
 };
 
@@ -69,7 +71,7 @@ impl Plugin for UiPlugin {
                 (
                     ExportSettings::window,
                     PredictionPlanner::window,
-                    EphemeridesDebug::window,
+                    PredictionDebug::window,
                     BodyInfo::window,
                     limit_to_period,
                 ),
@@ -363,7 +365,7 @@ fn epoch_tai_formatter(t: &Epoch) -> String {
 fn time_controls(
     mut contexts: EguiContexts,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
-    mut eph_time: ResMut<EphemeridesTime>,
+    mut sim_time: ResMut<SimulationTime>,
     mut buffer: Local<String>,
     mut scale: Local<TimeScale>,
     mut time_scale_history: Local<History>,
@@ -372,7 +374,7 @@ fn time_controls(
         return;
     };
 
-    time_scale_history.add(eph_time.real_time_scale());
+    time_scale_history.add(sim_time.real_time_scale());
 
     egui::TopBottomPanel::bottom("Time").show(ctx, |ui| {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -381,17 +383,17 @@ fn time_controls(
 
             if edit.lost_focus() {
                 if let Ok(buffer) = Epoch::from_str(&buffer) {
-                    eph_time.set_epoch_clamped(buffer);
+                    sim_time.set_epoch_clamped(buffer);
                 }
             }
 
             if !edit.has_focus() {
-                *buffer = format!("{:x}", eph_time.current());
+                *buffer = format!("{:x}", sim_time.current());
             }
 
-            let button = egui::Button::new(if eph_time.paused { "▶" } else { "⏸" });
+            let button = egui::Button::new(if sim_time.paused { "▶" } else { "⏸" });
             if ui.add_sized([40.0, 18.0], button).clicked() {
-                eph_time.paused = !eph_time.paused;
+                sim_time.paused = !sim_time.paused;
             }
 
             ui.scope(|ui| {
@@ -399,11 +401,11 @@ fn time_controls(
 
                 ui.spacing_mut().slider_width = ui.available_width() / 3.0;
                 ui.spacing_mut().interact_size.x = 175.0;
-                if round(computed_time_scale, 2) != eph_time.time_scale {
+                if round(computed_time_scale, 2) != sim_time.time_scale {
                     ui.visuals_mut().override_text_color = Some(egui::Color32::RED);
                 }
 
-                let slider = egui::Slider::new(&mut eph_time.time_scale, -1e10..=1e10)
+                let slider = egui::Slider::new(&mut sim_time.time_scale, -1e10..=1e10)
                     .logarithmic(true)
                     .fixed_decimals(1)
                     .smallest_positive(1e-3)
@@ -429,7 +431,7 @@ fn time_controls(
                 if slider.is_pointer_button_down_on() {
                     egui::show_tooltip_at_pointer(&slider.ctx, slider.layer_id, slider.id, |ui| {
                         ui.add(
-                            egui::Label::new(format!("x{}", eph_time.time_scale))
+                            egui::Label::new(format!("x{}", sim_time.time_scale))
                                 .wrap_mode(egui::TextWrapMode::Extend),
                         );
                     });
@@ -458,8 +460,8 @@ fn time_controls(
 
 #[expect(unused)]
 fn limit_to_period(
-    config: Res<EphemerisPlotConfig>,
-    mut query: Query<(&OrbitalPeriod, &mut EphemerisPlot)>,
+    config: Res<TrajectoryPlotConfig>,
+    mut query: Query<(&OrbitalPeriod, &mut TrajectoryPlot)>,
 ) {
     for (period, mut plot) in &mut query {
         // plot.end = config.current_time + period.0.unwrap_or_default();
@@ -522,13 +524,13 @@ fn show_tree(
     show_tree_inner(root, query, ui, 0, default_open, &mut add_header);
 }
 
-struct EphemerisInfo<T> {
+struct PredictionInfo<T> {
     text: egui::WidgetText,
     hover_text: Option<egui::WidgetText>,
     info: Option<T>,
 }
 
-impl<T> EphemerisInfo<T> {
+impl<T> PredictionInfo<T> {
     fn new(text: impl Into<egui::WidgetText>, info: Option<T>) -> Self {
         Self {
             text: text.into(),
@@ -566,7 +568,10 @@ struct BodyInfo {
 }
 
 impl BodyInfo {
-    fn init(mut commands: Commands, query: Query<(Entity, &EphemerisPlot), Added<EphemerisPlot>>) {
+    fn init(
+        mut commands: Commands,
+        query: Query<(Entity, &TrajectoryPlot), Added<TrajectoryPlot>>,
+    ) {
         for (entity, plot) in &query {
             commands.entity(entity).insert(Self {
                 plot_start_buffer: format!("{:x}", plot.start),
@@ -578,10 +583,10 @@ impl BodyInfo {
     fn window(
         mut contexts: EguiContexts,
         mut selected: ResMut<Selected>,
-        eph_time: Res<EphemeridesTime>,
+        sim_time: Res<SimulationTime>,
         query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
         query_trajectory: Query<&Trajectory>,
-        mut query_plot: Query<(&mut EphemerisPlot, &mut Self)>,
+        mut query_plot: Query<(&mut TrajectoryPlot, &mut Self)>,
         root: Query<Entity, With<SystemRoot>>,
     ) {
         let mut open = selected.is_some();
@@ -646,18 +651,18 @@ impl BodyInfo {
 
                     ui.separator();
                     ui.heading("Info");
-                    egui::Grid::new("Ephemeris")
+                    egui::Grid::new("PredictionInfo")
                         .min_col_width(150.0)
                         .show(ui, |ui| {
                             let sv =
                                 trajectory
-                                    .evaluate_state_vector(eph_time.current())
+                                    .evaluate_state_vector(sim_time.current())
                                     .map(|sv| {
                                         sv - plot
                                             .reference
                                             .and_then(|r| query_trajectory.get(r).ok())
                                             .and_then(|t| {
-                                                t.evaluate_state_vector(eph_time.current())
+                                                t.evaluate_state_vector(sim_time.current())
                                             })
                                             .unwrap_or_default()
                                     });
@@ -666,14 +671,14 @@ impl BodyInfo {
                             let distance = position.map(|pos| pos.length());
                             let speed = velocity.map(|vel| vel.length());
 
-                            EphemerisInfo::new("Position", position)
+                            PredictionInfo::new("Position", position)
                                 .hover_text(format!("Position relative to {}", reference_name))
                                 .show(ui, |ui, position| {
                                     ui.label(format!("x: {:.2} km", position.x));
                                     ui.label(format!("y: {:.2} km", position.y));
                                     ui.label(format!("z: {:.2} km", position.z));
                                 });
-                            EphemerisInfo::new("Velocity", velocity)
+                            PredictionInfo::new("Velocity", velocity)
                                 .hover_text(format!("Velocity relative to {}", reference_name))
                                 .show(ui, |ui, velocity| {
                                     ui.label(format!("x: {:.2} km/s", velocity.x));
@@ -681,12 +686,12 @@ impl BodyInfo {
                                     ui.label(format!("z: {:.2} km/s", velocity.z));
                                 });
                             ui.end_row();
-                            EphemerisInfo::new("Distance", distance)
+                            PredictionInfo::new("Distance", distance)
                                 .hover_text(format!("Distance relative to {}", reference_name))
                                 .show(ui, |ui, distance| {
                                     ui.label(format!("{:.2} km", distance));
                                 });
-                            EphemerisInfo::new("Speed", speed)
+                            PredictionInfo::new("Speed", speed)
                                 .hover_text(format!("Speed relative to {}", reference_name))
                                 .show(ui, |ui, speed| {
                                     ui.label(format!("{:.2} km/s", speed));
@@ -699,7 +704,7 @@ impl BodyInfo {
                     ui.heading("Plotting");
 
                     ui.horizontal(|ui| {
-                        ui.label("Start: ");
+                        ui.label("Start:");
                         ui.add(ParsedTextEdit::singleline(
                             &mut info.plot_start_buffer,
                             &mut plot.start,
@@ -708,7 +713,7 @@ impl BodyInfo {
                         ));
                     });
                     ui.horizontal(|ui| {
-                        ui.label("End:   ");
+                        ui.label("End:  ");
                         ui.add(ParsedTextEdit::singleline(
                             &mut info.plot_end_buffer,
                             &mut plot.end,
@@ -743,7 +748,7 @@ fn solar_system_explorer(
     mut contexts: EguiContexts,
     mut followed: ResMut<Followed>,
     mut selected: ResMut<Selected>,
-    mut query: Query<&mut EphemerisPlot>,
+    mut query: Query<&mut TrajectoryPlot>,
     query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
     root: Query<Entity, With<SystemRoot>>,
 ) {
@@ -837,7 +842,7 @@ impl ExportSettings {
         mut commands: Commands,
         mut event: EventWriter<ExportSolarSystemEvent>,
         window: Option<Res<Self>>,
-        eph_time: Res<EphemeridesTime>,
+        sim_time: Res<SimulationTime>,
         query_trajectory: Query<Entity, With<Trajectory>>,
         query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
         root: Query<Entity, With<SystemRoot>>,
@@ -859,11 +864,11 @@ impl ExportSettings {
             let export = cached_exports.get_or_insert_with(|| {
                 [
                     ExportType::State {
-                        epoch: eph_time.current(),
+                        epoch: sim_time.current(),
                     },
                     ExportType::Trajectories {
-                        start: eph_time.start(),
-                        end: eph_time.end(),
+                        start: sim_time.start(),
+                        end: sim_time.end(),
                     },
                 ]
             });
@@ -892,7 +897,7 @@ impl ExportSettings {
                         ui.add(ParsedTextEdit::singleline(
                             &mut epoch_buffer,
                             epoch,
-                            epoch_clamped_parser(eph_time.start(), eph_time.end()),
+                            epoch_clamped_parser(sim_time.start(), sim_time.end()),
                             epoch_tai_formatter,
                         ));
                     });
@@ -903,7 +908,7 @@ impl ExportSettings {
                         ui.add(ParsedTextEdit::singleline(
                             &mut start_buffer,
                             start,
-                            epoch_clamped_parser(eph_time.start(), *end),
+                            epoch_clamped_parser(sim_time.start(), *end),
                             epoch_tai_formatter,
                         ));
                     });
@@ -912,7 +917,7 @@ impl ExportSettings {
                         ui.add(ParsedTextEdit::singleline(
                             &mut end_buffer,
                             end,
-                            epoch_clamped_parser(*start, eph_time.end()),
+                            epoch_clamped_parser(*start, sim_time.end()),
                             epoch_tai_formatter,
                         ))
                     });
@@ -1012,9 +1017,9 @@ pub fn reversed_paint_default_icon(ui: &mut egui::Ui, openness: f32, response: &
 }
 
 #[derive(Default, Resource)]
-struct EphemeridesDebug;
+struct PredictionDebug;
 
-impl EphemeridesDebug {
+impl PredictionDebug {
     fn window(
         mut contexts: EguiContexts,
         mut commands: Commands,
@@ -1026,12 +1031,20 @@ impl EphemeridesDebug {
         };
 
         let mut open = window.is_some();
-        egui::Window::new("Ephemerides debug")
+        egui::Window::new("Prediction debug")
             .open(&mut open)
             .show(ctx, |ui| {
                 let queried = query
                     .iter()
-                    .map(|(name, data)| (name.as_str(), data.size(), data.len(), data.end()))
+                    .map(|(name, data)| {
+                        (
+                            name.as_str(),
+                            data.size(),
+                            data.len(),
+                            data.start(),
+                            data.end(),
+                        )
+                    })
                     .collect::<Vec<_>>();
 
                 let available_height = ui.available_height();
@@ -1040,7 +1053,8 @@ impl EphemeridesDebug {
                     .column(egui_extras::Column::exact(100.0))
                     .column(egui_extras::Column::exact(80.0))
                     .column(egui_extras::Column::exact(80.0))
-                    .column(egui_extras::Column::exact(180.0))
+                    .column(egui_extras::Column::exact(200.0))
+                    .column(egui_extras::Column::exact(200.0))
                     .min_scrolled_height(0.0)
                     .max_scroll_height(available_height)
                     .header(20.0, |mut header| {
@@ -1054,16 +1068,25 @@ impl EphemeridesDebug {
                             ui.strong("Segments");
                         });
                         header.col(|ui| {
+                            ui.strong("Start");
+                        });
+                        header.col(|ui| {
                             ui.strong("End");
                         });
                     })
                     .body(|body| {
                         body.rows(16.0, queried.len() + 1, |mut row| {
-                            let (name, size, count, end) = match row.index() {
+                            let (name, size, count, start, end) = match row.index() {
                                 0 => (
                                     "Total",
                                     queried.iter().map(|(_, size, ..)| size).sum(),
-                                    queried.iter().map(|(.., count, _)| count).sum(),
+                                    queried.iter().map(|(.., count, _, _)| count).sum(),
+                                    queried
+                                        .iter()
+                                        .map(|(.., start, _)| start)
+                                        .max()
+                                        .copied()
+                                        .unwrap_or_default(),
                                     queried
                                         .iter()
                                         .map(|(.., end)| end)
@@ -1086,6 +1109,9 @@ impl EphemeridesDebug {
                                 ui.label(count.to_string());
                             });
                             row.col(|ui| {
+                                ui.label(format!("{:x}", start));
+                            });
+                            row.col(|ui| {
                                 ui.label(format!("{:x}", end));
                             });
                         })
@@ -1103,19 +1129,121 @@ struct PredictionPlanner;
 
 impl PredictionPlanner {
     #[expect(clippy::too_many_arguments)]
+    fn prediction_content<Builder: Component>(
+        name: &str,
+        ui: &mut egui::Ui,
+        commands: &mut Commands,
+        events: &mut EventWriter<ComputePredictionEvent<Builder>>,
+        root: Entity,
+        prediction: Option<Ref<PredictionTracker<Builder>>>,
+        buffer: &mut String,
+        parser: impl Fn(&str) -> Option<Epoch>,
+        response: &egui::Response,
+        default: Epoch,
+        time_taken: &mut Option<std::time::Duration>,
+        delta: std::time::Duration,
+    ) {
+        let (backward_duration, backward_label) = match parser(buffer) {
+            Some(start) if prediction.is_none() => {
+                let duration = (start - default).abs();
+                let label = format!(
+                    "Planned {} prediction length: {}",
+                    name.to_lowercase(),
+                    duration.approx()
+                );
+
+                (Some(duration), label)
+            }
+            _ => {
+                if !response.has_focus() {
+                    *buffer = format!("{:x}", default);
+                }
+                let label = if prediction.is_some() {
+                    format!("{} prediction in progress", name)
+                } else {
+                    format!("No planned {} prediction", name.to_lowercase())
+                };
+
+                (None, label)
+            }
+        };
+
+        if backward_duration.is_some() || prediction.as_ref().is_some_and(Ref::is_added) {
+            *time_taken = None;
+        }
+
+        if let Some(prediction) = prediction.as_ref() {
+            let time_taken = time_taken.get_or_insert_with(Default::default);
+            if prediction.in_progress() {
+                *time_taken += delta;
+            }
+        }
+
+        ui.horizontal(|ui| {
+            ui.label(backward_label);
+            if let Some(time_taken) = &*time_taken {
+                ui.separator();
+                ui.label(format!("Time taken: {:?}", time_taken));
+            }
+        });
+
+        ui.horizontal(|ui| match prediction {
+            None => {
+                ui.add_enabled_ui(backward_duration.is_some(), |ui| {
+                    if ui
+                        .button(format!("Start {} prediction", name.to_lowercase()))
+                        .clicked()
+                    {
+                        if let Some(duration) = backward_duration {
+                            let sync_count = (duration.total_nanoseconds()
+                                / Duration::from_days(25.0).total_nanoseconds())
+                                as usize;
+                            events.send(ComputePredictionEvent::new(root, duration, sync_count));
+                        }
+                    }
+                });
+            }
+            Some(prediction) => {
+                let paused = prediction.is_paused();
+                let button = egui::Button::new(if paused { "Resume" } else { "Pause" })
+                    .min_size(egui::vec2(55.0, 0.0));
+                if ui.add(button).clicked() {
+                    prediction.pause_or_resume();
+                }
+                let button = egui::Button::new("Cancel").min_size(egui::vec2(55.0, 0.0));
+                if ui.add(button).clicked() {
+                    commands.entity(root).remove::<PredictionTracker<Builder>>();
+                }
+                ui.add(egui::ProgressBar::new(prediction.progress()).show_percentage());
+            }
+        });
+    }
+
+    #[expect(clippy::type_complexity)]
+    #[expect(clippy::too_many_arguments)]
     fn window(
         mut contexts: EguiContexts,
         mut commands: Commands,
         window: Option<Res<Self>>,
-        eph_time: Res<EphemeridesTime>,
+        sim_time: Res<SimulationTime>,
+        mut start_buffer: Local<String>,
         mut end_buffer: Local<String>,
-        mut event_writer: EventWriter<ComputeEphemeridesEvent>,
-        prediction: Query<(Entity, Option<Ref<PredictionTracking>>), With<SystemRoot>>,
+        mut forward_events: EventWriter<ComputePredictionEvent<EphemerisBuilder<Forward>>>,
+        mut backward_events: EventWriter<ComputePredictionEvent<EphemerisBuilder<Backward>>>,
+        prediction: Query<
+            (
+                Entity,
+                Option<Ref<PredictionTracker<EphemerisBuilder<Forward>>>>,
+                Option<Ref<PredictionTracker<EphemerisBuilder<Backward>>>>,
+            ),
+            With<SystemRoot>,
+        >,
         time: Res<Time>,
-        mut time_taken: Local<Option<std::time::Duration>>,
+        mut forward_time: Local<Option<std::time::Duration>>,
+        mut backward_time: Local<Option<std::time::Duration>>,
     ) {
         // One system for now (maybe ever).
-        let (root, prediction) = prediction.get_single().expect("No root entity found");
+        let (root, forward, backward) = prediction.get_single().expect("No root entity found");
 
         let Some(ctx) = contexts.try_ctx_mut() else {
             return;
@@ -1127,90 +1255,51 @@ impl PredictionPlanner {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.spacing_mut().text_edit_width = 300.0;
-                ui.horizontal(|ui| {
+                let backward_edit = ui.horizontal(|ui| {
                     ui.label("Start time:");
-                    ui.add_enabled_ui(false, |ui| {
-                        let mut start_buffer = format!("{:x}", eph_time.start());
-                        ui.add(egui::TextEdit::singleline(&mut start_buffer))
+                    ui.add_enabled_ui(backward.is_none(), |ui| {
+                        ui.add(egui::TextEdit::singleline(&mut *start_buffer))
                     })
+                    .inner
                 });
 
-                let edit = ui.horizontal(|ui| {
+                Self::prediction_content(
+                    "Backward",
+                    ui,
+                    &mut commands,
+                    &mut backward_events,
+                    root,
+                    backward,
+                    &mut start_buffer,
+                    |buf| Epoch::from_str(buf).ok().filter(|e| e < &sim_time.start()),
+                    &backward_edit.inner,
+                    sim_time.start(),
+                    &mut backward_time,
+                    time.delta(),
+                );
+
+                let forward_edit = ui.horizontal(|ui| {
                     ui.label("End time:  ");
-                    ui.add_enabled_ui(prediction.is_none(), |ui| {
+                    ui.add_enabled_ui(forward.is_none(), |ui| {
                         ui.add(egui::TextEdit::singleline(&mut *end_buffer))
                     })
                     .inner
                 });
 
-                let (duration, label) = match Epoch::from_str(&end_buffer) {
-                    Ok(end) if prediction.is_none() && eph_time.end() < end => {
-                        let duration = end - eph_time.end();
-                        let label = format!("Planned prediction length: {}", duration.approx());
-
-                        (Some(duration), label)
-                    }
-                    _ => {
-                        if !edit.inner.has_focus() {
-                            *end_buffer = format!("{:x}", eph_time.end());
-                        }
-                        let label = if prediction.is_some() {
-                            String::from("Prediction in progress")
-                        } else {
-                            String::from("No planned prediction")
-                        };
-
-                        (None, label)
-                    }
-                };
-
-                if duration.is_some() || prediction.as_ref().is_some_and(Ref::is_added) {
-                    *time_taken = None;
-                }
-
-                if let Some(prediction) = &prediction {
-                    let time_taken = time_taken.get_or_insert_with(Default::default);
-                    if prediction.in_progress() {
-                        *time_taken += time.delta()
-                    }
-                }
-
-                ui.horizontal(|ui| {
-                    ui.label(label);
-                    if let Some(time_taken) = &*time_taken {
-                        ui.separator();
-                        ui.label(format!("Time taken: {:?}", time_taken));
-                    }
-                });
-
-                ui.horizontal(|ui| match prediction {
-                    None => {
-                        ui.add_enabled_ui(duration.is_some(), |ui| {
-                            if ui.button("Start prediction").clicked() {
-                                if let Some(duration) = duration {
-                                    let sync_count = (duration.total_nanoseconds()
-                                        / Duration::from_days(25.0).total_nanoseconds())
-                                        as usize;
-                                    event_writer.send(ComputeEphemeridesEvent {
-                                        root,
-                                        duration,
-                                        sync_count,
-                                    });
-                                }
-                            }
-                        });
-                    }
-                    Some(prediction) => {
-                        let paused = prediction.is_paused();
-                        if ui.button(if paused { "Resume" } else { "Pause" }).clicked() {
-                            prediction.pause_or_resume();
-                        }
-                        if ui.button("Cancel").clicked() {
-                            commands.entity(root).remove::<PredictionTracking>();
-                        }
-                        ui.add(egui::ProgressBar::new(prediction.progress()).show_percentage());
-                    }
-                });
+                Self::prediction_content(
+                    "Forward",
+                    ui,
+                    &mut commands,
+                    &mut forward_events,
+                    root,
+                    forward,
+                    &mut end_buffer,
+                    |buf| Epoch::from_str(buf).ok().filter(|e| e > &sim_time.end()),
+                    &forward_edit.inner,
+                    sim_time.end(),
+                    &mut forward_time,
+                    time.delta(),
+                );
             });
 
         if window.is_some() && !open {
@@ -1224,7 +1313,7 @@ fn top_menu(
     mut commands: Commands,
     export: Option<Res<ExportSettings>>,
     planner: Option<Res<PredictionPlanner>>,
-    ephemerides: Option<Res<EphemeridesDebug>>,
+    debug: Option<Res<PredictionDebug>>,
 ) {
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
@@ -1237,7 +1326,7 @@ fn top_menu(
             }
             menu_label(export, ui, &mut commands, "Export");
             menu_label(planner, ui, &mut commands, "Prediction planner");
-            menu_label(ephemerides, ui, &mut commands, "Debug ephemerides");
+            menu_label(debug, ui, &mut commands, "Prediction debug");
         });
     });
 }
@@ -1312,7 +1401,7 @@ struct ExportFile;
 fn export_solar_system(
     mut commands: Commands,
     mut event: EventReader<ExportSolarSystemEvent>,
-    query: Query<(&Name, &EphemerisBuilder, &Trajectory)>,
+    query: Query<(&Name, &Mu, &Trajectory)>,
 ) {
     if let Some(event) = event.read().next() {
         let bytes = match event.export {
@@ -1332,12 +1421,12 @@ fn export_solar_system(
 
                 let bodies = query
                     .iter_many(&event.bodies)
-                    .map(|(name, builder, trajectory)| {
+                    .map(|(name, mu, trajectory)| {
                         trajectory
                             .evaluate_state_vector(epoch)
                             .map(|state_vector| BodyJson {
                                 name: name.to_string(),
-                                mu: builder.mu,
+                                mu: **mu,
                                 position: state_vector.position,
                                 velocity: state_vector.velocity,
                             })

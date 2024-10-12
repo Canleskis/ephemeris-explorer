@@ -1,7 +1,7 @@
 use crate::{
-    ephemerides::Trajectory,
     floating_origin::{BigSpace, GridCell, ReferenceFrame},
-    plot::EphemerisPlotConfig,
+    plot::TrajectoryPlotConfig,
+    prediction::Trajectory,
     MainState,
 };
 
@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use hifitime::{Duration, Epoch};
 
 #[derive(Resource)]
-pub struct EphemeridesTime {
+pub struct SimulationTime {
     pub paused: bool,
     pub time_scale: f64,
     real_time_scale: f64,
@@ -18,7 +18,7 @@ pub struct EphemeridesTime {
     current: Epoch,
 }
 
-impl EphemeridesTime {
+impl SimulationTime {
     pub fn new(epoch: Epoch) -> Self {
         Self {
             current: epoch,
@@ -61,13 +61,13 @@ impl EphemeridesTime {
     }
 }
 
-pub struct EphemerisTimePlugin;
+pub struct SimulationTimePlugin;
 
-impl Plugin for EphemerisTimePlugin {
+impl Plugin for SimulationTimePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             First,
-            (flow_time, sync_eph_time, sync_plot_config)
+            (flow_time, sync_sim_time, sync_plot_config)
                 .chain()
                 .after(bevy::time::TimeSystem)
                 .run_if(in_state(MainState::Running)),
@@ -79,56 +79,56 @@ impl Plugin for EphemerisTimePlugin {
     }
 }
 
-fn flow_time(time: Res<Time>, mut eph_time: ResMut<EphemeridesTime>) {
+fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {
     let delta = Duration::from(time.delta());
-    let previous = eph_time.current;
+    let previous = sim_time.current;
 
-    if !eph_time.paused {
-        let scaled_delta = eph_time.time_scale * delta;
-        eph_time.set_epoch_clamped(previous + scaled_delta);
+    if !sim_time.paused {
+        let scaled_delta = sim_time.time_scale * delta;
+        sim_time.set_epoch_clamped(previous + scaled_delta);
     }
 
-    eph_time.real_time_scale =
-        (eph_time.current - previous).total_nanoseconds() as f64 / delta.total_nanoseconds() as f64;
+    sim_time.real_time_scale =
+        (sim_time.current - previous).total_nanoseconds() as f64 / delta.total_nanoseconds() as f64;
 }
 
-fn sync_eph_time(mut eph_time: ResMut<EphemeridesTime>, query: Query<&Trajectory>) {
-    eph_time.set_start(query.iter().map(|e| e.start()).max().unwrap_or_default());
-    eph_time.set_end(query.iter().map(|e| e.end()).min().unwrap_or_default());
+fn sync_sim_time(mut sim_time: ResMut<SimulationTime>, query: Query<&Trajectory>) {
+    sim_time.set_start(query.iter().map(|e| e.start()).max().unwrap_or_default());
+    sim_time.set_end(query.iter().map(|e| e.end()).min().unwrap_or_default());
 }
 
-fn sync_plot_config(mut config: ResMut<EphemerisPlotConfig>, time: Res<EphemeridesTime>) {
+fn sync_plot_config(mut config: ResMut<TrajectoryPlotConfig>, time: Res<SimulationTime>) {
     config.current_time = time.current();
 }
 
 fn sync_position_to_time(
-    eph_time: Res<EphemeridesTime>,
+    sim_time: Res<SimulationTime>,
     mut query: Query<(&mut Transform, &mut GridCell, &Trajectory)>,
     root: Query<&ReferenceFrame, With<BigSpace>>,
 ) {
-    if eph_time.start() >= eph_time.end() {
+    if sim_time.start() >= sim_time.end() {
         return;
     }
 
     let root = root.single();
-    for (mut transform, mut cell, ephemeris) in query.iter_mut() {
-        let position = ephemeris
-            .evaluate_position(eph_time.current())
-            .expect("ephemerides time was out of bounds");
+    for (mut transform, mut cell, trajectory) in query.iter_mut() {
+        let position = trajectory
+            .evaluate_position(sim_time.current())
+            .expect("simulation time was out of bounds");
         (*cell, transform.translation) = root.translation_to_grid(position);
     }
 }
 
 use crate::load::Rotating;
 fn sync_rotation_to_time(
-    eph_time: Res<EphemeridesTime>,
+    sim_time: Res<SimulationTime>,
     mut query: Query<(&mut Transform, &Rotating)>,
 ) {
-    if eph_time.start() >= eph_time.end() {
+    if sim_time.start() >= sim_time.end() {
         return;
     }
 
     for (mut transform, rotating) in query.iter_mut() {
-        transform.rotation = rotating.at(eph_time.current()).as_quat();
+        transform.rotation = rotating.at(sim_time.current()).as_quat();
     }
 }

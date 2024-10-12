@@ -1,9 +1,9 @@
 mod camera;
-mod ephemerides;
 mod floating_origin;
 mod hierarchy;
 mod load;
 mod plot;
+mod prediction;
 mod selection;
 mod starlight;
 mod time;
@@ -11,13 +11,13 @@ mod ui;
 
 use crate::{
     camera::CameraPlugin,
-    ephemerides::{ComputeEphemeridesEvent, EphemerisComputePlugin},
     floating_origin::FloatingOriginPlugin,
     load::{LoadSolarSystemEvent, LoadingPlugin},
-    plot::{EphemerisPlotConfig, EphemerisPlotPlugin},
+    plot::{TrajectoryPlotConfig, TrajectoryPlotPlugin},
+    prediction::{Backward, ComputePredictionEvent, EphemerisBuilder, Forward, PredictionPlugin},
     selection::SelectionPlugin,
     starlight::StarLightPlugin,
-    time::EphemerisTimePlugin,
+    time::SimulationTimePlugin,
     ui::UiPlugin,
 };
 
@@ -62,17 +62,18 @@ fn main() {
             SelectionPlugin,
             StarLightPlugin,
             FloatingOriginPlugin::default(),
-            EphemerisComputePlugin,
-            EphemerisPlotPlugin,
-            EphemerisTimePlugin,
+            PredictionPlugin::<EphemerisBuilder<Forward>>::default(),
+            PredictionPlugin::<EphemerisBuilder<Backward>>::default(),
+            TrajectoryPlotPlugin,
+            SimulationTimePlugin,
             UiPlugin,
             LoadingPlugin,
         ))
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
         .insert_resource(Msaa::Sample8)
-        .insert_resource(EphemerisPlotConfig {
-            plot_history: false,
+        .insert_resource(TrajectoryPlotConfig {
+            plot_history: true,
             ..default()
         })
         .add_systems(Startup, default_solar_system)
@@ -115,7 +116,7 @@ fn delay_window_visiblity(mut window: Query<&mut Window>, frames: Res<bevy::core
 
 fn shortcut_send_prediction(
     input: Res<ButtonInput<KeyCode>>,
-    mut event_writer: EventWriter<ComputeEphemeridesEvent>,
+    mut event_writer: EventWriter<ComputePredictionEvent<EphemerisBuilder<Backward>>>,
     root: Query<Entity, With<SystemRoot>>,
 ) {
     if input.just_pressed(KeyCode::Comma) {
@@ -123,10 +124,10 @@ fn shortcut_send_prediction(
         let sync_count =
             (duration.total_nanoseconds() / Duration::from_days(25.0).total_nanoseconds()) as usize;
 
-        event_writer.send(ComputeEphemeridesEvent {
-            root: root.get_single().expect("No root entity found"),
+        event_writer.send(ComputePredictionEvent::new(
+            root.get_single().expect("No root entity found"),
             duration,
             sync_count,
-        });
+        ));
     }
 }
