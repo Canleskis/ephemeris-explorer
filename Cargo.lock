@@ -3,35 +3,6 @@
 version = 3
 
 [[package]]
-name = "Orbitism"
-version = "0.0.0"
-dependencies = [
- "bacon-sci",
- "bevy",
- "bevy-inspector-egui",
- "bevy_egui",
- "bevy_file_dialog",
- "big_space",
- "crossbeam-channel",
- "egui_extras",
- "hifitime",
- "humantime",
- "indexmap",
- "num",
- "particular",
- "poly_it",
- "polynomial",
- "rand",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
- "thiserror",
- "thousands",
- "toml",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2168,6 +2139,35 @@ dependencies = [
  "nohash-hasher",
  "parking_lot",
  "serde",
+]
+
+[[package]]
+name = "ephemeris-explorer"
+version = "0.1.0"
+dependencies = [
+ "bacon-sci",
+ "bevy",
+ "bevy-inspector-egui",
+ "bevy_egui",
+ "bevy_file_dialog",
+ "big_space",
+ "crossbeam-channel",
+ "egui_extras",
+ "hifitime",
+ "humantime",
+ "indexmap",
+ "num",
+ "particular",
+ "poly_it",
+ "polynomial",
+ "rand",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror",
+ "thousands",
+ "toml",
 ]
 
 [[package]]

@@ -50,7 +50,7 @@ fn main() {
                         prevent_default_event_handling: false,
                         canvas: Some("#app".to_owned()),
                         visible: false,
-                        title: "Orbitism".to_owned(),
+                        title: "Ephemeris Explorer".to_owned(),
                         ..default()
                     }),
                     ..default()

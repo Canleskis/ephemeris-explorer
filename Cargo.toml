@@ -1,6 +1,7 @@
 [package]
-name = "Orbitism"
 edition = "2021"
+name = "ephemeris-explorer"
+version = "0.1.0"
 
 [dependencies]
 bevy = { version = "0.14.2", features = ["jpeg"] }
