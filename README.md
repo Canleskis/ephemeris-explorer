@@ -15,9 +15,9 @@ On top of showing the bodies in the system and their trajectories, the user inte
 
 - **Body information**: When a body is selected, information about the current state of the body is displayed. You can also configure the plotting of the body's trajectory. Changing the `Reference` of the body changes some of the displayed information and changes the reference frame of the body's trajectory.
 
-- **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting a start epoch or an end epoch. You can pause and cancel ongoing predictions.
+- **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting a start epoch and an end epoch. You can pause and cancel ongoing predictions.
 
-- **Time Controls**: Allows to change the speed of the simulation, pause it or set the epoch of the simulation.
+- **Time Controls**: Allows to change the speed of the simulation, pause it or set the epoch.
 
 - **Export**: Allows to export the current state of the system to a file, selecting which bodies are included. The file can be loaded back into the system using the `Load` button. You can also export trajectories, but they are currently not importable.
 
@@ -41,12 +41,12 @@ On top of showing the bodies in the system and their trajectories, the user inte
 
 ## Technical overview of the ephemeris generation
 
-Currently, the generation of the ephemerides for a given system needs the following configuration:
+Generating accurate ephemerides for a given system requires the configuration of the following parameters:
 
 - An epoch at which is provided the state vectors of the bodies in the system, as well as the gravitational parameters of the bodies. This data is loaded with the `state.json` files in the provided systems.
-- A time step or delta time `dt` and for each body the sample count `count` and the degree `deg` of the piecewise polynomial interpolation. This data is loaded with the `ephemeris.json` files in the provided systems.
+- A time step or delta time `dt` and for each body the sample count `count` and the degree `deg` of the piecewise polynomial interpolation. This data is loaded with the `ephemeris.json` files in the provided systems. For now, the parameters need to be hand-tuned for each system to ensure the accuracy of the ephemerides. No tools are provided to help with this process yet, but hopefully this configuration won't be necessary in the future.  
 
-The initial state is used as the starting point for the generation of the ephemerides, whilst the other parameters define the accuracy of the ephemerides.  
-More specifically, each polynomial of degree `deg` is interpolated using 9 samples from the numerical integration. The sample count `count` and the delta `dt` define the distance between each of these samples. For example, with `dt = 1 min`, the resulting trajectory of a body with `count = 2` will be made of polynomials that have been interpolated with 9 samples at `t = 0 min`, `t = 2 min`, ..., `t = 16 min`. As such, each polynomial will be valid for `8 * count * dt` and the delta between each sample will be `count * dt`.  
+The initial state is used as the starting point for the generation of the ephemerides, whilst the other parameters define the accuracy of the ephemerides. More specifically, each polynomial of degree `deg` is interpolated using 9 samples from the numerical integration. The sample count `count` and the delta `dt` define the distance between each of these samples. For example, with `dt = 1 min`, the resulting trajectory of a body with `count = 2` will be made of polynomials that have been interpolated with 9 samples at `t = 0 min`, `t = 2 min`, ..., `t = 16 min`. As such, each polynomial will be valid for `8 * count * dt` and the delta between each sample will be `count * dt`.  
 Currently, the interpolation is done using a least squares polynomial fit using the [poly_it](https://github.com/SkyeC0re/polyit-rs) crate.  
+
 This implementation was custom made for this project and is not validated in any way. It is also better suited to stable trajectories and incorrect configuration of a system will result non-continuous polynomials within the trajectories.
