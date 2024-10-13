@@ -97,6 +97,21 @@ impl<Direction> EphemerisBuilder<Direction> {
     }
 
     #[inline]
+    pub fn velocity(&self) -> DVec3 {
+        self.velocity
+    }
+
+    #[inline]
+    pub fn position(&self) -> DVec3 {
+        self.position
+    }
+
+    #[inline]
+    pub fn mu(&self) -> f64 {
+        self.mu
+    }
+
+    #[inline]
     pub fn accelerations_into(accelerations: &mut Vec<DVec3>, slice: &[Self], _: f64) {
         accelerations.extend(slice.brute_force_pairs(Acceleration::checked()));
     }

@@ -3810,7 +3810,7 @@ dependencies = [
 [[package]]
 name = "particular"
 version = "0.8.0-dev"
-source = "git+https://github.com/Canleskis/particular.git#f0ac9f398680eb62a56cccafa4301232fb30a554"
+source = "git+https://github.com/Canleskis/particular.git#06a38724b66fb8add5a224bde94230f040e5433a"
 dependencies = [
  "glam",
  "particular_derive",
@@ -3820,7 +3820,7 @@ dependencies = [
 [[package]]
 name = "particular_derive"
 version = "0.8.0-dev"
-source = "git+https://github.com/Canleskis/particular.git#f0ac9f398680eb62a56cccafa4301232fb30a554"
+source = "git+https://github.com/Canleskis/particular.git#06a38724b66fb8add5a224bde94230f040e5433a"
 dependencies = [
  "proc-macro2",
  "quote",

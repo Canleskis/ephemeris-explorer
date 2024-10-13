@@ -67,11 +67,11 @@ impl Plugin for UiPlugin {
             (
                 top_menu,
                 time_controls,
-                solar_system_explorer,
+                solar_system_hierarchy,
                 (
                     ExportSettings::window,
                     PredictionPlanner::window,
-                    PredictionDebug::window,
+                    EphemeridesDebug::window,
                     BodyInfo::window,
                     limit_to_period,
                 ),
@@ -495,7 +495,7 @@ fn show_tree(
     ) {
         if let Ok((parent, name, children)) = query.get(parent) {
             let id = name;
-            let text = egui::WidgetText::from(format!("{}{:?}", id, ui.id()));
+            let text = egui::WidgetText::from(format!("{}#{:?}", id, ui.id()));
             let id = egui::Id::new(text.text());
 
             let has_children = children.is_some_and(|c| !c.is_empty());
@@ -744,7 +744,7 @@ impl BodyInfo {
     }
 }
 
-fn solar_system_explorer(
+fn solar_system_hierarchy(
     mut contexts: EguiContexts,
     mut followed: ResMut<Followed>,
     mut selected: ResMut<Selected>,
@@ -758,7 +758,7 @@ fn solar_system_explorer(
 
     let root = root.single();
 
-    egui::SidePanel::left("Explorer")
+    egui::SidePanel::left("Hierachy")
         .resizable(true)
         .show(ctx, |ui| {
             show_tree(
@@ -1019,9 +1019,9 @@ pub fn reversed_paint_default_icon(ui: &mut egui::Ui, openness: f32, response: &
 }
 
 #[derive(Default, Resource)]
-struct PredictionDebug;
+struct EphemeridesDebug;
 
-impl PredictionDebug {
+impl EphemeridesDebug {
     fn window(
         mut contexts: EguiContexts,
         mut commands: Commands,
@@ -1033,7 +1033,7 @@ impl PredictionDebug {
         };
 
         let mut open = window.is_some();
-        egui::Window::new("Prediction debug")
+        egui::Window::new("Ephemerides debug")
             .open(&mut open)
             .show(ctx, |ui| {
                 let queried = query
@@ -1315,7 +1315,7 @@ fn top_menu(
     mut commands: Commands,
     export: Option<Res<ExportSettings>>,
     planner: Option<Res<PredictionPlanner>>,
-    debug: Option<Res<PredictionDebug>>,
+    debug: Option<Res<EphemeridesDebug>>,
 ) {
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
@@ -1328,7 +1328,7 @@ fn top_menu(
             }
             menu_label(export, ui, &mut commands, "Export");
             menu_label(planner, ui, &mut commands, "Prediction planner");
-            menu_label(debug, ui, &mut commands, "Prediction debug");
+            menu_label(debug, ui, &mut commands, "Ephemerides debug");
         });
     });
 }

@@ -149,14 +149,16 @@ pub fn compute_predictions<Builder>(
         };
 
         // Different order results in slightly different acceleration values, which accumulate over
-        // time. To prevent this we could sort the queried bodies before computing the prediction.
+        // time. To prevent this we sort the queried bodies before computing the prediction to
+        // ensure predictable results.
+        let mut query = query.iter_many(entities).collect::<Vec<_>>();
+        query.sort_by_key(|(entity, _, _)| *entity);
         let (entities, (mut builders, mut trajectories)): (Vec<_>, (Vec<_>, Vec<_>)) = query
-            .iter_many(entities)
+            .into_iter()
             .map(|(entity, builder, trajectory)| {
                 (entity, (builder.clone(), trajectory.continued()))
             })
             .unzip();
-
         let (sender, receiver) = crossbeam_channel::unbounded();
 
         let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
