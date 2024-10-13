@@ -11,3 +11,7 @@ target/
 .markdownlint.yml
 
 assets/skybox
+
+data/
+output/
+__pycache__/
