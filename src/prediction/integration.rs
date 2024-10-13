@@ -39,9 +39,6 @@ impl PEFRL {
         accelerations_into(&mut acc, states, Self::XI * dt);
         for (state, acceleration) in states.iter_mut().zip(acc.iter()) {
             *state.velocity() += h1 * *acceleration;
-        }
-
-        for state in states.iter_mut() {
             let velocity = *state.velocity();
             *state.position() += Self::CHI * dt * velocity;
         }
@@ -50,9 +47,6 @@ impl PEFRL {
         accelerations_into(&mut acc, states, (Self::XI + Self::CHI) * dt);
         for (state, acceleration) in states.iter_mut().zip(acc.iter()) {
             *state.velocity() += h2 * *acceleration;
-        }
-
-        for state in states.iter_mut() {
             let velocity = *state.velocity();
             *state.position() += (1.0 - 2.0 * (Self::CHI + Self::XI)) * dt * velocity;
         }
@@ -61,22 +55,17 @@ impl PEFRL {
         accelerations_into(&mut acc, states, (1.0 - Self::XI - Self::CHI) * dt);
         for (state, acceleration) in states.iter_mut().zip(acc.iter()) {
             *state.velocity() += h2 * *acceleration;
-        }
-
-        for state in states.iter_mut() {
             let velocity = *state.velocity();
             *state.position() += Self::CHI * dt * velocity;
         }
+
         acc.clear();
         accelerations_into(&mut acc, states, (1.0 - Self::XI) * dt);
         for (state, acceleration) in states.iter_mut().zip(acc.iter()) {
             *state.velocity() += h1 * *acceleration;
-        }
-
-        for state in states.iter_mut() {
             let velocity = *state.velocity();
             *state.position() += Self::XI * dt * velocity;
-
+    
             state.step(delta);
         }
     }

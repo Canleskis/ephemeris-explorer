@@ -34,8 +34,8 @@ pub enum MainState {
     Running,
 }
 
-/// A given stellar system, planetary system or satellite system is a child of a root entity with
-/// this component.
+/// All the bodies in a stellar system, planetary system or satellite system should be a child of a
+/// root entity with this component.
 #[derive(Component)]
 pub struct SystemRoot;
 
@@ -73,7 +73,7 @@ fn main() {
         .enable_state_scoped_entities::<MainState>()
         .insert_resource(Msaa::Sample8)
         .insert_resource(TrajectoryPlotConfig {
-            plot_history: true,
+            plot_history: false,
             ..default()
         })
         .add_systems(Startup, default_solar_system)

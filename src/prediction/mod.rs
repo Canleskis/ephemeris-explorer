@@ -172,7 +172,11 @@ pub fn compute_predictions<Builder>(
                 let steps = (duration.to_seconds() / dt.to_seconds()).ceil() as usize;
                 let sync_count = sync_count.clamp(1, steps);
 
-                bevy::log::info!("Computing prediction for {}", duration);
+                bevy::log::info!(
+                    "Computing {} prediction for {}",
+                    std::any::type_name::<Builder>(),
+                    duration
+                );
                 let t0 = std::time::Instant::now();
                 for step in (0..steps).rev() {
                     while paused
@@ -204,7 +208,11 @@ pub fn compute_predictions<Builder>(
                         }
                     }
                 }
-                bevy::log::info!("Computing prediction took: {:?}", t0.elapsed());
+                bevy::log::info!(
+                    "Computing {} prediction took: {:?}",
+                    std::any::type_name::<Builder>(),
+                    t0.elapsed()
+                );
             })
         };
 

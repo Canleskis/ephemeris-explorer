@@ -874,18 +874,20 @@ impl ExportSettings {
             });
             let bodies = bodies.get_or_insert_with(|| query_trajectory.iter().collect());
 
-            if ui.button("Export").clicked() {
-                event.send(ExportSolarSystemEvent {
-                    export: export[*current],
-                    bodies: bodies.iter().copied().collect(),
-                });
-            }
-            egui::ComboBox::from_id_source("export type").show_index(
-                ui,
-                &mut current,
-                export.len(),
-                |i| export[i].to_string(),
-            );
+            ui.horizontal(|ui| {
+                if ui.button("Export").clicked() {
+                    event.send(ExportSolarSystemEvent {
+                        export: export[*current],
+                        bodies: bodies.iter().copied().collect(),
+                    });
+                }
+                egui::ComboBox::from_id_source("export type").show_index(
+                    ui,
+                    &mut current,
+                    export.len(),
+                    |i| export[i].to_string(),
+                );
+            });
 
             ui.add_space(5.0);
 

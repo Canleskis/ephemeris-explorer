@@ -10,14 +10,14 @@ use particular::gravity::newtonian::Acceleration;
 use particular::prelude::*;
 
 #[derive(Clone, Copy, Debug)]
-pub struct SegmentPoints {
+pub struct SegmentSamples {
     index: usize,
     xs: [f64; MAX_DIV],
     ys: [f64; MAX_DIV],
     zs: [f64; MAX_DIV],
 }
 
-impl SegmentPoints {
+impl SegmentSamples {
     #[inline]
     pub fn with(position: DVec3) -> Self {
         Self {
@@ -35,6 +35,13 @@ impl SegmentPoints {
         self.ys[self.index] = position.y;
         self.zs[self.index] = position.z;
         self.index += 1;
+    }
+
+    #[inline]
+    pub fn fill(&mut self, position: DVec3) {
+        self.xs.fill(position.x);
+        self.ys.fill(position.y);
+        self.zs.fill(position.z);
     }
 
     #[inline]
@@ -60,13 +67,13 @@ impl SegmentPoints {
 /// A structure that represents an ephemeris being built.
 #[derive(Debug, Component, Position, Mass)]
 pub struct EphemerisBuilder<Direction> {
-    pub time: Duration,
-    pub deg: usize,
-    pub velocity: DVec3,
-    pub position: DVec3,
-    pub mu: f64,
-    pub points: SegmentPoints,
-    pub _marker: std::marker::PhantomData<fn(Direction)>,
+    time: Duration,
+    deg: usize,
+    velocity: DVec3,
+    position: DVec3,
+    mu: f64,
+    samples: SegmentSamples,
+    _marker: std::marker::PhantomData<fn(Direction)>,
 }
 
 impl<Direction> Clone for EphemerisBuilder<Direction> {
@@ -74,7 +81,6 @@ impl<Direction> Clone for EphemerisBuilder<Direction> {
         *self
     }
 }
-
 impl<Direction> Copy for EphemerisBuilder<Direction> {}
 
 impl<Direction> EphemerisBuilder<Direction> {
@@ -82,7 +88,7 @@ impl<Direction> EphemerisBuilder<Direction> {
         Self {
             time: Duration::ZERO,
             deg,
-            points: SegmentPoints::with(position),
+            samples: SegmentSamples::with(position),
             position,
             mu,
             velocity,
@@ -99,16 +105,17 @@ impl<Direction> EphemerisBuilder<Direction> {
     pub fn update_trajectory_with(
         &mut self,
         trajectory: &mut Trajectory,
-        update: impl FnOnce(&mut Trajectory, SegmentPoints, usize),
+        update: impl FnOnce(&mut Trajectory, SegmentSamples, usize),
     ) {
         let time = self.time.total_nanoseconds();
         let interval = trajectory.granule().total_nanoseconds() / (MAX_DIV - 1) as i128;
         if time % interval == 0 {
-            self.points.push(self.position);
-            if self.points.is_full() {
-                update(trajectory, self.points, self.deg);
+            self.samples.push(self.position);
+            if self.samples.is_full() {
+                update(trajectory, self.samples, self.deg);
                 self.time = Duration::ZERO;
-                self.points = SegmentPoints::with(self.position);
+                self.samples.fill(self.position);
+                self.samples.index = 1;
             }
         }
     }
