@@ -1,0 +1,9 @@
+[physical]
+radii = [966.2, 962.0, 891.8]
+
+[material]
+base_color_texture = "textures/ceres/base.jpg"
+
+[orbit]
+reference = "Sun"
+color = "#c8c8c880"

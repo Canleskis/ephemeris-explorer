@@ -34,6 +34,10 @@
             "degree": 7,
             "count": 6
         },
+        "Ceres": {
+            "degree": 5,
+            "count": 450
+        },
         "Jupiter": {
             "degree": 7,
             "count": 18
