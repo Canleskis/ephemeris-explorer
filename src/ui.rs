@@ -1,10 +1,12 @@
 use crate::{
     camera::Followed,
     hierarchy,
-    load::{LoadSolarSystemEvent, Mu},
+    load::{LoadSolarSystemEvent, Mu, SolarSystem, UniqueAsset},
     plot::{TrajectoryPlot, TrajectoryPlotConfig},
     prediction::{
-        Backward, ComputePredictionEvent, EphemerisBuilder, Forward, PredictionTracker, Trajectory,
+        integration::{IntegrationState, PEFRL},
+        Backward, ComputePredictionEvent, EphemerisBuilder, Forward, PredictionSettings,
+        PredictionTracker, Trajectory,
     },
     selection::Selected,
     time::SimulationTime,
@@ -13,10 +15,13 @@ use crate::{
 
 use std::str::FromStr;
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_file_dialog::prelude::*;
 use hifitime::{Duration, Epoch};
+use particular::gravity::newtonian::Acceleration;
+use particular::prelude::*;
 use thousands::Separable;
 
 #[derive(Component)]
@@ -1022,11 +1027,16 @@ pub fn reversed_paint_default_icon(ui: &mut egui::Ui, openness: f32, response: &
 struct EphemeridesDebug;
 
 impl EphemeridesDebug {
+    #[expect(clippy::too_many_arguments)]
     fn window(
         mut contexts: EguiContexts,
         mut commands: Commands,
         window: Option<Res<Self>>,
-        query: Query<(&Name, &Trajectory)>,
+        system: UniqueAsset<SolarSystem>,
+        prediction_settings: Res<PredictionSettings<EphemerisBuilder<Forward>>>,
+        sim_time: Res<SimulationTime>,
+        query: Query<(Entity, &Name, &Trajectory)>,
+        mut errors: Local<Option<bevy::utils::EntityHashMap<Entity, f64>>>,
     ) {
         let Some(ctx) = contexts.try_ctx_mut() else {
             return;
@@ -1036,18 +1046,84 @@ impl EphemeridesDebug {
         egui::Window::new("Ephemerides debug")
             .open(&mut open)
             .show(ctx, |ui| {
-                let queried = query
-                    .iter()
-                    .map(|(name, data)| {
-                        (
-                            name.as_str(),
-                            data.size(),
-                            data.len(),
-                            data.start(),
-                            data.end(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                let dt = prediction_settings.dt;
+                let system = system.get().unwrap();
+                let start = system.epoch;
+                let duration = Duration::from_days(365.0 * 2.0).min(sim_time.end() - start);
+                let compute_error = || {
+                    #[derive(Clone, Component, Position, Mass)]
+                    struct DiscreteData {
+                        pub velocity: DVec3,
+                        pub position: DVec3,
+                        pub mu: f64,
+                        pub start: Epoch,
+                        pub step: Duration,
+                        pub positions: Vec<DVec3>,
+                    }
+
+                    impl IntegrationState for DiscreteData {
+                        #[inline]
+                        fn velocity(&mut self) -> &mut DVec3 {
+                            &mut self.velocity
+                        }
+
+                        #[inline]
+                        fn position(&mut self) -> &mut DVec3 {
+                            &mut self.position
+                        }
+
+                        #[inline]
+                        fn step(&mut self, _: Duration) {
+                            self.positions.push(self.position);
+                        }
+                    }
+                    // We sort the same way as the prediction does.
+                    let (query, mut discrete_data): (Vec<_>, Vec<_>) = query
+                        .iter()
+                        .sort::<Entity>()
+                        .map(|(entity, name, trajectory)| {
+                            (
+                                (entity, name, trajectory),
+                                DiscreteData {
+                                    velocity: system.bodies[&**name].velocity,
+                                    position: system.bodies[&**name].position,
+                                    mu: system.bodies[&**name].mu,
+                                    start: system.epoch,
+                                    step: dt,
+                                    positions: vec![system.bodies[&**name].position],
+                                },
+                            )
+                        })
+                        .unzip();
+
+                    let steps = (duration.to_seconds() / dt.to_seconds()).ceil() as _;
+                    for _ in 0..steps {
+                        PEFRL::integrate(dt, &mut discrete_data, |accs, states, _| {
+                            accs.extend(states.brute_force_pairs(Acceleration::checked()))
+                        });
+                    }
+
+                    query
+                        .iter()
+                        .zip(discrete_data)
+                        .map(|((entity, _, traj), discrete)| {
+                            (
+                                *entity,
+                                discrete
+                                    .positions
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, discrete_position)| {
+                                        let epoch = discrete.start + discrete.step * i as i64;
+                                        let traj_position = traj.evaluate_position(epoch).unwrap();
+
+                                        discrete_position.distance(traj_position) * 1e3
+                                    })
+                                    .fold(0.0, f64::max),
+                            )
+                        })
+                        .collect::<bevy::utils::EntityHashMap<_, _>>()
+                };
 
                 let available_height = ui.available_height();
                 egui_extras::TableBuilder::new(ui)
@@ -1057,6 +1133,7 @@ impl EphemeridesDebug {
                     .column(egui_extras::Column::exact(80.0))
                     .column(egui_extras::Column::exact(200.0))
                     .column(egui_extras::Column::exact(200.0))
+                    .column(egui_extras::Column::exact(120.0))
                     .min_scrolled_height(0.0)
                     .max_scroll_height(available_height)
                     .header(20.0, |mut header| {
@@ -1064,7 +1141,7 @@ impl EphemeridesDebug {
                             ui.strong("Body");
                         });
                         header.col(|ui| {
-                            ui.strong("Size (MB)");
+                            ui.strong("Size");
                         });
                         header.col(|ui| {
                             ui.strong("Segments");
@@ -1075,27 +1152,56 @@ impl EphemeridesDebug {
                         header.col(|ui| {
                             ui.strong("End");
                         });
+                        header.col(|ui| {
+                            let text = if errors.is_some() {
+                                "Interpolation error"
+                            } else {
+                                "Compute error"
+                            };
+                            if ui
+                                .add(egui::Button::new(text))
+                                .on_hover_text(format!(
+                                    "Computes interpolation error from {} to {}",
+                                    start,
+                                    start + duration
+                                ))
+                                .clicked()
+                            {
+                                *errors = Some(compute_error());
+                            }
+                        });
                     })
                     .body(|body| {
+                        let queried = query
+                            .iter()
+                            .sort::<Entity>()
+                            .map(|(entity, name, data)| {
+                                (
+                                    name.as_str(),
+                                    data.size(),
+                                    data.len(),
+                                    data.start(),
+                                    data.end(),
+                                    errors.as_ref().and_then(|errors| errors.get(&entity)),
+                                )
+                            })
+                            .collect::<Vec<_>>();
                         body.rows(16.0, queried.len() + 1, |mut row| {
-                            let (name, size, count, start, end) = match row.index() {
-                                0 => (
-                                    "Total",
-                                    queried.iter().map(|(_, size, ..)| size).sum(),
-                                    queried.iter().map(|(.., count, _, _)| count).sum(),
-                                    queried
-                                        .iter()
-                                        .map(|(.., start, _)| start)
-                                        .max()
-                                        .copied()
-                                        .unwrap_or_default(),
-                                    queried
-                                        .iter()
-                                        .map(|(.., end)| end)
-                                        .min()
-                                        .copied()
-                                        .unwrap_or_default(),
+                            let (name, size, count, start, end, error) = match row.index() {
+                                0 => queried.iter().fold(
+                                    ("Total", 0, 0, Epoch::default(), Epoch::default(), None),
+                                    |(name, size, count, ..), (_, s, c, ..)| {
+                                        (
+                                            name,
+                                            size + s,
+                                            count + c,
+                                            sim_time.start(),
+                                            sim_time.end(),
+                                            None,
+                                        )
+                                    },
                                 ),
+
                                 i => queried[i - 1],
                             };
                             row.col(|ui| {
@@ -1103,7 +1209,7 @@ impl EphemeridesDebug {
                             });
                             row.col(|ui| {
                                 ui.label(
-                                    format!("{:.2}", (size as f32 / (1024.0 * 1024.0)))
+                                    format!("{:.2} MB", (size as f32 / (1024.0 * 1024.0)))
                                         .separate_with_commas(),
                                 );
                             });
@@ -1115,6 +1221,13 @@ impl EphemeridesDebug {
                             });
                             row.col(|ui| {
                                 ui.label(format!("{:x}", end));
+                            });
+                            row.col(|ui| {
+                                ui.label(
+                                    error
+                                        .map(|error| format!("{:.2} metres", error))
+                                        .unwrap_or_else(|| "N/A".to_string()),
+                                );
                             });
                         })
                     });
