@@ -288,7 +288,7 @@ fn spawn_bodies(
                 TrajectoryPlot {
                     enabled: depth <= 1,
                     color: visual.orbit.color,
-                    start: Epoch::default(),
+                    start: Epoch::default() - Duration::MAX,
                     end: Epoch::default() + Duration::MAX,
                     threshold: 0.5,
                     reference: Some(parent),

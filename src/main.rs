@@ -72,10 +72,7 @@ fn main() {
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
         .insert_resource(Msaa::Sample8)
-        .insert_resource(TrajectoryPlotConfig {
-            plot_history: false,
-            ..default()
-        })
+        .insert_resource(TrajectoryPlotConfig::default())
         .add_systems(Startup, default_solar_system)
         .add_systems(First, delay_window_visiblity)
         .add_systems(

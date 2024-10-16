@@ -11,7 +11,6 @@ use hifitime::Epoch;
 #[derive(Resource, Default)]
 pub struct TrajectoryPlotConfig {
     pub current_time: Epoch,
-    pub plot_history: bool,
 }
 
 #[derive(Component, Default)]
@@ -68,11 +67,6 @@ fn plot_trajectories(
             continue;
         }
 
-        let start = match config.plot_history {
-            false => plot.start.max(config.current_time),
-            true => plot.start,
-        };
-
         let threshold = match proj {
             Projection::Perspective(p) => {
                 const ARC_MINUTE: f32 = 0.000290888;
@@ -93,17 +87,21 @@ fn plot_trajectories(
                         let ref_sv = ref_trajectory.evaluate_state_vector(at).unwrap();
                         global(sv - ref_sv + StateVector::from_position(ref_current_pos))
                     },
-                    start.max(trajectory.start()).max(ref_trajectory.start()),
+                    plot.start
+                        .max(trajectory.start())
+                        .max(ref_trajectory.start()),
                     plot.end.min(trajectory.end()).min(ref_trajectory.end()),
                 )
             } else {
                 (
                     &|at| global(trajectory.evaluate_state_vector(at).unwrap()),
-                    start.max(trajectory.start()),
+                    plot.start.max(trajectory.start()),
                     plot.end.min(trajectory.end()),
                 )
             };
 
+        let min = min.min(max);
+        let max = max.max(min);
         let points = plot_points(eval, min, max, camera_transform, threshold);
         // for &p in &points {
         //     let dir = camera_transform.translation() - p;

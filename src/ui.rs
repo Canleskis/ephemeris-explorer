@@ -80,6 +80,7 @@ impl Plugin for UiPlugin {
                     BodyInfo::window,
                     limit_to_period,
                 ),
+                BodyInfo::persisting,
             )
                 .chain()
                 .run_if(in_state(MainState::Running)),
@@ -349,10 +350,10 @@ impl egui::Widget for ParsedTextEdit<'_, Epoch> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         let edit = ui.add(egui::TextEdit::singleline(self.text));
 
-        if let Some(val) = (self.parse)(self.text) {
-            *self.parsed = val;
-        } else if !edit.has_focus() {
+        if !edit.has_focus() {
             *self.text = (self.format)(self.parsed);
+        } else if let Some(val) = (self.parse)(self.text) {
+            *self.parsed = val;
         }
 
         edit
@@ -566,10 +567,31 @@ impl<T> PredictionInfo<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum OverwriteKind {
+    Current,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PlotOverwrite {
+    previous: Epoch,
+    kind: OverwriteKind,
+}
+
+impl PlotOverwrite {
+    fn overwrite(&self, sim_time: &SimulationTime, epoch: &mut Epoch) {
+        match self.kind {
+            OverwriteKind::Current => *epoch = sim_time.current(),
+        }
+    }
+}
+
 #[derive(Component)]
 struct BodyInfo {
     plot_start_buffer: String,
     plot_end_buffer: String,
+    plot_start_overwrite: Option<PlotOverwrite>,
+    plot_end_overwrite: Option<PlotOverwrite>,
 }
 
 impl BodyInfo {
@@ -581,7 +603,23 @@ impl BodyInfo {
             commands.entity(entity).insert(Self {
                 plot_start_buffer: format!("{:x}", plot.start),
                 plot_end_buffer: format!("{:x}", plot.end),
+                plot_start_overwrite: Some(PlotOverwrite {
+                    previous: plot.start,
+                    kind: OverwriteKind::Current,
+                }),
+                plot_end_overwrite: None,
             });
+        }
+    }
+
+    fn persisting(sim_time: Res<SimulationTime>, mut query: Query<(&mut TrajectoryPlot, &Self)>) {
+        for (mut plot, info) in &mut query {
+            if let Some(overwrite) = &info.plot_start_overwrite {
+                overwrite.overwrite(&sim_time, &mut plot.start);
+            }
+            if let Some(ovewrite) = &info.plot_end_overwrite {
+                ovewrite.overwrite(&sim_time, &mut plot.end);
+            }
         }
     }
 
@@ -709,22 +747,60 @@ impl BodyInfo {
                     ui.heading("Plotting");
 
                     ui.horizontal(|ui| {
-                        ui.label("Start:");
-                        ui.add(ParsedTextEdit::singleline(
-                            &mut info.plot_start_buffer,
-                            &mut plot.start,
-                            |buf| Epoch::from_str(buf).ok(),
-                            epoch_tai_formatter,
-                        ));
+                        let label = ui
+                            .selectable_label(info.plot_start_overwrite.is_some(), "Start:")
+                            .on_hover_text("Click to toggle overwrite with current time");
+                        if label.clicked() {
+                            match info.plot_start_overwrite.take() {
+                                Some(PlotOverwrite { previous, .. }) => {
+                                    plot.start = previous;
+                                }
+                                None => {
+                                    info.plot_start_overwrite = Some(PlotOverwrite {
+                                        previous: plot.start,
+                                        kind: OverwriteKind::Current,
+                                    });
+                                }
+                            }
+                        }
+                        ui.add_enabled(
+                            info.plot_start_overwrite.is_none(),
+                            ParsedTextEdit::singleline(
+                                &mut info.plot_start_buffer,
+                                &mut plot.start,
+                                |buf| Epoch::from_str(buf).ok(),
+                                epoch_tai_formatter,
+                            ),
+                        )
+                        .on_disabled_hover_text("Overwritten with current time");
                     });
                     ui.horizontal(|ui| {
-                        ui.label("End:  ");
-                        ui.add(ParsedTextEdit::singleline(
-                            &mut info.plot_end_buffer,
-                            &mut plot.end,
-                            |buf| Epoch::from_str(buf).ok(),
-                            epoch_tai_formatter,
-                        ));
+                        let label = ui
+                            .selectable_label(info.plot_end_overwrite.is_some(), "End:  ")
+                            .on_hover_text("Click to toggle overwrite with current time");
+                        if label.clicked() {
+                            match info.plot_end_overwrite.take() {
+                                Some(PlotOverwrite { previous, .. }) => {
+                                    plot.end = previous;
+                                }
+                                None => {
+                                    info.plot_end_overwrite = Some(PlotOverwrite {
+                                        previous: plot.end,
+                                        kind: OverwriteKind::Current,
+                                    });
+                                }
+                            }
+                        }
+                        ui.add_enabled(
+                            info.plot_end_overwrite.is_none(),
+                            ParsedTextEdit::singleline(
+                                &mut info.plot_end_buffer,
+                                &mut plot.end,
+                                |buf| Epoch::from_str(buf).ok(),
+                                epoch_tai_formatter,
+                            ),
+                        )
+                        .on_disabled_hover_text("Overwritten with current time");
                     });
 
                     ui.add_space(5.0);
