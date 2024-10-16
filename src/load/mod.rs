@@ -17,7 +17,7 @@ use crate::{
     },
     selection::Clickable,
     starlight::Star,
-    time::SimulationTime,
+    time::{AutoExtendSettings, SimulationTime},
     ui::{Labelled, OrbitalPeriod, UiCamera},
     MainState, SystemRoot,
 };
@@ -342,6 +342,8 @@ fn spawn_bodies(
     }
 
     commands.insert_resource(SimulationTime::new(solar_system.epoch));
+    commands.insert_resource(AutoExtendSettings::<EphemerisBuilder<Forward>>::new(true));
+    commands.insert_resource(AutoExtendSettings::<EphemerisBuilder<Backward>>::new(true));
     commands.insert_resource(PredictionSettings::<EphemerisBuilder<Forward>>::new(dt));
     commands.insert_resource(PredictionSettings::<EphemerisBuilder<Backward>>::new(dt));
 }

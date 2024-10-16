@@ -82,15 +82,13 @@ pub fn adjusted_duration(duration: Duration, granules: impl Iterator<Item = Dura
         .unwrap()
 }
 
-type PredictionData<Builder> = Vec<(Entity, Builder, Trajectory)>;
-
 #[derive(Component, Debug)]
-pub struct PredictionTracker<Builder: Component> {
+pub struct PredictionTracker<Builder> {
     thread: std::thread::JoinHandle<()>,
-    receiver: crossbeam_channel::Receiver<PredictionData<Builder>>,
+    receiver: crossbeam_channel::Receiver<Vec<(Entity, Builder, Trajectory)>>,
     paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    steps: usize,
-    current: usize,
+    pub steps: usize,
+    pub current: usize,
 }
 
 impl<Direction: Component> PredictionTracker<Direction> {
@@ -131,6 +129,10 @@ pub fn compute_predictions<Builder>(
         ..
     } in compute_events.read().copied()
     {
+        if requested_duration.is_negative() || requested_duration == Duration::ZERO {
+            bevy::log::error!("Invalid duration: {}", requested_duration);
+            continue;
+        }
         let Ok((root, entities, prediction)) = prediction_query.get(root) else {
             bevy::log::error!("Root entity not found, cannot compute prediction");
             continue;
@@ -139,12 +141,10 @@ pub fn compute_predictions<Builder>(
             bevy::log::warn!("Prediction computation already in progress");
             continue;
         }
+        let name = std::any::type_name::<Builder>();
 
         let Some(dt) = settings.as_ref().map(|s| s.dt) else {
-            bevy::log::error!(
-                "{} resource not found",
-                std::any::type_name::<PredictionSettings<Builder>>()
-            );
+            bevy::log::error!("Settings for {} not found", name);
             continue;
         };
 
@@ -159,63 +159,58 @@ pub fn compute_predictions<Builder>(
                 (entity, (builder.clone(), trajectory.continued()))
             })
             .unzip();
+
+        // This isn't exactly what we want, but it will do for now.
+        let duration = adjusted_duration(
+            requested_duration,
+            trajectories.iter().map(Trajectory::granule),
+        );
+        let steps = (duration.to_seconds() / dt.to_seconds()).ceil() as usize;
+        let sync_count = sync_count.clamp(1, steps);
+
         let (sender, receiver) = crossbeam_channel::unbounded();
 
         let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let thread = {
             let paused = std::sync::Arc::downgrade(&paused);
-            std::thread::spawn(move || {
-                // This isn't exactly what we want, but it will do for now.
-                let duration = adjusted_duration(
-                    requested_duration,
-                    trajectories.iter().map(Trajectory::granule),
-                );
+            std::thread::Builder::new()
+                .name(format!("Prediction thread {}", name,))
+                .spawn(move || {
+                    bevy::log::info!("Computing {} prediction for {}", name, duration);
+                    let t0 = std::time::Instant::now();
+                    for step in (0..steps).rev() {
+                        while paused
+                            .upgrade()
+                            .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed))
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
 
-                let steps = (duration.to_seconds() / dt.to_seconds()).ceil() as usize;
-                let sync_count = sync_count.clamp(1, steps);
+                        Trajectory::build_trajectories(&mut trajectories, &mut builders, dt);
 
-                bevy::log::info!(
-                    "Computing {} prediction for {}",
-                    std::any::type_name::<Builder>(),
-                    duration
-                );
-                let t0 = std::time::Instant::now();
-                for step in (0..steps).rev() {
-                    while paused
-                        .upgrade()
-                        .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed))
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
+                        if step % steps.div_ceil(sync_count) == 0 {
+                            let data = entities
+                                .iter()
+                                .zip(builders.iter())
+                                .zip(trajectories.iter_mut())
+                                .map(|((entity, builder), trajectory)| {
+                                    (
+                                        *entity,
+                                        builder.clone(),
+                                        // TODO: We should re-use the previous allocation instead.
+                                        std::mem::replace(trajectory, trajectory.continued()),
+                                    )
+                                });
 
-                    Trajectory::build_trajectories(&mut trajectories, &mut builders, dt);
-
-                    if step % steps.div_ceil(sync_count) == 0 {
-                        let data = entities
-                            .iter()
-                            .zip(builders.iter())
-                            .zip(trajectories.iter_mut())
-                            .map(|((entity, builder), trajectory)| {
-                                (
-                                    *entity,
-                                    builder.clone(),
-                                    // TODO: We should re-use the previous allocation instead.
-                                    std::mem::replace(trajectory, trajectory.continued()),
-                                )
-                            });
-
-                        if sender.send(data.collect()).is_err() {
-                            bevy::log::warn!("Failed to send prediction data, stopping thread");
-                            break;
+                            if sender.send(data.collect()).is_err() {
+                                bevy::log::warn!("Failed to send prediction data, stopping thread");
+                                break;
+                            }
                         }
                     }
-                }
-                bevy::log::info!(
-                    "Computing {} prediction took: {:?}",
-                    std::any::type_name::<Builder>(),
-                    t0.elapsed()
-                );
-            })
+                    bevy::log::info!("Computing {} prediction took: {:?}", name, t0.elapsed());
+                })
+                .unwrap()
         };
 
         commands.entity(root).insert(PredictionTracker {

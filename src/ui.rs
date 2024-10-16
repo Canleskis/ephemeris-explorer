@@ -9,7 +9,7 @@ use crate::{
         PredictionTracker, Trajectory,
     },
     selection::Selected,
-    time::SimulationTime,
+    time::{AutoExtendSettings, SimulationTime},
     MainState, SystemRoot,
 };
 
@@ -388,7 +388,7 @@ fn time_controls(
 
             if edit.lost_focus() {
                 if let Ok(buffer) = Epoch::from_str(&buffer) {
-                    sim_time.set_epoch_clamped(buffer);
+                    sim_time.set_current_clamped(buffer);
                 }
             }
 
@@ -1245,11 +1245,11 @@ struct PredictionPlanner;
 impl PredictionPlanner {
     #[expect(clippy::too_many_arguments)]
     fn prediction_content<Builder: Component>(
-        name: &str,
         ui: &mut egui::Ui,
         commands: &mut Commands,
         events: &mut EventWriter<ComputePredictionEvent<Builder>>,
         root: Entity,
+        auto_extend: &mut AutoExtendSettings<Builder>,
         prediction: Option<Ref<PredictionTracker<Builder>>>,
         buffer: &mut String,
         parser: impl Fn(&str) -> Option<Epoch>,
@@ -1261,11 +1261,7 @@ impl PredictionPlanner {
         let (backward_duration, backward_label) = match parser(buffer) {
             Some(start) if prediction.is_none() => {
                 let duration = (start - default).abs();
-                let label = format!(
-                    "Planned {} prediction length: {}",
-                    name.to_lowercase(),
-                    duration.approx()
-                );
+                let label = format!("Planned prediction length: {}", duration.approx());
 
                 (Some(duration), label)
             }
@@ -1274,12 +1270,12 @@ impl PredictionPlanner {
                     *buffer = format!("{:x}", default);
                 }
                 let label = if prediction.is_some() {
-                    format!("{} prediction in progress", name)
+                    "Prediction in progress"
                 } else {
-                    format!("No planned {} prediction", name.to_lowercase())
+                    "No planned prediction"
                 };
 
-                (None, label)
+                (None, label.to_string())
             }
         };
 
@@ -1294,6 +1290,8 @@ impl PredictionPlanner {
             }
         }
 
+        ui.checkbox(&mut auto_extend.enabled, "Auto extend");
+
         ui.horizontal(|ui| {
             ui.label(backward_label);
             if let Some(time_taken) = &*time_taken {
@@ -1305,10 +1303,7 @@ impl PredictionPlanner {
         ui.horizontal(|ui| match prediction {
             None => {
                 ui.add_enabled_ui(backward_duration.is_some(), |ui| {
-                    if ui
-                        .button(format!("Start {} prediction", name.to_lowercase()))
-                        .clicked()
-                    {
+                    if ui.button("Start prediction").clicked() {
                         if let Some(duration) = backward_duration {
                             let sync_count = (duration.total_nanoseconds()
                                 / Duration::from_days(25.0).total_nanoseconds())
@@ -1329,6 +1324,8 @@ impl PredictionPlanner {
                 if ui.add(button).clicked() {
                     commands.entity(root).remove::<PredictionTracker<Builder>>();
                 }
+                dbg!(prediction.steps);
+                dbg!(prediction.current);
                 ui.add(egui::ProgressBar::new(prediction.progress()).show_percentage());
             }
         });
@@ -1341,6 +1338,8 @@ impl PredictionPlanner {
         mut commands: Commands,
         window: Option<Res<Self>>,
         sim_time: Res<SimulationTime>,
+        mut auto_extend_forward: ResMut<AutoExtendSettings<EphemerisBuilder<Forward>>>,
+        mut auto_extend_backward: ResMut<AutoExtendSettings<EphemerisBuilder<Backward>>>,
         mut start_buffer: Local<String>,
         mut end_buffer: Local<String>,
         mut forward_events: EventWriter<ComputePredictionEvent<EphemerisBuilder<Forward>>>,
@@ -1370,6 +1369,9 @@ impl PredictionPlanner {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.spacing_mut().text_edit_width = 300.0;
+
+                ui.heading("Backward prediction");
+
                 let backward_edit = ui.horizontal(|ui| {
                     ui.label("Start time:");
                     ui.add_enabled_ui(backward.is_none(), |ui| {
@@ -1379,11 +1381,11 @@ impl PredictionPlanner {
                 });
 
                 Self::prediction_content(
-                    "Backward",
                     ui,
                     &mut commands,
                     &mut backward_events,
                     root,
+                    &mut auto_extend_backward,
                     backward,
                     &mut start_buffer,
                     |buf| Epoch::from_str(buf).ok().filter(|e| e < &sim_time.start()),
@@ -1392,6 +1394,9 @@ impl PredictionPlanner {
                     &mut backward_time,
                     time.delta(),
                 );
+
+                ui.separator();
+                ui.heading("Forward prediction");
 
                 let forward_edit = ui.horizontal(|ui| {
                     ui.label("End time:  ");
@@ -1402,11 +1407,11 @@ impl PredictionPlanner {
                 });
 
                 Self::prediction_content(
-                    "Forward",
                     ui,
                     &mut commands,
                     &mut forward_events,
                     root,
+                    &mut auto_extend_forward,
                     forward,
                     &mut end_buffer,
                     |buf| Epoch::from_str(buf).ok().filter(|e| e > &sim_time.end()),
