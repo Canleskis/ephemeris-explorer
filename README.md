@@ -15,7 +15,7 @@ On top of showing the bodies in the system and their trajectories, the user inte
 
 - **Body information**: When a body is selected, information about the current state of the body is displayed. You can also configure the plotting of the body's trajectory. Changing the `Reference` of the body changes some of the displayed information and changes the reference frame of the body's trajectory.
 
-- **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting a start epoch and an end epoch. You can pause and cancel ongoing predictions.
+- **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting a start epoch and an end epoch. You can pause and cancel ongoing predictions. By default, predictions will auto-extend when the current time approaches the prediction bounds.
 
 - **Time Controls**: Allows to change the speed of the simulation, pause it or set the epoch.
 
