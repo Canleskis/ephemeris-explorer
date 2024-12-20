@@ -15,3 +15,4 @@ assets/skybox
 data/
 output/
 __pycache__/
+*.exe

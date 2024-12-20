@@ -220,12 +220,5 @@ pub struct EphemeridesSettings {
     pub settings: bevy::utils::HashMap<String, EphemerisSettings>,
 }
 
-impl EphemeridesSettings {
-    pub fn granule(&self, name: &str, div: usize) -> Duration {
-        let settings = self.settings.get(name).unwrap();
-        self.dt * div as i64 * settings.count as i64
-    }
-}
-
 #[derive(serde::Deserialize, Asset, TypePath, Deref, DerefMut, Debug)]
 pub struct HierarchyTree(pub indexmap::IndexMap<String, HierarchyTree>);

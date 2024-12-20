@@ -2,6 +2,7 @@ use crate::MainState;
 
 use bevy::prelude::*;
 
+#[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LoadingScreenPlugin;
 
 impl Plugin for LoadingScreenPlugin {
@@ -17,16 +18,18 @@ pub struct LoadingScreen;
 pub struct LoadingText;
 
 fn add_loading_screen(mut commands: Commands) {
-    commands.spawn((
-        StateScoped(MainState::Loading),
-        Camera3dBundle {
-            camera: Camera {
-                order: isize::MAX,
+    let camera = commands
+        .spawn((
+            StateScoped(MainState::Loading),
+            Camera3dBundle {
+                camera: Camera {
+                    order: isize::MAX,
+                    ..default()
+                },
                 ..default()
             },
-            ..default()
-        },
-    ));
+        ))
+        .id();
 
     commands
         .spawn((
@@ -39,9 +42,11 @@ fn add_loading_screen(mut commands: Commands) {
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
+                background_color: BackgroundColor(Color::BLACK),
                 ..default()
             },
             LoadingScreen,
+            TargetCamera(camera),
         ))
         .with_children(|parent| {
             parent.spawn((

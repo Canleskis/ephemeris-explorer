@@ -47,7 +47,7 @@ impl Command for AddChild {
             panic!("Cannot add entity as a child of itself.");
         }
 
-        world.entity_mut(self.child).insert(Parent(self.parent));
+        update_old_parent(world, self.child, self.parent);
 
         let mut parent = world.entity_mut(self.parent);
         if let Some(mut children_component) = parent.get_mut::<Children>() {
@@ -56,5 +56,41 @@ impl Command for AddChild {
         } else {
             parent.insert(Children(SmallVec::from_slice(&[self.child])));
         }
+    }
+}
+
+fn update_parent(world: &mut World, child: Entity, new_parent: Entity) -> Option<Entity> {
+    let mut child = world.entity_mut(child);
+    if let Some(mut parent) = child.get_mut::<Parent>() {
+        let previous = parent.0;
+        *parent = Parent(new_parent);
+        Some(previous)
+    } else {
+        child.insert(Parent(new_parent));
+        None
+    }
+}
+
+fn remove_from_children(world: &mut World, parent: Entity, child: Entity) {
+    let Some(mut parent) = world.get_entity_mut(parent) else {
+        return;
+    };
+    let Some(mut children) = parent.get_mut::<Children>() else {
+        return;
+    };
+    children.0.retain(|x| *x != child);
+    if children.is_empty() {
+        parent.remove::<Children>();
+    }
+}
+
+fn update_old_parent(world: &mut World, child: Entity, parent: Entity) {
+    let previous = update_parent(world, child, parent);
+    if let Some(previous_parent) = previous {
+        // Do nothing if the child was already parented to this entity.
+        if previous_parent == parent {
+            return;
+        }
+        remove_from_children(world, previous_parent, child);
     }
 }

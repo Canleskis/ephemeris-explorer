@@ -8,7 +8,15 @@ use bevy::{
     math::{DQuat, DVec3},
     prelude::*,
 };
-use big_space::camera::{camera_controller, nearest_objects_in_frame, CameraInput};
+pub use big_space::camera::{
+    camera_controller, nearest_objects_in_frame, CameraController, CameraInput,
+};
+
+pub fn is_using_pointer(query: Query<&Window, With<bevy::window::PrimaryWindow>>) -> bool {
+    query
+        .get_single()
+        .is_ok_and(|window| window.cursor.grab_mode == bevy::window::CursorGrabMode::Confined)
+}
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CameraState {
@@ -17,7 +25,7 @@ pub enum CameraState {
     Follow,
 }
 
-#[derive(Component, Reflect)]
+#[derive(Component, Reflect, Clone, Copy)]
 pub struct CanFollow {
     pub min_distance: f64,
     pub max_distance: f64,
@@ -25,6 +33,28 @@ pub struct CanFollow {
 
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct Followed(pub Option<Entity>);
+
+pub struct SetFollowed(pub Option<Entity>);
+
+impl bevy::ecs::world::Command for SetFollowed {
+    fn apply(self, world: &mut World) {
+        let Some(followed) = self.0 else {
+            return;
+        };
+        let can_follow = *world.entity(followed).get::<CanFollow>().unwrap();
+        let (camera_entity, mut orbit) = world
+            .query::<(Entity, &mut OrbitCamera)>()
+            .single_mut(world);
+        orbit.min_distance = can_follow.min_distance;
+        orbit.max_distance = can_follow.max_distance;
+
+        world.resource_mut::<Followed>().bypass_change_detection().0 = Some(followed);
+        world.commands().entity(camera_entity).set_parent(followed);
+        world
+            .resource_mut::<NextState<CameraState>>()
+            .set(CameraState::Orbit);
+    }
+}
 
 #[derive(Component, Default)]
 pub struct OrbitCamera {
@@ -53,7 +83,7 @@ impl AdditionalCameraInput {
     }
 }
 
-trait CameraInputExt {
+pub trait CameraInputExt {
     fn any_mouse_input(&self) -> bool;
 
     fn any_kb_input(&self) -> bool;
@@ -82,12 +112,12 @@ impl Plugin for CameraPlugin {
             .insert_resource(DisabledControls::default())
             .insert_state(CameraState::Orbit)
             .add_systems(
-                PreUpdate,
-                disable_controls_ui.run_if(in_state(MainState::Running)),
-            )
-            .add_systems(
                 Update,
                 (
+                    (
+                        crate::ui::is_using_pointer.pipe(disable_mouse_controls),
+                        crate::ui::is_using_keyboard.pipe(disable_keyboard_controls),
+                    ),
                     (
                         mouse_controls.run_if(|disabled: Res<DisabledControls>| !disabled.mouse),
                         keyboard_controls
@@ -129,53 +159,34 @@ impl Plugin for CameraPlugin {
     }
 }
 
-fn disable_controls_ui(
-    ctx: bevy_egui::EguiContexts,
-    mut disabled_controls: ResMut<DisabledControls>,
-) {
-    let Some(ctx) = ctx.try_ctx() else {
-        return;
-    };
-
-    disabled_controls.mouse = ctx.is_pointer_over_area() || ctx.wants_pointer_input();
-    disabled_controls.keyboard = ctx.wants_keyboard_input();
-}
-
 #[derive(Resource, Default)]
 struct DisabledControls {
     pub mouse: bool,
     pub keyboard: bool,
 }
 
-fn follow_changed(
-    mut commands: Commands,
-    mut state: ResMut<NextState<CameraState>>,
-    followed: Res<Followed>,
-    query_can_follow: Query<&CanFollow>,
-    mut query_camera: Query<(Entity, &mut OrbitCamera)>,
+fn disable_mouse_controls(
+    In(disabled): In<bool>,
+    mut disabled_controls: ResMut<DisabledControls>,
+    query: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
+    if !is_using_pointer(query) {
+        disabled_controls.mouse = disabled;
+    }
+}
+
+fn disable_keyboard_controls(
+    In(disabled): In<bool>,
+    mut disabled_controls: ResMut<DisabledControls>,
+) {
+    disabled_controls.keyboard = disabled;
+}
+
+fn follow_changed(mut commands: Commands, followed: Res<Followed>) {
     if !followed.is_changed() {
         return;
     }
-
-    let Ok((camera_entity, mut orbit)) = query_camera.get_single_mut() else {
-        return;
-    };
-
-    let Some(followed) = **followed else {
-        return;
-    };
-
-    let Ok(can_follow) = query_can_follow.get(followed) else {
-        return;
-    };
-
-    orbit.min_distance = can_follow.min_distance;
-    orbit.max_distance = can_follow.max_distance;
-
-    commands.entity(followed).add_child(camera_entity);
-
-    state.set(CameraState::Orbit);
+    commands.add(SetFollowed(**followed));
 }
 
 fn change_camera_state(world: &mut World) {
@@ -220,12 +231,13 @@ fn show_cursor(mut query: Query<&mut Window, With<bevy::window::PrimaryWindow>>)
     }
 }
 
-pub fn mouse_controls(
+fn mouse_controls(
     mouse: Res<ButtonInput<MouseButton>>,
     mut mouse_move: EventReader<MouseMotion>,
     mut scroll_events: EventReader<MouseWheel>,
     mut input: ResMut<CameraInput>,
     mut input_2: ResMut<AdditionalCameraInput>,
+    time: Res<Time>,
 ) {
     input_2.scroll = scroll_events
         .read()
@@ -237,8 +249,8 @@ pub fn mouse_controls(
 
     if mouse.pressed(MouseButton::Left) || mouse.pressed(MouseButton::Right) {
         if let Some(motion) = mouse_move.read().map(|e| e.delta).reduce(|sum, i| sum + i) {
-            input.pitch -= motion.y as f64 * 0.2;
-            input.yaw -= motion.x as f64 * 0.2;
+            input.pitch -= motion.y as f64 * 0.2 / time.delta_seconds_f64();
+            input.yaw -= motion.x as f64 * 0.2 / time.delta_seconds_f64();
         }
     }
 }
@@ -255,17 +267,17 @@ fn scale_mouse_to_zoom(
     input.yaw *= perspective.fov as f64;
 }
 
-pub fn keyboard_controls(
+fn keyboard_controls(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut input: ResMut<CameraInput>,
     mut input_2: ResMut<AdditionalCameraInput>,
 ) {
     keyboard
         .pressed(KeyCode::ArrowUp)
-        .then(|| input_2.zoom += 1.0);
+        .then(|| input_2.zoom -= 1.0);
     keyboard
         .pressed(KeyCode::ArrowDown)
-        .then(|| input_2.zoom -= 1.0);
+        .then(|| input_2.zoom += 1.0);
     keyboard
         .pressed(KeyCode::KeyW)
         .then(|| input.forward -= 1.0);
@@ -321,13 +333,13 @@ pub fn orbit_controls(
     input: Res<CameraInput>,
     input_2: Res<AdditionalCameraInput>,
     mut query: Query<(&mut Transform, &mut GridCell)>,
-    mut query_camera: Query<(Entity, &mut OrbitCamera)>,
+    mut query_camera: Query<(Entity, &CameraController, &mut OrbitCamera)>,
     root: Query<&ReferenceFrame, With<BigSpace>>,
     time: Res<Time>,
 ) {
     let root = root.single();
 
-    let Ok((camera_entity, mut orbit)) = query_camera.get_single_mut() else {
+    let Ok((camera_entity, controller, mut orbit)) = query_camera.get_single_mut() else {
         return;
     };
 
@@ -338,13 +350,11 @@ pub fn orbit_controls(
     let mut rotation = camera_transform.rotation.as_dquat();
 
     let dt = time.delta_seconds_f64();
-    let speed = 0.01;
-    let roll_speed = 1.0;
     rotation *= DQuat::from_euler(
         EulerRot::XYZ,
-        input.pitch * speed,
-        input.yaw * speed,
-        input.roll * dt * roll_speed,
+        input.pitch * dt * controller.speed_pitch,
+        input.yaw * dt * controller.speed_yaw,
+        input.roll * dt * controller.speed_roll,
     );
 
     let (new_cell, translation) =

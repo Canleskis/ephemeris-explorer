@@ -1,0 +1,162 @@
+use crate::time::SimulationTime;
+
+use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts};
+use hifitime::{Duration, Epoch};
+use std::str::FromStr;
+use thousands::Separable;
+
+#[derive(PartialEq, Eq, Clone, Copy, Default)]
+pub enum TimeScale {
+    #[default]
+    TimePerSecond,
+    Multiplier,
+}
+
+impl std::fmt::Display for TimeScale {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            TimeScale::TimePerSecond => write!(f, "Time per second"),
+            TimeScale::Multiplier => write!(f, "Multiplier"),
+        }
+    }
+}
+
+impl TimeScale {
+    fn values() -> [Self; 2] {
+        [TimeScale::TimePerSecond, TimeScale::Multiplier]
+    }
+}
+
+fn round(x: f64, decimals: usize) -> f64 {
+    let factor = 10.0_f64.powi(decimals as i32);
+    (x * factor).round() / factor
+}
+
+struct Sample {
+    time: std::time::Instant,
+    value: f64,
+}
+
+#[derive(Default)]
+pub struct History {
+    values: std::collections::VecDeque<Sample>,
+}
+
+impl History {
+    fn add(&mut self, value: f64) {
+        let now = std::time::Instant::now();
+
+        self.values.retain(|sample| {
+            now.duration_since(sample.time) < std::time::Duration::from_millis(200)
+        });
+        self.values.push_back(Sample { time: now, value });
+    }
+
+    fn average(&self) -> f64 {
+        if self.values.is_empty() {
+            return 0.0;
+        }
+
+        self.values.iter().map(|v| v.value).sum::<f64>() / self.values.len() as f64
+    }
+}
+
+pub fn time_controls(
+    mut contexts: EguiContexts,
+    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
+    mut sim_time: ResMut<SimulationTime>,
+    mut buffer: Local<String>,
+    mut scale: Local<TimeScale>,
+    mut time_scale_history: Local<History>,
+) {
+    let Some(ctx) = contexts.try_ctx_mut() else {
+        return;
+    };
+
+    time_scale_history.add(sim_time.real_time_scale());
+
+    egui::TopBottomPanel::bottom("Time").show(ctx, |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.spacing_mut().text_edit_width = 240.0;
+            let edit = ui.add(egui::TextEdit::singleline(&mut *buffer));
+
+            if edit.lost_focus() {
+                if let Ok(buffer) = Epoch::from_str(&buffer) {
+                    sim_time.set_current_clamped(buffer);
+                }
+            }
+
+            if !edit.has_focus() {
+                *buffer = format!(
+                    "{:x}",
+                    sim_time.current().round(Duration::from_seconds(1.0))
+                );
+            }
+
+            let button = egui::Button::new(if sim_time.paused { "▶" } else { "⏸" });
+            if ui.add_sized([40.0, 18.0], button).clicked() {
+                sim_time.paused = !sim_time.paused;
+            }
+
+            ui.scope(|ui| {
+                let computed_time_scale = time_scale_history.average();
+
+                ui.spacing_mut().slider_width = ui.available_width() / 3.0;
+                ui.spacing_mut().interact_size.x = 175.0;
+                if round(computed_time_scale, 2) != sim_time.time_scale {
+                    ui.visuals_mut().override_text_color = Some(egui::Color32::RED);
+                }
+
+                let slider = egui::Slider::new(&mut sim_time.time_scale, -1e10..=1e10)
+                    .logarithmic(true)
+                    .fixed_decimals(1)
+                    .smallest_positive(1e-3)
+                    .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.6 });
+
+                let slider = match *scale {
+                    TimeScale::TimePerSecond => slider
+                        .suffix(" per second")
+                        .custom_formatter(|_, _| {
+                            format!(
+                                "{}{}",
+                                if computed_time_scale < 0.0 { "-" } else { "" },
+                                (Duration::from_seconds(computed_time_scale).abs().approx())
+                            )
+                        })
+                        .custom_parser(|text| Some(Duration::from_str(text).ok()?.to_seconds())),
+                    TimeScale::Multiplier => slider.prefix("x").custom_formatter(|_, _| {
+                        format!("{:.2}", computed_time_scale).separate_with_commas()
+                    }),
+                };
+
+                let slider = ui.add(slider);
+                if slider.is_pointer_button_down_on() {
+                    egui::show_tooltip_at_pointer(&slider.ctx, slider.layer_id, slider.id, |ui| {
+                        ui.add(
+                            egui::Label::new(format!("x{}", sim_time.time_scale))
+                                .wrap_mode(egui::TextWrapMode::Extend),
+                        );
+                    });
+                }
+            });
+
+            egui::ComboBox::from_id_source("time_scale")
+                .selected_text(scale.to_string())
+                .show_ui(ui, |ui| {
+                    for value in TimeScale::values() {
+                        ui.selectable_value(&mut *scale, value, value.to_string());
+                    }
+                });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some(fps_smoothed) = diagnostics
+                    .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
+                    .and_then(|fps| fps.smoothed())
+                {
+                    ui.add(egui::Label::new(format!("FPS: {:.0}", fps_smoothed)).selectable(false));
+                }
+            })
+        });
+    });
+}

@@ -5,25 +5,28 @@ pub use solar_system::*;
 pub use ui::*;
 
 use crate::{
+    analysis::SphereOfInfluence,
     camera::{CanFollow, Followed, OrbitCamera},
+    flight_plan::FlightPlan,
     floating_origin::{
         BigReferenceFrameBundle, BigSpace, BigSpaceRootBundle, FloatingOrigin, GridCell,
     },
     hierarchy,
-    plot::TrajectoryPlot,
+    plot::{PlotPoints, TrajectoryPlot},
     prediction::{
-        Backward, ComputePredictionEvent, EphemerisBuilder, Forward, PredictionSettings,
-        PredictionTracker, Trajectory, MAX_DIV,
+        Backward, DiscreteStates, DiscreteStatesBuilder, ExtendPredictionEvent, FixedSegments,
+        FixedSegmentsBuilder, Forward, Mu, PredictionTracker, Trajectory, DIV,
     },
     selection::Clickable,
     starlight::Star,
-    time::{AutoExtendSettings, SimulationTime},
-    ui::{Labelled, OrbitalPeriod, UiCamera},
+    time::{BoundsTime, SimulationTime},
+    ui::Labelled,
     MainState, SystemRoot,
 };
 
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::core_pipeline::Skybox;
+use bevy::math::DVec3;
 use bevy::prelude::*;
 use hifitime::{Duration, Epoch};
 
@@ -39,6 +42,7 @@ pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(First, delay_window_visiblity);
         app.add_plugins(LoadingScreenPlugin)
             .add_sub_state::<LoadingStage>()
             .add_plugins(LoadSolarSytemPlugin)
@@ -82,6 +86,23 @@ impl Plugin for LoadingPlugin {
                 .after(handle_load_events)
                 .run_if(in_state(LoadingStage::Ephemerides).and_then(ephemerides_computed)),
         );
+
+        bevy::asset::load_internal_binary_asset!(
+            app,
+            Handle::default(),
+            "../../assets/fonts/Montserrat-Regular.ttf",
+            |bytes: &[u8], _path: String| { Font::try_from_bytes(bytes.to_vec()).unwrap() }
+        );
+    }
+}
+
+fn delay_window_visiblity(mut window: Query<&mut Window>, frames: Res<bevy::core::FrameCount>) {
+    // The delay may be different for your app or system.
+    if frames.0 == 3 {
+        // At this point the gpu is ready to show the app so we can make the window visible.
+        // Alternatively, you could toggle the visibility in Startup.
+        // It will work, but it will have one white frame before it starts rendering
+        window.single_mut().visible = true;
     }
 }
 
@@ -98,19 +119,14 @@ impl LoadSolarSystemEvent {
         dir: &std::path::Path,
         asset_server: &AssetServer,
     ) -> std::io::Result<Self> {
-        let state_file = dir.join("state.json");
-        let eph_settings_file = dir.join("ephemeris.json");
-        let hierarchy_tree_file = dir.join("hierarchy.json");
-        let skybox_file = dir.join("skybox.png");
-
         // We can't really check if the files exist for now.
         // Hopefully in the future we can use the asset server to check if the files exist.
 
         Ok(Self {
-            state: asset_server.load(state_file),
-            eph_settings: asset_server.load(eph_settings_file),
-            hierarchy_tree: asset_server.load(hierarchy_tree_file),
-            skybox: asset_server.load(skybox_file),
+            state: asset_server.load(dir.join("state.json")),
+            eph_settings: asset_server.load(dir.join("ephemeris.json")),
+            hierarchy_tree: asset_server.load(dir.join("hierarchy.json")),
+            skybox: asset_server.load(dir.join("skybox.png")),
         })
     }
 }
@@ -185,9 +201,6 @@ impl Rotating {
     }
 }
 
-#[derive(Component, Deref, DerefMut)]
-pub struct Mu(pub f64);
-
 fn spawn_bodies(
     mut commands: Commands,
     solar_system: UniqueAsset<SolarSystem>,
@@ -196,7 +209,7 @@ fn spawn_bodies(
     visuals: Res<Assets<BodyVisuals>>,
 ) {
     // We can assume all assets are loaded at this point and just unwrap everything.
-    let solar_system = solar_system.get().unwrap();
+    let system = solar_system.get().unwrap();
     let hierachy_tree = hierachy_tree.get().unwrap();
     let eph_settings = eph_settings.get().unwrap();
     let dt = eph_settings.dt;
@@ -216,14 +229,17 @@ fn spawn_bodies(
         ))
         .id();
 
+    let mut massive_states = Vec::new();
+
     spawn_from_hierarchy(
         0,
         root,
         &mut commands,
+        &mut massive_states,
         root,
         tree,
         eph_settings,
-        solar_system,
+        system,
         &visuals,
     );
 
@@ -232,6 +248,7 @@ fn spawn_bodies(
         depth: usize,
         root: Entity,
         commands: &mut Commands,
+        massive_states: &mut Vec<(Entity, DVec3, DVec3, f64, usize)>,
         parent: Entity,
         tree: &HierarchyTree,
         eph_settings: &EphemeridesSettings,
@@ -240,11 +257,9 @@ fn spawn_bodies(
     ) {
         for (name, tree) in tree.iter() {
             let body = solar_system.bodies.get(name).unwrap();
-            let ephemeris_settings = eph_settings.settings.get(name).unwrap();
             let visual = visuals.get(&body.visuals).unwrap();
 
             let radius = ((visual.radii.x + visual.radii.y + visual.radii.z) / 3.0) as f32;
-            let granule = eph_settings.granule(name, MAX_DIV - 1);
 
             let mut entity = commands.spawn((
                 // No state scope needed as it is always a child of the root.
@@ -270,30 +285,57 @@ fn spawn_bodies(
                     offset: Vec2::new(0.0, radius) * 1.1,
                     index: depth + 1,
                 },
-                OrbitalPeriod(Some(Duration::default())),
-                Mu(body.mu),
-                EphemerisBuilder::<Forward>::new(
-                    ephemeris_settings.degree,
-                    body.position,
-                    body.velocity,
-                    body.mu,
-                ),
-                EphemerisBuilder::<Backward>::new(
-                    ephemeris_settings.degree,
-                    body.position,
-                    body.velocity,
-                    body.mu,
-                ),
-                Trajectory::new(solar_system.epoch, granule),
                 TrajectoryPlot {
                     enabled: depth <= 1,
                     color: visual.orbit.color,
                     start: Epoch::default() - Duration::MAX,
                     end: Epoch::default() + Duration::MAX,
                     threshold: 0.5,
+                    max_points: 10_000,
                     reference: Some(parent),
                 },
+                PlotPoints::default(),
             ));
+
+            if let Some(settings) = eph_settings.settings.get(name) {
+                let granule = eph_settings.dt * DIV as i64 * settings.count as i64;
+                entity.insert((
+                    Mu(body.mu),
+                    Trajectory::new(FixedSegments::new(solar_system.epoch, granule)),
+                    BoundsTime,
+                ));
+                let parent_state = massive_states.iter().find(|(id, ..)| *id == parent);
+                if let Some((_, _, parent_position, parent_mu, _)) = parent_state {
+                    let sma = body.position.distance(*parent_position);
+                    entity.insert(SphereOfInfluence::approximate(sma, body.mu, *parent_mu));
+                } else {
+                    entity.insert(SphereOfInfluence::Fixed(f64::INFINITY));
+                }
+
+                massive_states.push((
+                    entity.id(),
+                    body.velocity,
+                    body.position,
+                    body.mu,
+                    settings.degree,
+                ));
+            } else {
+                entity.insert((
+                    Trajectory::new(DiscreteStates::new(
+                        solar_system.epoch,
+                        body.velocity,
+                        body.position,
+                    )),
+                    DiscreteStatesBuilder::new(
+                        entity.id(),
+                        solar_system.epoch,
+                        body.velocity,
+                        body.position,
+                    ),
+                    FlightPlan::new(solar_system.epoch + Duration::from_days(5.0)),
+                    // BoundsTime,
+                ));
+            }
 
             entity.with_children(|parent| {
                 let mut child = parent.spawn((
@@ -332,6 +374,7 @@ fn spawn_bodies(
                 depth + 1,
                 root,
                 commands,
+                massive_states,
                 child,
                 tree,
                 eph_settings,
@@ -341,11 +384,12 @@ fn spawn_bodies(
         }
     }
 
-    commands.insert_resource(SimulationTime::new(solar_system.epoch));
-    commands.insert_resource(AutoExtendSettings::<EphemerisBuilder<Forward>>::new(true));
-    commands.insert_resource(AutoExtendSettings::<EphemerisBuilder<Backward>>::new(true));
-    commands.insert_resource(PredictionSettings::<EphemerisBuilder<Forward>>::new(dt));
-    commands.insert_resource(PredictionSettings::<EphemerisBuilder<Backward>>::new(dt));
+    commands.entity(root).insert((
+        FixedSegmentsBuilder::new(Forward::new(dt), system.epoch, massive_states.clone()),
+        FixedSegmentsBuilder::new(Backward::new(dt), system.epoch, massive_states),
+    ));
+
+    commands.insert_resource(SimulationTime::new(system.epoch));
 }
 
 fn setup_camera(
@@ -363,11 +407,13 @@ fn setup_camera(
                 },
                 projection: Projection::Perspective(PerspectiveProjection {
                     fov: 45f32.to_radians(),
+                    near: 0.001,
                     ..default()
                 }),
                 exposure: bevy::render::camera::Exposure { ev100: 12.0 },
                 ..default()
             },
+            PerspectiveProjection::default(),
             Skybox {
                 image: skybox.handle.clone(),
                 brightness: 1000.0,
@@ -378,9 +424,12 @@ fn setup_camera(
             big_space::camera::CameraController::default()
                 .with_speed_bounds([1e-17, 10e35])
                 .with_smoothness(0.0, 0.0)
-                .with_speed(1.0),
+                .with_speed(1.0)
+                .with_speed_pitch(0.02)
+                .with_speed_yaw(0.02)
+                .with_speed_roll(0.5),
             bevy::core_pipeline::bloom::BloomSettings::NATURAL,
-            UiCamera,
+            IsDefaultUiCamera,
         ))
         .set_parent(root.single());
 }
@@ -395,8 +444,8 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
 
 fn ephemerides_progress_text(
     mut query: Query<&mut Text, With<LoadingText>>,
-    forward: Query<&PredictionTracker<EphemerisBuilder<Forward>>>,
-    backward: Query<&PredictionTracker<EphemerisBuilder<Backward>>>,
+    forward: Query<&PredictionTracker<FixedSegmentsBuilder<Forward>>>,
+    backward: Query<&PredictionTracker<FixedSegmentsBuilder<Backward>>>,
 ) {
     let forward_progress = forward
         .get_single()
@@ -419,23 +468,27 @@ fn finish_ephemerides_computing(world: &mut World) {
 }
 
 fn ephemerides_computed(
-    forward: Query<&PredictionTracker<EphemerisBuilder<Forward>>>,
-    backward: Query<&PredictionTracker<EphemerisBuilder<Backward>>>,
+    forward: Query<&PredictionTracker<FixedSegmentsBuilder<Forward>>>,
+    backward: Query<&PredictionTracker<FixedSegmentsBuilder<Backward>>>,
 ) -> bool {
     forward.is_empty() && backward.is_empty()
 }
 
-fn compute_default_ephemerides(
-    mut events_forward: EventWriter<ComputePredictionEvent<EphemerisBuilder<Forward>>>,
-    mut events_backward: EventWriter<ComputePredictionEvent<EphemerisBuilder<Backward>>>,
-    root: Query<Entity, With<SystemRoot>>,
-) {
-    let root = root.get_single().expect("No root entity found");
-    let duration = Duration::from_days(365.0 * 5.0);
+fn compute_default_ephemerides(mut commands: Commands, sim_time: Res<SimulationTime>) {
+    let target_forward = Epoch::from_gregorian_tai_hms(1955, 1, 1, 0, 0, 0);
+    let target_backward = Epoch::from_gregorian_tai_hms(1945, 1, 1, 0, 0, 0);
     let sync_count = 100;
 
-    events_forward.send(ComputePredictionEvent::new(root, duration, sync_count));
-    events_backward.send(ComputePredictionEvent::new(root, duration, sync_count));
+    commands.trigger(ExtendPredictionEvent::<FixedSegmentsBuilder<Forward>>::all(
+        target_forward - sim_time.current(),
+        sync_count,
+    ));
+    commands.trigger(
+        ExtendPredictionEvent::<FixedSegmentsBuilder<Backward>>::all(
+            sim_time.current() - target_backward,
+            sync_count,
+        ),
+    );
 }
 
 #[expect(unused)]

@@ -1,3 +1,4 @@
+use bevy::input::mouse::MouseMotion;
 use bevy::math::Dir3;
 use bevy::prelude::*;
 
@@ -19,21 +20,28 @@ impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Selected>()
             .add_event::<ClickEvent>()
-            .add_systems(PostUpdate, (entity_picker, select_clicked).chain());
+            .add_systems(
+                PostUpdate,
+                (
+                    entity_picker.run_if(not(crate::ui::is_using_pointer)),
+                    select_clicked,
+                )
+                    .chain()
+                    .after(bevy::transform::TransformSystem::TransformPropagate),
+            );
     }
 }
 
 fn entity_picker(
-    ctx: bevy_egui::EguiContexts,
     mut click_entity_events: EventWriter<ClickEvent>,
     mouse_input: Res<ButtonInput<MouseButton>>,
+    mut mouse_move: EventReader<MouseMotion>,
     query_window: Query<&Window>,
     query_camera: Query<(&GlobalTransform, &Camera)>,
     query_can_select: Query<(Entity, &GlobalTransform, &Clickable)>,
 ) {
-    if !mouse_input.just_pressed(MouseButton::Left)
-        || ctx.try_ctx().is_some_and(|ctx| ctx.is_pointer_over_area())
-    {
+    if !mouse_input.just_pressed(MouseButton::Left) || !mouse_move.is_empty() {
+        mouse_move.clear();
         return;
     }
 
@@ -44,25 +52,30 @@ fn entity_picker(
         return;
     };
 
-    let clicked_entity = window
-        .cursor_position()
-        .and_then(|position| camera.viewport_to_world(camera_transform, position))
-        .and_then(|ray| {
-            query_can_select
-                .iter()
-                .fold(None, |acc, (entity, transform, clickable)| {
-                    let distance = transform.translation() - ray.origin;
-                    let proj = ray.direction.dot(distance);
-                    let mag = distance.length_squared();
-                    let radius = clickable.radius + mag.sqrt() / 100.0;
-                    let d =
-                        (proj * proj + radius * radius >= mag).then_some((entity, clickable.index));
+    let ray = window.cursor_position().and_then(|position| {
+        Some(bevy::math::bounding::RayCast3d::from_ray(
+            camera.viewport_to_world(camera_transform, position)?,
+            f32::MAX,
+        ))
+    });
 
-                    acc.filter(|&(_, index)| d.is_none() || index < clickable.index)
-                        .or(d)
-                })
-                .map(|(entity, _)| entity)
-        });
+    let Some(ray) = ray else {
+        return;
+    };
+
+    let clicked_entity = query_can_select
+        .iter()
+        .filter_map(|(entity, transform, clickable)| {
+            let distance = transform.translation().distance(Vec3::from(ray.origin));
+            let toi = ray.sphere_intersection_at(&bevy::math::bounding::BoundingSphere::new(
+                transform.translation(),
+                clickable.radius + distance * 1e-2,
+            ))?;
+
+            Some((entity, clickable.index as f32 * toi))
+        })
+        .min_by(|(_, i1), (_, i2)| i1.total_cmp(i2))
+        .map(|(entity, ..)| entity);
 
     click_entity_events.send(ClickEvent(clicked_entity));
 }
@@ -86,8 +99,7 @@ fn _show_pickable_zone(
 
     for (transform, can_select) in &query_can_select {
         let distance = transform.translation() - camera_transform.translation();
-        let mag = distance.length_squared();
-        let radius = can_select.radius + mag.sqrt() / 100.0;
+        let radius = can_select.radius + distance.length_squared() / 100.0;
         gizmos.circle(
             transform.translation(),
             Dir3::new_unchecked(distance.normalize()),

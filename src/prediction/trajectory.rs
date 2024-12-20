@@ -1,10 +1,138 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use deepsize::DeepSizeOf;
 use hifitime::{Duration, Epoch};
 use std::collections::VecDeque;
 
-pub const MAX_DIV: usize = 9;
-type SegmentStorage = poly_it::storage::smallvec::SmallVec<[f64; MAX_DIV - 1]>;
+pub trait TrajectoryData {
+    fn start(&self) -> Epoch;
+
+    fn end(&self) -> Epoch;
+
+    fn contains(&self, time: Epoch) -> bool {
+        time >= self.start() && time <= self.end()
+    }
+
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn position(&self, at: Epoch) -> Option<DVec3>;
+
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>>;
+
+    fn clear(&mut self);
+}
+
+pub trait TrajectoryInner: TrajectoryData + DeepSizeOf + Send + Sync {
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+
+    fn clone_box(&self) -> Box<dyn TrajectoryInner>;
+}
+
+impl<T: TrajectoryData + DeepSizeOf + Clone + Send + Sync + 'static> TrajectoryInner for T {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn clone_box(&self) -> Box<dyn TrajectoryInner> {
+        Box::new(self.clone())
+    }
+}
+
+#[derive(Component)]
+pub struct Trajectory(Box<dyn TrajectoryInner>);
+
+impl Clone for Trajectory {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(self.0.clone_box())
+    }
+}
+
+impl Trajectory {
+    pub fn new<T: TrajectoryInner + 'static>(trajectory: T) -> Self {
+        Self(Box::new(trajectory))
+    }
+
+    pub fn relative_state_vector(&self, at: Epoch, to: &Self) -> Option<StateVector<DVec3>> {
+        Some(self.state_vector(at)? - to.state_vector(at)?)
+    }
+
+    #[expect(unused)]
+    pub fn relative_position(&self, at: Epoch, to: &Self) -> Option<DVec3> {
+        Some(self.position(at)? - to.position(at)?)
+    }
+
+    pub fn try_downcast_ref<T: TrajectoryInner + 'static>(&self) -> Option<&T> {
+        self.0.as_any().downcast_ref()
+    }
+
+    pub fn try_downcast_mut<T: TrajectoryInner + 'static>(&mut self) -> Option<&mut T> {
+        self.0.as_any_mut().downcast_mut()
+    }
+
+    pub fn downcast_ref<T: TrajectoryInner + 'static>(&self) -> &T {
+        self.try_downcast_ref()
+            .unwrap_or_else(|| panic!("failed to downcast to {}", std::any::type_name::<T>()))
+    }
+
+    pub fn downcast_mut<T: TrajectoryInner + 'static>(&mut self) -> &mut T {
+        self.try_downcast_mut()
+            .unwrap_or_else(|| panic!("failed to downcast to {}", std::any::type_name::<T>()))
+    }
+
+    pub fn size(&self) -> usize {
+        self.0.deep_size_of()
+    }
+}
+
+impl TrajectoryData for Trajectory {
+    #[inline]
+    fn start(&self) -> Epoch {
+        self.0.start()
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        self.0.end()
+    }
+
+    fn contains(&self, time: Epoch) -> bool {
+        self.0.contains(time)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn position(&self, at: Epoch) -> Option<DVec3> {
+        self.0.position(at)
+    }
+
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
+        self.0.state_vector(at)
+    }
+
+    fn clear(&mut self) {
+        self.0.clear()
+    }
+}
+
+pub const DIV: usize = 8;
+pub type SegmentStorage = poly_it::storage::smallvec::SmallVec<[f64; DIV]>;
 
 #[derive(Clone, Debug)]
 pub struct Segment {
@@ -13,16 +141,16 @@ pub struct Segment {
     pub z: poly_it::Polynomial<f64, SegmentStorage>,
 }
 
-impl serde::Serialize for Segment {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        (self.x.coeffs(), self.y.coeffs(), self.z.coeffs()).serialize(serializer)
+impl DeepSizeOf for Segment {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.x.coeffs().deep_size_of_children(context)
+            + self.y.coeffs().deep_size_of_children(context)
+            + self.z.coeffs().deep_size_of_children(context)
     }
 }
 
 impl Segment {
+    #[inline]
     pub fn eval(&self, t: f64) -> DVec3 {
         DVec3::new(self.x.eval(t), self.y.eval(t), self.z.eval(t))
     }
@@ -59,16 +187,7 @@ fn fast_eval_and_deriv(coeffs: &[f64], x: f64) -> (f64, f64) {
     (eval, deriv)
 }
 
-#[inline]
-pub fn interpolate(deg: usize, ts: &[f64], xs: &[f64]) -> poly_it::Polynomial<f64, SegmentStorage> {
-    poly_it::Polynomial::least_squares_fit(
-        deg,
-        std::iter::zip(ts.iter().copied(), xs.iter().copied()),
-    )
-    .unwrap()
-}
-
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, PartialOrd)]
 pub struct StateVector<V> {
     pub position: V,
     pub velocity: V,
@@ -86,6 +205,70 @@ impl<V> StateVector<V> {
         Self {
             position,
             velocity: Default::default(),
+        }
+    }
+}
+
+impl std::ops::Index<usize> for StateVector<DVec3> {
+    type Output = f64;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        match index {
+            0 => &self.position[0],
+            1 => &self.position[1],
+            2 => &self.position[2],
+            3 => &self.velocity[0],
+            4 => &self.velocity[1],
+            5 => &self.velocity[2],
+            _ => panic!("Index out of bounds: {}", index),
+        }
+    }
+}
+
+impl std::ops::IndexMut<usize> for StateVector<DVec3> {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        match index {
+            0 => &mut self.position[0],
+            1 => &mut self.position[1],
+            2 => &mut self.position[2],
+            3 => &mut self.velocity[0],
+            4 => &mut self.velocity[1],
+            5 => &mut self.velocity[2],
+            _ => panic!("Index out of bounds: {}", index),
+        }
+    }
+}
+
+impl<S, V> std::ops::Mul<S> for StateVector<V>
+where
+    S: Clone,
+    V: std::ops::Mul<S, Output = V>,
+{
+    type Output = StateVector<V>;
+
+    #[inline]
+    fn mul(self, rhs: S) -> Self::Output {
+        StateVector {
+            position: self.position * rhs.clone(),
+            velocity: self.velocity * rhs,
+        }
+    }
+}
+
+impl<S, V> std::ops::Div<S> for StateVector<V>
+where
+    S: Clone,
+    V: std::ops::Div<S, Output = V>,
+{
+    type Output = StateVector<V>;
+
+    #[inline]
+    fn div(self, rhs: S) -> Self::Output {
+        StateVector {
+            position: self.position / rhs.clone(),
+            velocity: self.velocity / rhs,
         }
     }
 }
@@ -120,14 +303,53 @@ where
     }
 }
 
-#[derive(Clone, Debug, Component, serde::Serialize)]
-pub struct Trajectory {
+#[derive(Clone, Debug)]
+pub struct FixedSegments {
     start: Epoch,
     granule: Duration,
     segments: VecDeque<Segment>,
 }
 
-impl Trajectory {
+impl DeepSizeOf for FixedSegments {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.segments.deep_size_of_children(context)
+    }
+}
+
+impl TrajectoryData for FixedSegments {
+    #[inline]
+    fn start(&self) -> Epoch {
+        self.start
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        self.start + self.span()
+    }
+
+    fn len(&self) -> usize {
+        self.segments.len()
+    }
+
+    fn position(&self, at: Epoch) -> Option<DVec3> {
+        self.evaluate(at, Segment::eval)
+    }
+
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
+        self.evaluate(at, Segment::eval_and_deriv)
+            .map(|(position, velocity)| {
+                // Segment are normalised to τ = t / granule so the derivative is dx/dτ.
+                // As such, dx/dt = dx/dτ * dτ/dt = dx/dτ / granule.
+                StateVector::new(position, velocity / self.granule.to_seconds())
+            })
+    }
+
+    fn clear(&mut self) {
+        self.segments.clear();
+    }
+}
+
+impl FixedSegments {
     pub fn new(start: Epoch, granule: Duration) -> Self {
         Self {
             start,
@@ -156,8 +378,8 @@ impl Trajectory {
             return None;
         }
 
-        let start = self.segment_index(start - self.start)?;
-        let end = self.segment_index(end - self.start)?;
+        let start = self.segment_index_exclusive(start - self.start)?;
+        let end = self.segment_index_exclusive(end - self.start)?;
 
         Some(Self {
             start: self.start + self.granule * start as i64,
@@ -168,12 +390,12 @@ impl Trajectory {
         })
     }
 
-    pub fn prepend_segment(&mut self, segment: Segment) {
+    pub fn push_front(&mut self, segment: Segment) {
         self.segments.push_front(segment);
         self.start -= self.granule;
     }
 
-    pub fn append_segment(&mut self, segment: Segment) {
+    pub fn push_back(&mut self, segment: Segment) {
         self.segments.push_back(segment);
     }
 
@@ -196,23 +418,21 @@ impl Trajectory {
         self.segments.extend(trajectory.segments);
     }
 
+    pub fn clear_before(&mut self, at: Epoch) {
+        if let Some(idx) = self.index_exclusive(at + self.granule) {
+            self.start += self.granule * idx as i64;
+            self.segments.drain(0..idx);
+        }
+    }
+
+    pub fn clear_after(&mut self, at: Epoch) {
+        if let Some(idx) = self.index(at) {
+            self.segments.truncate(idx);
+        }
+    }
+
     pub fn contains(&self, time: Epoch) -> bool {
         time >= self.start && time <= self.end()
-    }
-
-    pub fn evaluate_position(&self, at: Epoch) -> Option<DVec3> {
-        self.evaluate(at, Segment::eval)
-    }
-
-    pub fn evaluate_state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
-        self.evaluate(at, Segment::eval_and_deriv)
-            .map(|(position, mut velocity)| {
-                // Segment are normalised to τ = t / granule so the derivative is dx/dτ.
-                // As such, dx/dt = dx/dτ * dτ/dt = dx/dτ / granule.
-                velocity /= self.granule.to_seconds();
-
-                StateVector { position, velocity }
-            })
     }
 
     pub fn evaluate<F, T>(&self, at: Epoch, eval: F) -> Option<T>
@@ -220,35 +440,40 @@ impl Trajectory {
         F: Fn(&Segment, f64) -> T,
     {
         let local = at - self.start;
-        let segment_index = self.segment_index(local)?;
+        let segment_index = self.segment_index_exclusive(local)?;
         let local_segment = local - self.granule * segment_index as i64;
         let normalised = local_segment.to_seconds() / self.granule.to_seconds();
 
         Some(eval(self.segments.get(segment_index)?, normalised))
     }
 
-    fn segment_index(&self, time: Duration) -> Option<usize> {
+    pub fn index(&self, at: Epoch) -> Option<usize> {
+        self.segment_index(at - self.start)
+    }
+
+    pub fn index_exclusive(&self, at: Epoch) -> Option<usize> {
+        self.segment_index_exclusive(at - self.start)
+    }
+
+    fn segment_index_exclusive(&self, time: Duration) -> Option<usize> {
         if time.is_negative() || time > self.span() {
             return None;
         }
 
+        // We subtract 1 nanosecond so that "previous" segments are returned for times equal to
+        // multiples of the granule.
         Some(
-            // We subtract 1 so that "previous" segments are used for times equal to multiples of the granule.
             (time.total_nanoseconds().saturating_sub(1) / self.granule.total_nanoseconds())
                 as usize,
         )
     }
 
-    fn segment_index_inclusive(&self, time: Duration) -> Option<usize> {
+    fn segment_index(&self, time: Duration) -> Option<usize> {
         if time.is_negative() || time >= self.span() {
             return None;
         }
 
         Some((time.total_nanoseconds() / self.granule.total_nanoseconds()) as usize)
-    }
-
-    pub fn start(&self) -> Epoch {
-        self.start
     }
 
     pub fn granule(&self) -> Duration {
@@ -259,34 +484,18 @@ impl Trajectory {
         self.granule * self.segments.len() as i64
     }
 
-    pub fn end(&self) -> Epoch {
-        self.start + self.span()
-    }
-
-    pub fn len(&self) -> usize {
-        self.segments.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.segments.is_empty()
-    }
-
     pub fn segments(&self) -> &VecDeque<Segment> {
         &self.segments
-    }
-
-    pub fn size(&self) -> usize {
-        self.segments.len() * self.segments.front().map(Segment::size).unwrap_or(0)
     }
 }
 
 // Unused because too slow. Faster to subtract the evaluated values.
 // Also not thoroughly tested.
-impl std::ops::Sub for &Trajectory {
-    type Output = Trajectory;
+impl std::ops::Sub for &FixedSegments {
+    type Output = FixedSegments;
 
     #[inline]
-    fn sub(self, rhs: &Trajectory) -> Self::Output {
+    fn sub(self, rhs: &FixedSegments) -> Self::Output {
         let granule = gcd_duration(self.granule, rhs.granule);
         let start = self.start.max(rhs.start);
 
@@ -294,12 +503,12 @@ impl std::ops::Sub for &Trajectory {
 
         let mut t = start;
         while let Some((a, b)) = self
-            .segment_index_inclusive(t - self.start)
-            .zip(rhs.segment_index_inclusive(t - rhs.start))
+            .segment_index(t - self.start)
+            .zip(rhs.segment_index(t - rhs.start))
         {
             // Polynomials are defined in the range [0, 1] so we need to redefine them because
             // they might have different granules.
-            let redef = |data: &Trajectory, idx| {
+            let redef = |data: &FixedSegments, idx| {
                 let data_granule = data.granule.to_seconds();
                 let sub = {
                     let mut coeffs = SegmentStorage::new();
@@ -328,7 +537,7 @@ impl std::ops::Sub for &Trajectory {
             t += granule;
         }
 
-        Trajectory {
+        FixedSegments {
             start,
             granule,
             segments,
@@ -338,11 +547,11 @@ impl std::ops::Sub for &Trajectory {
 
 // Unused because too slow. Faster to subtract the evaluated values.
 // Also not thoroughly tested.
-impl std::ops::Add for &Trajectory {
-    type Output = Trajectory;
+impl std::ops::Add for &FixedSegments {
+    type Output = FixedSegments;
 
     #[inline]
-    fn add(self, rhs: &Trajectory) -> Self::Output {
+    fn add(self, rhs: &FixedSegments) -> Self::Output {
         let granule = gcd_duration(self.granule, rhs.granule);
         let start = self.start.max(rhs.start);
 
@@ -350,12 +559,12 @@ impl std::ops::Add for &Trajectory {
 
         let mut t = start;
         while let Some((a, b)) = self
-            .segment_index_inclusive(t - self.start)
-            .zip(rhs.segment_index_inclusive(t - rhs.start))
+            .segment_index(t - self.start)
+            .zip(rhs.segment_index(t - rhs.start))
         {
             // Polynomials are defined in the range [0, 1] so we need to redefine them because
             // they might have different granules.
-            let redef = |data: &Trajectory, idx| {
+            let redef = |data: &FixedSegments, idx| {
                 let data_granule = data.granule.to_seconds();
                 let sub = {
                     let mut coeffs = SegmentStorage::new();
@@ -384,7 +593,7 @@ impl std::ops::Add for &Trajectory {
             t += granule;
         }
 
-        Trajectory {
+        FixedSegments {
             start,
             granule,
             segments,
@@ -392,12 +601,12 @@ impl std::ops::Add for &Trajectory {
     }
 }
 
-impl std::ops::Mul<f64> for &Trajectory {
-    type Output = Trajectory;
+impl std::ops::Mul<f64> for &FixedSegments {
+    type Output = FixedSegments;
 
     #[inline]
     fn mul(self, rhs: f64) -> Self::Output {
-        Trajectory {
+        FixedSegments {
             start: self.start,
             granule: self.granule,
             segments: self
@@ -413,12 +622,12 @@ impl std::ops::Mul<f64> for &Trajectory {
     }
 }
 
-impl std::ops::Div<f64> for &Trajectory {
-    type Output = Trajectory;
+impl std::ops::Div<f64> for &FixedSegments {
+    type Output = FixedSegments;
 
     #[inline]
     fn div(self, rhs: f64) -> Self::Output {
-        Trajectory {
+        FixedSegments {
             start: self.start,
             granule: self.granule,
             segments: self
@@ -515,10 +724,156 @@ where
     result
 }
 
-pub trait BuildTrajectory<Builder>: Sized {
-    fn continued(&self) -> Self;
+#[derive(Clone, Copy, Debug)]
+pub struct Hermite3<V> {
+    bounds: (f64, f64),
+    a0: V,
+    a1: V,
+    a2: V,
+    a3: V,
+}
 
-    fn build_trajectories(trajectories: &mut [Self], builders: &mut [Builder], dt: Duration);
+impl<V> Hermite3<V>
+where
+    V: std::ops::Add<Output = V>
+        + std::ops::Sub<Output = V>
+        + std::ops::Mul<f64, Output = V>
+        + PartialEq
+        + Default
+        + Copy,
+{
+    #[inline]
+    pub fn new(bounds: (f64, f64), values: (V, V), derivatives: (V, V)) -> Self {
+        let a0 = values.0;
+        let a1 = derivatives.0;
+        let dt = bounds.1 - bounds.0;
 
-    fn join(&mut self, trajectory: Self);
+        let (a2, a3) = if dt == 0.0 && values.0 == values.1 && derivatives.0 == derivatives.1 {
+            (V::default(), V::default())
+        } else {
+            let dt_recip = 1.0 / dt;
+            let dt_recip_2 = dt_recip * dt_recip;
+            let dt_recip_3 = dt_recip * dt_recip_2;
+            let dt_val = values.1 - values.0;
+            let a2 = dt_val * dt_recip_2 * 3.0 - (derivatives.0 * 2.0 + derivatives.1) * dt_recip;
+            let a3 = dt_val * dt_recip_3 * -2.0 + (derivatives.0 + derivatives.1) * dt_recip_2;
+            (a2, a3)
+        };
+
+        Hermite3 {
+            bounds,
+            a0,
+            a1,
+            a2,
+            a3,
+        }
+    }
+
+    #[inline]
+    pub fn eval(&self, t: f64) -> V {
+        let dt = t - self.bounds.0;
+        (((self.a3 * dt + self.a2) * dt) + self.a1) * dt + self.a0
+    }
+
+    #[inline]
+    pub fn eval_derivative(&self, t: f64) -> V {
+        let dt = t - self.bounds.0;
+        ((self.a3 * dt * 3.0 + self.a2 * 2.0) * dt) + self.a1
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DiscreteStates(Vec<(Epoch, StateVector<DVec3>)>);
+
+impl DeepSizeOf for DiscreteStates {
+    fn deep_size_of_children(&self, _: &mut deepsize::Context) -> usize {
+        self.0.capacity() * size_of::<(Epoch, StateVector<DVec3>)>()
+    }
+}
+
+impl TrajectoryData for DiscreteStates {
+    fn start(&self) -> Epoch {
+        self.0.first().unwrap().0
+    }
+
+    fn end(&self) -> Epoch {
+        self.0.last().unwrap().0
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn position(&self, at: Epoch) -> Option<DVec3> {
+        match self.0.binary_search_by(|(t, _)| t.cmp(&at)) {
+            Ok(i) => Some(self.0[i].1.position),
+            Err(i) => {
+                let &(t1, sv1) = self.0.get(i.checked_sub(1)?)?;
+                let &(t2, sv2) = self.0.get(i)?;
+                let hermite = Hermite3::new(
+                    (t1.to_tai_seconds(), t2.to_tai_seconds()),
+                    (sv1.position, sv2.position),
+                    (sv1.velocity, sv2.velocity),
+                );
+
+                Some(hermite.eval(at.to_tai_seconds()))
+            }
+        }
+    }
+
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
+        match self.0.binary_search_by(|(t, _)| t.cmp(&at)) {
+            Ok(i) => Some(self.0[i].1),
+            Err(i) => {
+                let &(t1, sv1) = self.0.get(i.checked_sub(1)?)?;
+                let &(t2, sv2) = self.0.get(i)?;
+                let hermite = Hermite3::new(
+                    (t1.to_tai_seconds(), t2.to_tai_seconds()),
+                    (sv1.position, sv2.position),
+                    (sv1.velocity, sv2.velocity),
+                );
+
+                Some(StateVector {
+                    position: hermite.eval(at.to_tai_seconds()),
+                    velocity: hermite.eval_derivative(at.to_tai_seconds()),
+                })
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        let &(start, sv) = self.0.first().unwrap();
+        self.0.clear();
+        self.0.push((start, sv));
+    }
+}
+
+impl DiscreteStates {
+    pub fn new(start: Epoch, velocity: DVec3, position: DVec3) -> Self {
+        Self(vec![(start, StateVector::new(position, velocity))])
+    }
+
+    pub fn push(&mut self, at: Epoch, velocity: DVec3, position: DVec3) {
+        self.0.push((at, StateVector::new(position, velocity)));
+    }
+
+    pub fn clear_after(&mut self, at: Epoch) {
+        self.0.retain(|(k, _)| &at >= k);
+    }
+
+    pub fn extend(&mut self, rhs: DiscreteStates) {
+        self.0.extend(rhs.0);
+    }
+
+    pub fn get(&self, at: Epoch) -> Option<&StateVector<DVec3>> {
+        self.0
+            .binary_search_by(|(t, _)| t.cmp(&at))
+            .ok()
+            .map(|i| &self.0[i].1)
+    }
+
+    #[expect(unused)]
+    pub fn points(&self) -> &[(Epoch, StateVector<DVec3>)] {
+        &self.0
+    }
 }

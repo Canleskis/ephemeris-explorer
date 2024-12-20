@@ -1,6 +1,0 @@
-[physical]
-radii = [0.005, 0.005, 0.005]
-
-[orbit]
-reference = "Deimos"
-color = "#c8c8c880"

@@ -1,4 +1,7 @@
+mod analysis;
+mod auto_extend;
 mod camera;
+mod flight_plan;
 mod floating_origin;
 mod hierarchy;
 mod load;
@@ -10,11 +13,17 @@ mod time;
 mod ui;
 
 use crate::{
+    analysis::OrbitalAnalysisPlugin,
+    auto_extend::AutoExtendPlugin,
     camera::CameraPlugin,
+    flight_plan::FlightPlanPlugin,
     floating_origin::FloatingOriginPlugin,
     load::{LoadSolarSystemEvent, LoadingPlugin},
     plot::{TrajectoryPlotConfig, TrajectoryPlotPlugin},
-    prediction::{Backward, ComputePredictionEvent, EphemerisBuilder, Forward, PredictionPlugin},
+    prediction::{
+        Backward, DiscreteStatesBuilder, ExtendPredictionEvent, FixedSegmentsBuilder, Forward,
+        PredictionPlugin,
+    },
     selection::SelectionPlugin,
     starlight::StarLightPlugin,
     time::SimulationTimePlugin,
@@ -45,8 +54,6 @@ fn main() {
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        resolution: bevy::window::WindowResolution::new(1920.0, 1080.0),
                         prevent_default_event_handling: false,
                         canvas: Some("#app".to_owned()),
                         visible: false,
@@ -59,26 +66,38 @@ fn main() {
             bevy::diagnostic::FrameTimeDiagnosticsPlugin,
             EguiPlugin,
             CameraPlugin,
-            SelectionPlugin,
+            SelectionPlugin, // TODO: refactor with bevy_picking with 0.15
             StarLightPlugin,
             FloatingOriginPlugin::default(),
-            PredictionPlugin::<EphemerisBuilder<Forward>>::default(),
-            PredictionPlugin::<EphemerisBuilder<Backward>>::default(),
             TrajectoryPlotPlugin,
             SimulationTimePlugin,
+            OrbitalAnalysisPlugin,
             UiPlugin,
             LoadingPlugin,
+            FlightPlanPlugin,
+        ))
+        .add_plugins((
+            PredictionPlugin::<FixedSegmentsBuilder<Forward>>::default(),
+            PredictionPlugin::<FixedSegmentsBuilder<Backward>>::default(),
+            PredictionPlugin::<DiscreteStatesBuilder>::default(),
+            AutoExtendPlugin::<FixedSegmentsBuilder<Forward>>::default(),
+            AutoExtendPlugin::<FixedSegmentsBuilder<Backward>>::default(),
         ))
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
         .insert_resource(Msaa::Sample8)
         .insert_resource(TrajectoryPlotConfig::default())
         .add_systems(Startup, default_solar_system)
-        .add_systems(First, delay_window_visiblity)
         .add_systems(
             PostUpdate,
             shortcut_send_prediction.run_if(in_state(MainState::Running)),
         )
+        // .add_systems(
+        //     PostUpdate,
+        //     print_intersections
+        //         .run_if(in_state(MainState::Running))
+        //         .after(bevy::transform::TransformSystem::TransformPropagate),
+        // )
         .run();
 }
 
@@ -101,30 +120,17 @@ fn default_solar_system(
     }
 }
 
-fn delay_window_visiblity(mut window: Query<&mut Window>, frames: Res<bevy::core::FrameCount>) {
-    // The delay may be different for your app or system.
-    if frames.0 == 3 {
-        // At this point the gpu is ready to show the app so we can make the window visible.
-        // Alternatively, you could toggle the visibility in Startup.
-        // It will work, but it will have one white frame before it starts rendering
-        window.single_mut().visible = true;
-    }
-}
-
-fn shortcut_send_prediction(
-    input: Res<ButtonInput<KeyCode>>,
-    mut event_writer: EventWriter<ComputePredictionEvent<EphemerisBuilder<Backward>>>,
-    root: Query<Entity, With<SystemRoot>>,
-) {
+fn shortcut_send_prediction(input: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
     if input.just_pressed(KeyCode::Comma) {
-        let duration = Duration::from_days(365.0 * 1.0);
-        let sync_count =
+        let duration = Duration::from_days(400.0);
+        // let duration = Duration::from_hours(2.0);
+        let _sync_count =
             (duration.total_nanoseconds() / Duration::from_days(25.0).total_nanoseconds()) as usize;
 
-        event_writer.send(ComputePredictionEvent::new(
-            root.get_single().expect("No root entity found"),
-            duration,
-            sync_count,
+        commands.trigger(ExtendPredictionEvent::<DiscreteStatesBuilder>::all(
+            duration, 100,
         ));
+
+        // prediction.extend_all(duration, 100);
     }
 }

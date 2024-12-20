@@ -9,7 +9,7 @@ It uses concepts from various research, notably [Numerical Representation of Pla
 
 On top of showing the bodies in the system and their trajectories, the user interface allows for various ways to interact with the system:
 
-- **Camera Controls**: The camera can be moved using the WASD keys, A and D for roll, as well as Space and Left Control to move up and down. The mouse can be used for pitch and yaw when the left mouse button is held down. You can also use orbit controls around the followed body by holding the right mouse button.
+- **Camera Controls**: The camera can be moved using the WASD keys, A and D for roll, as well as Space and Left Control to move up and down. The up and down arrow keys allow to change the FOV. The mouse can be used for pitch and yaw when the left mouse button is held down. You can also use orbit controls around the followed body by holding the right mouse button.
 
 - **Hierarchy**: The left panel provides a hierarchical view of the celestial bodies within the current system. Clicking the 📌 allows setting the reference frame of the camera, which it will follow. You can toggle trajectory plotting using the ○ button, and toggle trajectory plotting of the children of a body using the A button. Clicking a body's name or a body in the viewport selects it and allows you to read information about the body and configure plotting.
 
@@ -17,9 +17,13 @@ On top of showing the bodies in the system and their trajectories, the user inte
 
 - **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting a start epoch and an end epoch. You can pause and cancel ongoing predictions. By default, predictions will auto-extend when the current time approaches the prediction bounds.
 
+- **Flight Planning**: Allows to add manoeuvres to ships. Manoeuvres are defined by a start epoch, a duration and an acceleration in a reference frame. Using the same window that displays body information, you can add, remove and edit manoeuvres. When a manoeuvre is changed, the trajectory of the ship is recomputed asynchronously. If the flight plan is shorter than the current prediction bounds, the ship will freeze at the end of its trajectory.
+
+- **Trajectory Picking**: You can hover or click points on the trajectories to display information about the body at that point in time as well as adding manoeuvres for ships. Multiple points might be selected when picking a trajectory if the points are close together and belong to the same body.
+
 - **Time Controls**: Allows to change the speed of the simulation, pause it or set the epoch.
 
-- **Export**: Allows to export the current state of the system to a file, selecting which bodies are included. The file can be loaded back into the system using the `Load` button. You can also export trajectories, but they are currently not importable.
+- **Export**: Allows to export the current state of the system to a file, selecting which bodies are included. The file can be loaded back into the system using the `Load` button.
 
 - **Load**: Allows to load a system from a file. The file should be a JSON file containing the state of the system. See `export-solar-system` for a python program that allows the generation of such files using NASA's development ephemerides and [skyfield](https://rhodesmill.org/skyfield/). The file should be formatted as follows:
 
