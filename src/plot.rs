@@ -1,6 +1,7 @@
 use core::f32;
 
 use crate::{
+    flight_plan::FlightPlan,
     floating_origin::{BigSpace, ReferenceFrame},
     prediction::{DiscreteStatesBuilder, PredictionCtx, StateVector, Trajectory, TrajectoryData},
     selection::Clickable,
@@ -158,18 +159,25 @@ fn compute_plot_points(
     }
 }
 
+pub const PICK_THRESHOLD: f32 = 6e-3;
+
 pub fn trajectory_picking(
     query_window: Query<&Window>,
     query_clickable: Query<(&GlobalTransform, &Clickable)>,
-    query_camera: Query<(&GlobalTransform, &Camera)>,
+    query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
     query_points: Query<(Entity, &PlotPoints)>,
     mut events: EventWriter<TrajectoryHitPoint>,
 ) {
     let Ok(window) = query_window.get_single() else {
         return;
     };
-    let Ok((camera_transform, camera)) = query_camera.get_single() else {
+    let Ok((camera_transform, camera, proj)) = query_camera.get_single() else {
         return;
+    };
+
+    let fov = match proj {
+        Projection::Perspective(p) => p.fov,
+        _ => return,
     };
 
     let ray = window.cursor_position().and_then(|position| {
@@ -189,7 +197,7 @@ pub fn trajectory_picking(
             let distance = transform.translation().distance(Vec3::from(ray.origin));
             ray.sphere_intersection_at(&bevy::math::bounding::BoundingSphere::new(
                 transform.translation(),
-                clickable.radius + distance * 5e-3,
+                clickable.radius + distance * fov * 1e-2,
             ))
         })
         .fold(f32::MAX, f32::min);
@@ -230,7 +238,7 @@ pub fn trajectory_picking(
             let closest_point_ray = ray.origin + ray.direction * t_ray;
             let separation = (closest_point_ray - closest_point_seg).length();
 
-            if separation < t_ray * 0.005 {
+            if separation < t_ray * fov * PICK_THRESHOLD {
                 events.send(TrajectoryHitPoint {
                     entity,
                     time: *t1 + (*t2 - *t1) * t_seg as f64,
@@ -257,12 +265,7 @@ fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &TrajectoryP
 
 fn plot_manoeuvres(
     mut gizmos: Gizmos,
-    query: Query<(
-        &Trajectory,
-        &TrajectoryPlot,
-        &PlotPoints,
-        Option<&DiscreteStatesBuilder>,
-    )>,
+    query: Query<(&Trajectory, &TrajectoryPlot, &PlotPoints, &FlightPlan)>,
     root: Query<&ReferenceFrame, With<BigSpace>>,
     camera: Query<&GlobalTransform, With<Camera>>,
     ctx: Res<PredictionCtx<DiscreteStatesBuilder>>,
@@ -270,31 +273,28 @@ fn plot_manoeuvres(
     let camera_transform = camera.single();
     let root = root.single();
 
-    for (trajectory, plot, points, builder) in query.iter() {
+    for (trajectory, plot, points, flight_plan) in query.iter() {
         if !plot.enabled || trajectory.is_empty() {
             continue;
         }
 
-        let Some(builder) = builder else {
-            continue;
-        };
-
-        for (&time, manoeuvre) in builder.manoeuvres().iter() {
-            let Some(manoeuvre) = manoeuvre else {
+        for burn in flight_plan.burns.iter() {
+            if !burn.enabled || burn.overlaps {
+                continue;
+            }
+            let Some(pos) = points.evaluate(burn.start) else {
+                continue;
+            };
+            let Some(sv) = trajectory.state_vector(burn.start) else {
                 continue;
             };
 
-            let Some(sv) = trajectory.state_vector(time) else {
-                continue;
-            };
-            let (prograde, radial, normal) = manoeuvre.frame.direction((time, sv), &ctx);
+            let (prograde, radial, normal) =
+                burn.reference_frame().direction((burn.start, sv), &ctx);
             let prograde = transform_vector3(prograde, root);
             let radial = transform_vector3(radial, root);
             let normal = transform_vector3(normal, root);
 
-            let Some(pos) = points.evaluate(time) else {
-                continue;
-            };
             let direction = camera_transform.translation() - pos;
             let size = direction.length() * 0.01;
             gizmos.arrow(pos, pos + prograde * size, LinearRgba::GREEN);

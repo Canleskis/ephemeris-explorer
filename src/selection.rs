@@ -37,7 +37,7 @@ fn entity_picker(
     mouse_input: Res<ButtonInput<MouseButton>>,
     mut mouse_move: EventReader<MouseMotion>,
     query_window: Query<&Window>,
-    query_camera: Query<(&GlobalTransform, &Camera)>,
+    query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
     query_can_select: Query<(Entity, &GlobalTransform, &Clickable)>,
 ) {
     if !mouse_input.just_pressed(MouseButton::Left) || !mouse_move.is_empty() {
@@ -48,8 +48,12 @@ fn entity_picker(
     let Ok(window) = query_window.get_single() else {
         return;
     };
-    let Ok((camera_transform, camera)) = query_camera.get_single() else {
+    let Ok((camera_transform, camera, proj)) = query_camera.get_single() else {
         return;
+    };
+    let fov = match proj {
+        Projection::Perspective(p) => p.fov,
+        _ => return,
     };
 
     let ray = window.cursor_position().and_then(|position| {
@@ -69,7 +73,7 @@ fn entity_picker(
             let distance = transform.translation().distance(Vec3::from(ray.origin));
             let toi = ray.sphere_intersection_at(&bevy::math::bounding::BoundingSphere::new(
                 transform.translation(),
-                clickable.radius + distance * 1e-2,
+                clickable.radius + distance * fov * 1e-2,
             ))?;
 
             Some((entity, clickable.index as f32 * toi))

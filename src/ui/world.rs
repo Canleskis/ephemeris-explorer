@@ -1,6 +1,6 @@
 use crate::{
     flight_plan::{Burn, FlightPlan, FlightPlanChanged},
-    plot::{trajectory_picking, PlotPoints, TrajectoryHitPoint, TrajectoryPlot},
+    plot::{trajectory_picking, PlotPoints, TrajectoryHitPoint, TrajectoryPlot, PICK_THRESHOLD},
     prediction::{Trajectory, TrajectoryData},
     selection::Selected,
     time::SimulationTime,
@@ -221,17 +221,22 @@ fn draw_intersections(
     mut events: EventReader<TrajectoryHitPoint>,
     mut query_points: Query<(&Name, &PlotPoints, &TrajectoryPlot, Option<&mut FlightPlan>)>,
     query_trajectory: Query<&Trajectory>,
-    query_camera: Query<(&GlobalTransform, &Camera)>,
+    query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
     mut persisted: Local<Vec<TrajectoryHitPoint>>,
     root: Query<Entity, With<SystemRoot>>,
 ) {
-    let Ok((camera_transform, camera)) = query_camera.get_single() else {
+    let Ok((camera_transform, camera, proj)) = query_camera.get_single() else {
         return;
     };
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
     };
     let root = root.single();
+
+    let fov = match proj {
+        Projection::Perspective(p) => p.fov,
+        _ => return,
+    };
 
     let mut buffer = events.read().cloned().collect::<Vec<_>>();
     if let Some(min_hit) = buffer
@@ -361,7 +366,7 @@ fn draw_intersections(
                                     .map_or(false, |r| r.response.contains_pointer());
 
                                 let direction = camera_transform.translation() - *position;
-                                let size = direction.length() * 0.005;
+                                let size = direction.length() * fov * PICK_THRESHOLD;
                                 gizmos.circle(
                                     *position,
                                     Dir3::new(direction).unwrap(),

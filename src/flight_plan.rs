@@ -85,7 +85,7 @@ impl Burn {
         self.start + self.duration
     }
 
-    pub fn frame(&self) -> ReferenceFrame {
+    pub fn reference_frame(&self) -> ReferenceFrame {
         self.frame.as_reference_frame(self.reference)
     }
 
@@ -197,7 +197,7 @@ fn compute_flight_plan(
                 })
                 .min();
 
-            [end, added, removed, changes].into_iter().flatten().max()
+            [end, added, removed, changes].into_iter().flatten().min()
         })
         .unwrap_or(Some(min));
 
@@ -216,28 +216,10 @@ fn compute_flight_plan(
         .next_back()
         .map_or(min, |(t, _)| *t);
 
-    // let last_valid = trigger.event().start;
-
-    // let restart = flight_plan
-    //     .burns
-    //     .iter()
-    //     .rev()
-    //     .filter(|burn| burn.enabled && !burn.overlaps)
-    //     .flat_map(|burn| [burn.end(), burn.start])
-    //     .filter(|t| *t <= max)
-    //     .filter(|t| builder.manoeuvres().contains_key(t))
-    //     .find(|t| *t <= last_valid)
-    //     .unwrap_or(min);
-
-    // println!("Received valid: {}", last_valid);
-    // println!("Received restart: {}", restart);
-
     let Some(&restart_sv) = trajectory.get(restart) else {
         bevy::log::error!("Someting went wrong when trying to restart the prediction");
         return;
     };
-
-    // println!("Restarting prediction from {}", restart);
 
     builder.clear_burns();
     builder.set_initial_state(restart, restart_sv);
@@ -249,7 +231,7 @@ fn compute_flight_plan(
             burn.start,
             burn.duration,
             burn.acceleration / 1e3,
-            burn.frame(),
+            burn.reference_frame(),
         ));
     }
 
