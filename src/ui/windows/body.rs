@@ -84,6 +84,7 @@ impl PlotOverwrite {
 
 #[derive(Component)]
 struct BodyInfoWindow {
+    auto_plot_reference: bool,
     plot_start_overwrite: Option<PlotOverwrite>,
     plot_end_overwrite: Option<PlotOverwrite>,
     delete_body: Option<bool>,
@@ -101,82 +102,13 @@ impl BodyInfoWindow {
     ) {
         for (entity, plot, builder) in &query {
             commands.entity(entity).insert(Self {
+                auto_plot_reference: true,
                 plot_start_overwrite: Some(PlotOverwrite {
                     previous: plot.start,
                     kind: OverwriteKind::Current,
                 }),
                 plot_end_overwrite: None,
                 delete_body: builder.map(|_| false),
-                // flight_plan: builder.map(|b| {
-                //     FlightPlan::with(
-                //         b.time() + Duration::from_days(5.0),
-                //         vec![
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-01T00:20:40 TAI").unwrap(),
-                //             //     Duration::from_seconds(375.0),
-                //             //     DVec3::new(0.0, 0.0, 10.0),
-                //             //     earth.unwrap_or(root),
-                //             //     BurnFrameUi::Frenet,
-                //             // ),
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-01T00:39:30 TAI").unwrap(),
-                //             //     Duration::from_seconds(305.0),
-                //             //     DVec3::new(9.956, 0.0, 0.0),
-                //             //     earth.unwrap_or(root),
-                //             //     BurnFrameUi::Frenet,
-                //             // ),
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-05T00:08:45 TAI").unwrap(),
-                //             //     Duration::from_seconds(96.0),
-                //             //     DVec3::new(-10.0, 0.0, 0.0),
-                //             //     moon.unwrap_or(root),
-                //             //     BurnFrameUi::Frenet,
-                //             // ),
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-01T00:00:00 TAI").unwrap(),
-                //             //     Duration::from_seconds(100.0),
-                //             //     DVec3::new(10.0, 0.0, 0.0),
-                //             //     plot.reference.unwrap_or(root),
-                //             //     BurnFrameUi::Cartesian,
-                //             // ),
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-01T01:16:11 TAI").unwrap(),
-                //             //     Duration::from_seconds(50.0),
-                //             //     DVec3::new(-16.3, 0.0, 0.0),
-                //             //     plot.reference.unwrap_or(root),
-                //             //     BurnFrameUi::Cartesian,
-                //             // ),
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-01T02:12:00 TAI").unwrap(),
-                //             //     Duration::from_seconds(65.3),
-                //             //     DVec3::new(0.0, -10.0, 41.53),
-                //             //     plot.reference.unwrap_or(root),
-                //             //     BurnFrameUi::Cartesian,
-                //             // ),
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-01T04:30:00 TAI").unwrap(),
-                //             //     Duration::from_seconds(283.1),
-                //             //     DVec3::new(-10.002, 0.0, 0.0),
-                //             //     plot.reference.unwrap_or(root),
-                //             //     BurnFrameUi::Cartesian,
-                //             // ),
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-04T19:01:28 TAI").unwrap(),
-                //             //     Duration::from_seconds(70.0),
-                //             //     DVec3::new(-5.0, -10.0, -10.0),
-                //             //     plot.reference.unwrap_or(root),
-                //             //     BurnFrameUi::Cartesian,
-                //             // ),
-                //             // BurnUi::new(
-                //             //     Epoch::from_str("1950-01-01T00:00:00 TAI").unwrap(),
-                //             //     Duration::from_seconds(60.0),
-                //             //     DVec3::new(100.0, 0.0, 0.0),
-                //             //     plot.reference.unwrap_or(root),
-                //             //     BurnFrameUi::Frenet,
-                //             // ),
-                //         ],
-                //     )
-                // }),
             });
         }
     }
@@ -184,9 +116,13 @@ impl BodyInfoWindow {
     fn persisting(
         sim_time: Res<SimulationTime>,
         selected: Res<Selected>,
-        mut query: Query<(Entity, &mut TrajectoryPlot, &mut Self)>,
+        mut query: Query<(Entity, &hierarchy::Parent, &mut TrajectoryPlot, &mut Self)>,
     ) {
-        for (entity, mut plot, mut info) in &mut query {
+        for (entity, parent, mut plot, mut info) in &mut query {
+            if info.auto_plot_reference {
+                plot.reference = Some(**parent);
+            }
+
             if let Some(overwrite) = &info.plot_start_overwrite {
                 overwrite.with(&sim_time, &mut plot.start);
             }
@@ -209,7 +145,12 @@ impl BodyInfoWindow {
         sim_time: Res<SimulationTime>,
         mut query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
         mut query_trajectory: Query<&Trajectory>,
-        mut query: Query<(Option<&mut FlightPlan>, &mut TrajectoryPlot, &mut Self)>,
+        mut query: Query<(
+            &hierarchy::Parent,
+            Option<&mut FlightPlan>,
+            &mut TrajectoryPlot,
+            &mut Self,
+        )>,
         root: Query<Entity, With<SystemRoot>>,
         mut delete: Local<bevy::utils::HashSet<uuid::Uuid>>,
     ) {
@@ -233,11 +174,10 @@ impl BodyInfoWindow {
                 .default_pos([ctx.screen_rect().size().x - 11.0, 33.0])
                 .resizable([false, true])
                 .show(ctx, |ui| {
-                    let Ok((mut flight_plan, mut plot, mut info)) = query.get_mut(entity) else {
+                    let Ok((parent, mut flight_plan, mut plot, mut info)) = query.get_mut(entity)
+                    else {
                         return;
                     };
-
-                    let reference = plot.reference;
 
                     if let Some(delete) = &mut info.delete_body {
                         if ui.button("Delete ship").clicked() {
@@ -259,7 +199,7 @@ impl BodyInfoWindow {
                                     ui.horizontal(|ui| {
                                         if ui.button("Confirm").clicked() {
                                             if followed.is_some_and(|f| f == entity) {
-                                                commands.add(SetFollowed(reference));
+                                                commands.add(SetFollowed(Some(**parent)));
                                             }
                                             commands.entity(entity).despawn_recursive();
                                         }
@@ -273,38 +213,43 @@ impl BodyInfoWindow {
                         ui.separator();
                     }
 
-                    let plot_reference_name = &reference
+                    let plot_reference_name = &plot
+                        .reference
                         .map(|r| get_name(r, query_hierarchy.transmute_lens()))
                         .unwrap_or_else(|| "None".to_string());
 
-                    ui.horizontal(|ui| {
-                        ui.label("Reference:");
-                        egui::ComboBox::from_id_source("Reference")
-                            .wrap_mode(egui::TextWrapMode::Extend)
-                            .selected_text(plot_reference_name)
-                            .show_ui(ui, |ui| {
-                                show_tree(
-                                    root,
-                                    &query_hierarchy,
-                                    |_| true,
-                                    ui,
-                                    |ui, _, (ref_entity, ref_name, _), _| {
-                                        ui.horizontal(|ui| {
-                                            ui.add_enabled_ui(entity != ref_entity, |ui| {
-                                                ui.selectable_value(
-                                                    &mut plot.reference,
-                                                    Some(ref_entity),
-                                                    ref_name.as_str(),
-                                                )
-                                                .on_disabled_hover_text(
-                                                    "Cannot use itself as a reference",
-                                                );
+                    ui.checkbox(&mut info.auto_plot_reference, "Auto");
+
+                    ui.add_enabled_ui(!info.auto_plot_reference, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Reference:");
+                            egui::ComboBox::from_id_source("Reference")
+                                .wrap_mode(egui::TextWrapMode::Extend)
+                                .selected_text(plot_reference_name)
+                                .show_ui(ui, |ui| {
+                                    show_tree(
+                                        root,
+                                        &query_hierarchy,
+                                        |_| true,
+                                        ui,
+                                        |ui, _, (ref_entity, ref_name, _), _| {
+                                            ui.horizontal(|ui| {
+                                                ui.add_enabled_ui(entity != ref_entity, |ui| {
+                                                    ui.selectable_value(
+                                                        &mut plot.reference,
+                                                        Some(ref_entity),
+                                                        ref_name.as_str(),
+                                                    )
+                                                    .on_disabled_hover_text(
+                                                        "Cannot use itself as a reference",
+                                                    );
+                                                });
+                                                ui.add_space(10.0);
                                             });
-                                            ui.add_space(10.0);
-                                        });
-                                    },
-                                );
-                            });
+                                        },
+                                    );
+                                });
+                        });
                     });
 
                     ui.separator();
@@ -315,7 +260,7 @@ impl BodyInfoWindow {
                         .show(ui, |ui| {
                             let sv = relative_state_vector(
                                 entity,
-                                reference,
+                                plot.reference,
                                 sim_time.current(),
                                 query_trajectory.transmute_lens(),
                             );
@@ -460,7 +405,7 @@ impl BodyInfoWindow {
                     ui.separator();
                     ui.heading("Flight planning");
                     ui.add_space(2.0);
-                    ui.spacing_mut().text_edit_width = 250.0;
+                    ui.spacing_mut().text_edit_width = 240.0;
 
                     let Ok(trajectory) = query_trajectory.get_mut(entity) else {
                         return;
@@ -487,10 +432,25 @@ impl BodyInfoWindow {
                         {
                             changed = true;
                         }
-                        ui.label(format!("({})", flight_plan.end - min_time));
                     });
+                    ui.label(format!("({})", flight_plan.end - min_time));
 
                     ui.add_space(5.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Max iterations:");
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut flight_plan.max_iterations, 0..=1_000_000)
+                                    .logarithmic(true),
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    });
+
+                    ui.add_space(10.0);
 
                     ui.horizontal(|ui| {
                         let new_button = ui.button("New burn");
@@ -585,8 +545,6 @@ impl BodyInfoWindow {
                     if ui.selectable_label(delete, "🗑").clicked() {
                         ui.data_mut(|data| data.insert_temp(id, delete_cb()));
                     }
-
-                    // ui.toggle_value(&mut burn.delete, "🗑");
                 });
 
                 if burn.overlaps {
@@ -603,7 +561,7 @@ impl BodyInfoWindow {
             })
             .body(|ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().interact_size = [250.0, 18.0].into();
+                    ui.spacing_mut().interact_size = [240.0, 18.0].into();
                     ui.label("Start time:");
                     ui.add_space(5.0);
 

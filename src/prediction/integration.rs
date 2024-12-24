@@ -274,7 +274,7 @@ pub struct DormandPrince5<const DIM: usize, V> {
 
 // Implementation largely based on the `ode_solvers` crate and adapted to be iteratable.
 impl<const DIM: usize, V> DormandPrince5<DIM, V> {
-    pub fn new(initial_time: f64, initial_state: V, rtol: f64, atol: f64) -> Self {
+    pub fn new(initial_time: f64, initial_state: V, rtol: f64, atol: f64, n_max: u32) -> Self {
         Self {
             time: initial_time,
             state: initial_state,
@@ -285,7 +285,7 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
             delta_new: 0.0,
             delta_max: f64::MAX,
             n: 0,
-            n_max: 100_000,
+            n_max,
             controller: Controller::new(0.2 - 0.04 * 0.75, 0.04, 10.0, 0.2, 0.9),
         }
     }
@@ -296,8 +296,18 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
     }
 
     #[inline]
-    pub fn tols(&self) -> (f64, f64) {
-        (self.rtol, self.atol)
+    pub fn rtol(&self) -> f64 {
+        self.rtol
+    }
+
+    #[inline]
+    pub fn atol(&self) -> f64 {
+        self.atol
+    }
+
+    #[inline]
+    pub fn n_max(&self) -> u32 {
+        self.n_max
     }
 
     #[expect(unused)]
@@ -317,11 +327,17 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
         &mut self.state
     }
 
+    #[inline]
+    pub fn set_n_max(&mut self, n_max: u32) {
+        self.n_max = n_max;
+    }
+
+    #[inline]
     pub fn reset(&mut self)
     where
         V: Clone,
     {
-        *self = Self::new(self.time, self.state.clone(), self.rtol, self.atol);
+        *self = Self::new(self.time, self.state.clone(), self.rtol, self.atol, self.n_max);
     }
 
     /// Compute the initial stepsize
@@ -455,23 +471,21 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
             }
             err = (err / DIM as f64).sqrt();
 
+            let delta_old = self.delta;
+            self.delta = self.delta_new;
+            self.n += 1;
+
             // Step size control
             if self
                 .controller
-                .accept(err, dir, self.delta, self.delta_max, &mut self.delta_new)
+                .accept(err, dir, delta_old, self.delta_max, &mut self.delta_new)
             {
                 k[0] = k[1];
                 self.state = y_next;
-                self.time += self.delta;
-
-                self.delta = self.delta_new;
-                self.n += 1;
+                self.time += delta_old;
 
                 return Ok(());
             }
-
-            self.delta = self.delta_new;
-            self.n += 1;
         }
     }
 }

@@ -5,7 +5,7 @@ use crate::{
     floating_origin::{BigSpace, ReferenceFrame},
     prediction::{DiscreteStatesBuilder, PredictionCtx, StateVector, Trajectory, TrajectoryData},
     selection::Clickable,
-    MainState,
+    MainState
 };
 
 use bevy::math::DVec3;
@@ -28,7 +28,7 @@ pub struct TrajectoryPlot {
     pub reference: Option<Entity>,
 }
 
-#[derive(Default, Component, Deref, DerefMut)]
+#[derive(Default, Debug, Component, Deref, DerefMut)]
 pub struct PlotPoints(pub Vec<(Epoch, Vec3)>);
 
 impl PlotPoints {
@@ -289,8 +289,10 @@ fn plot_manoeuvres(
                 continue;
             };
 
-            let (prograde, radial, normal) =
-                burn.reference_frame().direction((burn.start, sv), &ctx);
+            let (prograde, radial, normal) = burn
+                .reference_frame()
+                .direction((burn.start, sv), &ctx)
+                .unwrap();
             let prograde = transform_vector3(prograde, root);
             let radial = transform_vector3(radial, root);
             let normal = transform_vector3(normal, root);

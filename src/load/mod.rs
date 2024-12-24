@@ -7,10 +7,8 @@ pub use ui::*;
 use crate::{
     analysis::SphereOfInfluence,
     camera::{CanFollow, Followed, OrbitCamera},
-    flight_plan::FlightPlan,
-    floating_origin::{
-        BigReferenceFrameBundle, BigSpace, BigSpaceRootBundle, FloatingOrigin, GridCell,
-    },
+    flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
+    floating_origin::{BigReferenceFrameBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
     hierarchy,
     plot::{PlotPoints, TrajectoryPlot},
     prediction::{
@@ -24,7 +22,7 @@ use crate::{
     MainState, SystemRoot,
 };
 
-use bevy::asset::RecursiveDependencyLoadState;
+use bevy::asset::{LoadedFolder, RecursiveDependencyLoadState};
 use bevy::core_pipeline::Skybox;
 use bevy::math::DVec3;
 use bevy::prelude::*;
@@ -38,6 +36,14 @@ pub enum LoadingStage {
     Ephemerides,
 }
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, SubStates)]
+#[source(LoadingStage = LoadingStage::Ephemerides)]
+pub enum EphemeridesLoadingStage {
+    #[default]
+    Bodies,
+    Ships,
+}
+
 pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
@@ -45,6 +51,7 @@ impl Plugin for LoadingPlugin {
         app.add_systems(First, delay_window_visiblity);
         app.add_plugins(LoadingScreenPlugin)
             .add_sub_state::<LoadingStage>()
+            .add_sub_state::<EphemeridesLoadingStage>()
             .add_plugins(LoadSolarSytemPlugin)
             .add_event::<LoadSolarSystemEvent>()
             .add_systems(First, handle_load_events);
@@ -62,29 +69,35 @@ impl Plugin for LoadingPlugin {
                         .and_then(bodies_loaded)
                         .and_then(eph_settings_loaded)
                         .and_then(hierarchy_loaded)
-                        .and_then(skybox_loaded),
+                        .and_then(skybox_loaded)
+                        .and_then(ships_loaded),
                 )
                 .chain(),
         )
         .add_systems(
             OnExit(LoadingStage::Assets),
-            (spawn_bodies, setup_camera, default_follow).chain(),
+            (spawn_bodies, spawn_ships, setup_camera, default_follow).chain(),
         );
 
         app.add_systems(
-            OnEnter(LoadingStage::Ephemerides),
-            compute_default_ephemerides,
+            OnEnter(EphemeridesLoadingStage::Bodies),
+            compute_ephemerides_bodies,
         )
         .add_systems(
             Update,
-            (ephemerides_progress_text, bypass_ephemerides_loading)
-                .run_if(in_state(LoadingStage::Ephemerides)),
+            ephemerides_bodies_progress.run_if(in_state(EphemeridesLoadingStage::Bodies)),
         )
         .add_systems(
-            First,
-            finish_ephemerides_computing
-                .after(handle_load_events)
-                .run_if(in_state(LoadingStage::Ephemerides).and_then(ephemerides_computed)),
+            OnEnter(EphemeridesLoadingStage::Ships),
+            (compute_ephemerides_ships, apply_deferred).chain(),
+        )
+        .add_systems(
+            Update,
+            ephemerides_ships_progress.run_if(in_state(EphemeridesLoadingStage::Ships)),
+        )
+        .add_systems(
+            Update,
+            bypass_ephemerides_loading.run_if(in_state(LoadingStage::Ephemerides)),
         );
 
         bevy::asset::load_internal_binary_asset!(
@@ -112,6 +125,7 @@ pub struct LoadSolarSystemEvent {
     pub eph_settings: Handle<EphemeridesSettings>,
     pub hierarchy_tree: Handle<HierarchyTree>,
     pub skybox: Handle<Image>,
+    pub ship: Handle<LoadedFolder>,
 }
 
 impl LoadSolarSystemEvent {
@@ -121,12 +135,12 @@ impl LoadSolarSystemEvent {
     ) -> std::io::Result<Self> {
         // We can't really check if the files exist for now.
         // Hopefully in the future we can use the asset server to check if the files exist.
-
         Ok(Self {
             state: asset_server.load(dir.join("state.json")),
             eph_settings: asset_server.load(dir.join("ephemeris.json")),
             hierarchy_tree: asset_server.load(dir.join("hierarchy.json")),
             skybox: asset_server.load(dir.join("skybox.png")),
+            ship: asset_server.load_folder(dir.join("ships")),
         })
     }
 }
@@ -143,6 +157,9 @@ pub fn handle_load_events(
         commands.insert_resource(SkyboxHandle {
             reconfigured: false,
             handle: event.skybox.clone(),
+        });
+        commands.insert_resource(ShipsFolderHandle {
+            handle: event.ship.clone(),
         });
 
         next_state.set(MainState::Loading);
@@ -181,6 +198,13 @@ fn skybox_loaded(skybox: Res<SkyboxHandle>, asset_server: Res<AssetServer>) -> b
         asset_server.recursive_dependency_load_state(&skybox.handle),
         RecursiveDependencyLoadState::Failed
     ) || skybox.reconfigured
+}
+
+fn ships_loaded(folder: Res<ShipsFolderHandle>, asset_server: Res<AssetServer>) -> bool {
+    matches!(
+        asset_server.recursive_dependency_load_state(&folder.handle),
+        RecursiveDependencyLoadState::Loaded
+    )
 }
 
 #[derive(Component)]
@@ -258,8 +282,20 @@ fn spawn_bodies(
         for (name, tree) in tree.iter() {
             let body = solar_system.bodies.get(name).unwrap();
             let visual = visuals.get(&body.visuals).unwrap();
+            let settings = eph_settings.settings.get(name).unwrap();
 
             let radius = ((visual.radii.x + visual.radii.y + visual.radii.z) / 3.0) as f32;
+            let soi = massive_states
+                .iter()
+                .find(|(entity, ..)| *entity == parent)
+                .map(|(_, _, parent_position, parent_mu, _)| {
+                    SphereOfInfluence::approximate(
+                        body.position.distance(*parent_position),
+                        body.mu,
+                        *parent_mu,
+                    )
+                })
+                .unwrap_or(SphereOfInfluence::Fixed(f64::INFINITY));
 
             let mut entity = commands.spawn((
                 // No state scope needed as it is always a child of the root.
@@ -285,11 +321,18 @@ fn spawn_bodies(
                     offset: Vec2::new(0.0, radius) * 1.1,
                     index: depth + 1,
                 },
+                Mu(body.mu),
+                Trajectory::new(FixedSegments::new(
+                    solar_system.epoch,
+                    eph_settings.dt * DIV as i64 * settings.count as i64,
+                )),
+                BoundsTime,
+                soi,
                 TrajectoryPlot {
                     enabled: depth <= 1,
                     color: visual.orbit.color,
-                    start: Epoch::default() - Duration::MAX,
-                    end: Epoch::default() + Duration::MAX,
+                    start: Epoch::from_tai_duration(-Duration::MAX),
+                    end: Epoch::from_tai_duration(Duration::MAX),
                     threshold: 0.5,
                     max_points: 10_000,
                     reference: Some(parent),
@@ -297,45 +340,13 @@ fn spawn_bodies(
                 PlotPoints::default(),
             ));
 
-            if let Some(settings) = eph_settings.settings.get(name) {
-                let granule = eph_settings.dt * DIV as i64 * settings.count as i64;
-                entity.insert((
-                    Mu(body.mu),
-                    Trajectory::new(FixedSegments::new(solar_system.epoch, granule)),
-                    BoundsTime,
-                ));
-                let parent_state = massive_states.iter().find(|(id, ..)| *id == parent);
-                if let Some((_, _, parent_position, parent_mu, _)) = parent_state {
-                    let sma = body.position.distance(*parent_position);
-                    entity.insert(SphereOfInfluence::approximate(sma, body.mu, *parent_mu));
-                } else {
-                    entity.insert(SphereOfInfluence::Fixed(f64::INFINITY));
-                }
-
-                massive_states.push((
-                    entity.id(),
-                    body.velocity,
-                    body.position,
-                    body.mu,
-                    settings.degree,
-                ));
-            } else {
-                entity.insert((
-                    Trajectory::new(DiscreteStates::new(
-                        solar_system.epoch,
-                        body.velocity,
-                        body.position,
-                    )),
-                    DiscreteStatesBuilder::new(
-                        entity.id(),
-                        solar_system.epoch,
-                        body.velocity,
-                        body.position,
-                    ),
-                    FlightPlan::new(solar_system.epoch + Duration::from_days(5.0)),
-                    // BoundsTime,
-                ));
-            }
+            massive_states.push((
+                entity.id(),
+                body.velocity,
+                body.position,
+                body.mu,
+                settings.degree,
+            ));
 
             entity.with_children(|parent| {
                 let mut child = parent.spawn((
@@ -392,10 +403,112 @@ fn spawn_bodies(
     commands.insert_resource(SimulationTime::new(system.epoch));
 }
 
+fn spawn_ships(
+    mut commands: Commands,
+    folder: Res<ShipsFolderHandle>,
+    assets: Res<Assets<Ship>>,
+    folder_assets: Res<Assets<LoadedFolder>>,
+    query_names: Query<(Entity, &Name)>,
+    root: Query<Entity, With<SystemRoot>>,
+) {
+    let root = root.single();
+    let find_by_name = |reference| {
+        query_names
+            .iter()
+            .find(|(_, name)| name.as_str() == reference)
+            .map(|(entity, _)| entity)
+    };
+
+    let Some(folder) = folder_assets.get(&folder.handle) else {
+        return;
+    };
+
+    for ship in folder
+        .handles
+        .iter()
+        .filter_map(|handle| assets.get(&handle.clone().try_typed().ok()?))
+    {
+        let radius = 1.0;
+
+        let end = ship
+            .burns
+            .last()
+            .map(|burn| burn.start + burn.duration)
+            .map(|end| end + ((end - ship.start) / 5).round(Duration::from_hours(1.0)))
+            .filter(|end| *end > ship.start + Duration::from_days(1.0))
+            .unwrap_or(ship.start + Duration::from_days(1.0));
+
+        let mut entity = commands.spawn_empty();
+        entity.insert((
+            // No state scope needed as it is always a child of the root.
+            Name::new(ship.name.clone()),
+            BigReferenceFrameBundle {
+                transform: Transform::from_translation(ship.position.as_vec3()),
+                ..default()
+            },
+            Clickable { radius, index: 99 },
+            CanFollow {
+                min_distance: radius as f64 * 1.05,
+                max_distance: 5e10,
+            },
+            Labelled {
+                style: TextStyle {
+                    font_size: 15.0,
+                    color: Color::WHITE,
+                    ..default()
+                },
+                offset: Vec2::new(0.0, radius) * 1.1,
+                index: 99,
+            },
+            Trajectory::new(DiscreteStates::new(
+                ship.start,
+                ship.velocity,
+                ship.position,
+            )),
+            DiscreteStatesBuilder::new(entity.id(), ship.start, ship.velocity, ship.position),
+            FlightPlan::with(
+                end,
+                10_000,
+                ship.burns
+                    .iter()
+                    .map(|burn| {
+                        let (reference, frame) = burn
+                            .reference
+                            .as_ref()
+                            .and_then(find_by_name)
+                            .map(|entity| (entity, BurnFrame::Frenet))
+                            .unwrap_or((root, BurnFrame::Cartesian));
+                        Burn::with(
+                            burn.start,
+                            burn.duration,
+                            burn.acceleration,
+                            reference,
+                            frame,
+                        )
+                    })
+                    .collect(),
+            ),
+            TrajectoryPlot {
+                enabled: true,
+                color: LinearRgba::GREEN.into(),
+                start: Epoch::from_tai_duration(-Duration::MAX),
+                end: Epoch::from_tai_duration(Duration::MAX),
+                threshold: 0.5,
+                max_points: 10_000,
+                reference: None,
+            },
+            PlotPoints::default(),
+        ));
+
+        let child = entity.id();
+        commands.entity(root).add_child(child);
+    }
+}
+
 fn setup_camera(
     mut commands: Commands,
     skybox: Res<SkyboxHandle>,
-    root: Query<Entity, With<BigSpace>>,
+    root: Query<Entity, With<SystemRoot>>,
 ) {
     commands
         .spawn((
@@ -442,41 +555,9 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
     }
 }
 
-fn ephemerides_progress_text(
-    mut query: Query<&mut Text, With<LoadingText>>,
-    forward: Query<&PredictionTracker<FixedSegmentsBuilder<Forward>>>,
-    backward: Query<&PredictionTracker<FixedSegmentsBuilder<Backward>>>,
-) {
-    let forward_progress = forward
-        .get_single()
-        .map(PredictionTracker::progress)
-        .unwrap_or(1.0);
-    let backward_progress = backward
-        .get_single()
-        .map(PredictionTracker::progress)
-        .unwrap_or(1.0);
-    let progress = (forward_progress + backward_progress) / 2.0;
-    for mut text in query.iter_mut() {
-        text.sections[0].value = format!("Computing ephemerides: {:.0}%", progress * 100.0);
-    }
-}
-
-fn finish_ephemerides_computing(world: &mut World) {
-    world
-        .resource_mut::<NextState<MainState>>()
-        .set(MainState::Running);
-}
-
-fn ephemerides_computed(
-    forward: Query<&PredictionTracker<FixedSegmentsBuilder<Forward>>>,
-    backward: Query<&PredictionTracker<FixedSegmentsBuilder<Backward>>>,
-) -> bool {
-    forward.is_empty() && backward.is_empty()
-}
-
-fn compute_default_ephemerides(mut commands: Commands, sim_time: Res<SimulationTime>) {
-    let target_forward = Epoch::from_gregorian_tai_hms(1955, 1, 1, 0, 0, 0);
-    let target_backward = Epoch::from_gregorian_tai_hms(1945, 1, 1, 0, 0, 0);
+fn compute_ephemerides_bodies(mut commands: Commands, sim_time: Res<SimulationTime>) {
+    let target_forward = Epoch::from_gregorian_tai_hms(1952, 1, 1, 0, 0, 0);
+    let target_backward = Epoch::from_gregorian_tai_hms(1948, 1, 1, 0, 0, 0);
     let sync_count = 100;
 
     commands.trigger(ExtendPredictionEvent::<FixedSegmentsBuilder<Forward>>::all(
@@ -489,6 +570,63 @@ fn compute_default_ephemerides(mut commands: Commands, sim_time: Res<SimulationT
             sync_count,
         ),
     );
+}
+
+fn ephemerides_bodies_progress(
+    mut state: ResMut<NextState<EphemeridesLoadingStage>>,
+    mut query: Query<&mut Text, With<LoadingText>>,
+    forward: Query<&PredictionTracker<FixedSegmentsBuilder<Forward>>>,
+    backward: Query<&PredictionTracker<FixedSegmentsBuilder<Backward>>>,
+) {
+    if forward.is_empty() && backward.is_empty() {
+        state.set(EphemeridesLoadingStage::Ships);
+        return;
+    }
+
+    let forward_progress = forward
+        .get_single()
+        .map(PredictionTracker::progress)
+        .unwrap_or(1.0);
+    let backward_progress = backward
+        .get_single()
+        .map(PredictionTracker::progress)
+        .unwrap_or(1.0);
+    let progress = (forward_progress + backward_progress) / 2.0;
+    for mut text in query.iter_mut() {
+        text.sections[0].value = format!("Computing ephemerides (1/2): {:.0}%", progress * 100.0);
+    }
+}
+
+fn compute_ephemerides_ships(
+    mut commands: Commands,
+    query_flight_path: Query<Entity, With<FlightPlan>>,
+) {
+    for entity in query_flight_path.iter() {
+        commands.trigger_targets(FlightPlanChanged, entity);
+    }
+}
+
+fn ephemerides_ships_progress(
+    mut state: ResMut<NextState<MainState>>,
+    mut query: Query<&mut Text, With<LoadingText>>,
+    query_tracker: Query<&PredictionTracker<DiscreteStatesBuilder>>,
+) {
+    if query_tracker.is_empty() {
+        state.set(MainState::Running);
+        return;
+    }
+
+    let total_progress = query_tracker
+        .iter()
+        .map(PredictionTracker::progress)
+        .sum::<f32>()
+        / query_tracker.iter().len().max(1) as f32;
+    for mut text in query.iter_mut() {
+        text.sections[0].value = format!(
+            "Computing ephemerides (2/2): {:.0}%",
+            total_progress * 100.0
+        );
+    }
 }
 
 #[expect(unused)]

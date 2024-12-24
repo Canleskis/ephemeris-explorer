@@ -13,6 +13,7 @@ pub trait TrajectoryData {
         time >= self.start() && time <= self.end()
     }
 
+    /// Returns the number of interpolants in the trajectory.
     fn len(&self) -> usize;
 
     fn is_empty(&self) -> bool {
@@ -801,7 +802,7 @@ impl TrajectoryData for DiscreteStates {
     }
 
     fn len(&self) -> usize {
-        self.0.len()
+        self.0.len().saturating_sub(1)
     }
 
     fn position(&self, at: Epoch) -> Option<DVec3> {

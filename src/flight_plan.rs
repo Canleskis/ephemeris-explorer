@@ -61,13 +61,12 @@ impl Burn {
         }
     }
 
-    #[expect(unused)]
     pub fn with(
         start: Epoch,
         duration: Duration,
         acceleration: DVec3,
         reference: Entity,
-        reference_frame: BurnFrame,
+        frame: BurnFrame,
     ) -> Self {
         Self {
             id: uuid::Uuid::new_v4(),
@@ -75,7 +74,7 @@ impl Burn {
             duration,
             acceleration,
             reference,
-            frame: reference_frame,
+            frame,
             enabled: true,
             overlaps: false,
         }
@@ -97,20 +96,25 @@ impl Burn {
 #[derive(Component, Clone)]
 pub struct FlightPlan {
     pub end: Epoch,
+    pub max_iterations: usize,
     pub burns: Vec<Burn>,
 }
 
 impl FlightPlan {
-    pub fn new(end: Epoch) -> Self {
+    pub fn new(end: Epoch, max_iterations: usize) -> Self {
         Self {
             end,
+            max_iterations,
             burns: Vec::new(),
         }
     }
 
-    #[expect(unused)]
-    pub fn with(end: Epoch, burns: Vec<Burn>) -> Self {
-        Self { end, burns }
+    pub fn with(end: Epoch, max_iterations: usize, burns: Vec<Burn>) -> Self {
+        Self {
+            end,
+            max_iterations,
+            burns,
+        }
     }
 
     #[inline]
@@ -166,6 +170,7 @@ fn compute_flight_plan(
     let last_valid = previous
         .map(|previous| {
             let end = (flight_plan.end != previous.end).then_some(flight_plan.end);
+            let iterations = (flight_plan.max_iterations != previous.max_iterations).then_some(min);
             let added = first_missing(&flight_plan.burns, &previous.burns);
             let removed = first_missing(&previous.burns, &flight_plan.burns);
             let changes = flight_plan
@@ -197,7 +202,10 @@ fn compute_flight_plan(
                 })
                 .min();
 
-            [end, added, removed, changes].into_iter().flatten().min()
+            [end, iterations, added, removed, changes]
+                .into_iter()
+                .flatten()
+                .min()
         })
         .unwrap_or(Some(min));
 
@@ -217,12 +225,13 @@ fn compute_flight_plan(
         .map_or(min, |(t, _)| *t);
 
     let Some(&restart_sv) = trajectory.get(restart) else {
-        bevy::log::error!("Someting went wrong when trying to restart the prediction");
+        bevy::log::error!("someting went wrong when trying to compute the flight plan");
         return;
     };
 
-    builder.clear_burns();
+    builder.clear_manoeuvres();
     builder.set_initial_state(restart, restart_sv);
+    builder.set_max_iterations(flight_plan.max_iterations);
     for burn in &flight_plan.burns {
         if !burn.enabled || burn.overlaps {
             continue;

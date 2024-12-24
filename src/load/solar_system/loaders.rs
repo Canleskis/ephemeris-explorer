@@ -1,5 +1,5 @@
 use super::{
-    Body, BodyVisuals, EphemeridesSettings, EphemerisSettings, HierarchyTree, OrbitVisuals,
+    Body, BodyVisuals, EphemeridesSettings, EphemerisSettings, HierarchyTree, OrbitVisuals, Ship,
     SolarSystem,
 };
 
@@ -48,7 +48,7 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
             radii: DVec3,
             right_ascension: f64,
             declination: f64,
-            rotation_reference_epoch: String,
+            rotation_reference_epoch: Epoch,
             rotation_reference: f64,
             rotation_rate: f64,
         }
@@ -59,7 +59,15 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
                     radii: DVec3::splat(100.0),
                     right_ascension: 0.0,
                     declination: 0.0,
-                    rotation_reference_epoch: "2000-01-01 12:00:00 TDB".to_owned(),
+                    rotation_reference_epoch: Epoch::from_gregorian_hms(
+                        2000,
+                        1,
+                        1,
+                        12,
+                        0,
+                        0,
+                        hifitime::TimeScale::TDB,
+                    ),
                     rotation_reference: 0.0,
                     rotation_rate: 0.0,
                 }
@@ -154,9 +162,6 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
             .build();
             let mesh = ctx.add_labeled_asset("mesh".to_owned(), mesh);
 
-            let rotation_reference_epoch =
-                std::str::FromStr::from_str(&toml.physical.rotation_reference_epoch).unwrap();
-
             let light = toml
                 .light
                 .map(|light| Srgba::hex(light.color).unwrap().into());
@@ -173,7 +178,7 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
                 orbit,
                 right_ascension: toml.physical.right_ascension,
                 declination: toml.physical.declination,
-                rotation_reference_epoch,
+                rotation_reference_epoch: toml.physical.rotation_reference_epoch,
                 rotation_reference: toml.physical.rotation_reference,
                 rotation_rate: toml.physical.rotation_rate,
             })
@@ -221,8 +226,8 @@ impl bevy::asset::AssetLoader for SolarSystemLoader {
 
         #[derive(Deserialize)]
         pub struct SolarSytemJson {
+            epoch: Epoch,
             pub bodies: Vec<BodyJson>,
-            epoch: String,
         }
 
         async move {
@@ -231,8 +236,6 @@ impl bevy::asset::AssetLoader for SolarSystemLoader {
             let json = serde_json::from_slice::<SolarSytemJson>(&bytes)?;
 
             let mut bodies = bevy::utils::HashMap::with_capacity(json.bodies.len());
-            let epoch: Epoch = std::str::FromStr::from_str(&json.epoch).unwrap();
-            let epoch = Epoch::from_tai_duration(epoch.to_tai_duration());
 
             for body in json.bodies {
                 let label = body.name.to_lowercase();
@@ -248,7 +251,10 @@ impl bevy::asset::AssetLoader for SolarSystemLoader {
                 );
             }
 
-            Ok(SolarSystem { bodies, epoch })
+            Ok(SolarSystem {
+                bodies,
+                epoch: json.epoch,
+            })
         }
     }
 
@@ -291,11 +297,9 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
 
         #[derive(Deserialize)]
         struct EphemeridesSettingsJson {
-            dt: String,
+            dt: Duration,
             settings: bevy::utils::HashMap<String, EphemerisSettingsJson>,
         }
-
-        use std::str::FromStr;
 
         async move {
             let mut bytes = Vec::new();
@@ -303,7 +307,7 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
             let json = serde_json::from_slice::<EphemeridesSettingsJson>(&bytes)?;
 
             let settings = EphemeridesSettings {
-                dt: Duration::from_str(&json.dt).unwrap(),
+                dt: json.dt,
                 settings: json
                     .settings
                     .into_iter()
@@ -360,6 +364,45 @@ impl bevy::asset::AssetLoader for HierarchyTreeLoader {
             let json = serde_json::from_slice(&bytes)?;
 
             Ok(HierarchyTree(json))
+        }
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["json"]
+    }
+}
+
+pub struct ShipLoader;
+
+#[non_exhaustive]
+#[derive(Debug, Error)]
+pub enum ShipLoaderError {
+    /// An [IO Error](std::io::Error)
+    #[error("Could not read the file: {0}")]
+    Io(#[from] std::io::Error),
+    /// A [JSON Error](serde_json::error::Error)
+    #[error("Could not parse the JSON: {0}")]
+    JsonError(#[from] serde_json::error::Error),
+}
+
+impl bevy::asset::AssetLoader for ShipLoader {
+    type Asset = Ship;
+
+    type Settings = ();
+
+    type Error = ShipLoaderError;
+
+    fn load<'a>(
+        &'a self,
+        reader: &'a mut bevy::asset::io::Reader,
+        _: &'a (),
+        _: &'a mut bevy::asset::LoadContext,
+    ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+        async move {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).await?;
+
+            Ok(serde_json::from_slice(&bytes)?)
         }
     }
 

@@ -4,7 +4,7 @@ pub use loaders::*;
 
 use crate::MainState;
 
-use bevy::math::DVec3;
+use bevy::{asset::LoadedFolder, math::DVec3};
 use bevy::prelude::*;
 use hifitime::{Duration, Epoch};
 
@@ -69,10 +69,12 @@ impl Plugin for LoadSolarSytemPlugin {
             .init_asset::<SolarSystem>()
             .init_asset::<HierarchyTree>()
             .init_asset::<EphemeridesSettings>()
+            .init_asset::<Ship>()
             .register_asset_loader(BodyVisualsLoader)
             .register_asset_loader(SolarSystemLoader)
             .register_asset_loader(HierarchyTreeLoader)
             .register_asset_loader(EphemeridesSettingsLoader)
+            .register_asset_loader(ShipLoader)
             .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(AmbientLight {
                 color: Color::NONE,
@@ -123,6 +125,11 @@ fn reconfigure_skybox_image(mut images: ResMut<Assets<Image>>, mut skybox: ResMu
 
         skybox.reconfigured = true;
     }
+}
+
+#[derive(Debug, Resource)]
+pub struct ShipsFolderHandle {
+    pub handle: Handle<LoadedFolder>,
 }
 
 #[derive(Debug)]
@@ -220,5 +227,22 @@ pub struct EphemeridesSettings {
     pub settings: bevy::utils::HashMap<String, EphemerisSettings>,
 }
 
-#[derive(serde::Deserialize, Asset, TypePath, Deref, DerefMut, Debug)]
+#[derive(Asset, TypePath, Deref, DerefMut, Debug, serde::Deserialize)]
 pub struct HierarchyTree(pub indexmap::IndexMap<String, HierarchyTree>);
+
+#[derive(Debug, serde::Deserialize)]
+pub struct Burn {
+    pub start: Epoch,
+    pub duration: Duration,
+    pub acceleration: DVec3,
+    pub reference: Option<String>,
+}
+
+#[derive(Asset, TypePath, Debug, serde::Deserialize)]
+pub struct Ship {
+    pub name: String,
+    pub start: Epoch,
+    pub position: DVec3,
+    pub velocity: DVec3,
+    pub burns: Vec<Burn>,
+}

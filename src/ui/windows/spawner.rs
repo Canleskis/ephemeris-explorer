@@ -1,6 +1,7 @@
 use crate::{
+    flight_plan::{FlightPlan, FlightPlanChanged},
     hierarchy,
-    plot::TrajectoryPlot,
+    plot::{PlotPoints, TrajectoryPlot},
     prediction::{DiscreteStates, DiscreteStatesBuilder, StateVector, Trajectory, TrajectoryData},
     time::SimulationTime,
     ui::{get_name, show_tree, IdentedInfo, Labelled},
@@ -147,58 +148,55 @@ impl ShipSpawnerWindow {
                     let ref_sv = query_trajectory
                         .get(*reference)
                         .ok()
-                        .and_then(|traj| traj.state_vector(time));
-
-                    let Some(ref_sv) = ref_sv else {
-                        bevy::log::error!("failed to spawn ship at {}", time);
-                        return;
-                    };
+                        .and_then(|traj| traj.state_vector(time))
+                        .unwrap_or_default();
 
                     let sv = ref_sv + *spawn_sv;
-                    commands.entity(root).with_children(|commands| {
-                        let mut ship = commands.spawn_empty();
-                        let radius = 0.1;
-                        let depth = 3;
-                        ship.insert((
-                            Name::new(name_buffer.clone()),
-                            crate::floating_origin::BigReferenceFrameBundle {
-                                transform: Transform::from_translation(sv.position.as_vec3()),
+
+                    let mut ship = commands.spawn_empty();
+                    let radius = 0.1;
+                    let depth = 3;
+                    ship.insert((
+                        Name::new(name_buffer.clone()),
+                        crate::floating_origin::BigReferenceFrameBundle {
+                            transform: Transform::from_translation(sv.position.as_vec3()),
+                            ..default()
+                        },
+                        crate::selection::Clickable {
+                            radius,
+                            index: depth + 1,
+                        },
+                        crate::camera::CanFollow {
+                            min_distance: radius as f64 * 1.05,
+                            max_distance: 5e10,
+                        },
+                        Labelled {
+                            style: TextStyle {
+                                font_size: 15.0,
+                                color: Color::WHITE,
                                 ..default()
                             },
-                            crate::selection::Clickable {
-                                radius,
-                                index: depth + 1,
-                            },
-                            crate::camera::CanFollow {
-                                min_distance: radius as f64 * 1.05,
-                                max_distance: 5e10,
-                            },
-                            Labelled {
-                                style: TextStyle {
-                                    font_size: 15.0,
-                                    color: Color::WHITE,
-                                    ..default()
-                                },
-                                offset: Vec2::new(0.0, radius) * 1.1,
-                                index: depth + 1,
-                            },
-                            TrajectoryPlot {
-                                enabled: true,
-                                color: LinearRgba::GREEN.into(),
-                                start: Epoch::default() - Duration::MAX,
-                                end: Epoch::default() + Duration::MAX,
-                                threshold: 0.5,
-                                max_points: 10_000,
-                                reference: Some(*reference),
-                            },
-                            Trajectory::new(DiscreteStates::new(time, sv.velocity, sv.position)),
-                            DiscreteStatesBuilder::new(ship.id(), time, sv.velocity, sv.position),
-                        ));
+                            offset: Vec2::new(0.0, radius) * 1.1,
+                            index: depth + 1,
+                        },
+                        Trajectory::new(DiscreteStates::new(time, sv.velocity, sv.position)),
+                        DiscreteStatesBuilder::new(ship.id(), time, sv.velocity, sv.position),
+                        FlightPlan::new(time + Duration::from_days(1.0), 100_000),
+                        TrajectoryPlot {
+                            enabled: true,
+                            color: LinearRgba::GREEN.into(),
+                            start: Epoch::default() - Duration::MAX,
+                            end: Epoch::default() + Duration::MAX,
+                            threshold: 0.5,
+                            max_points: 10_000,
+                            reference: Some(*reference),
+                        },
+                        PlotPoints::default(),
+                    ));
 
-                        let parent = *reference;
-                        let child = ship.id();
-                        commands.add_command(hierarchy::AddChild { parent, child });
-                    });
+                    let child = ship.id();
+                    commands.entity(root).add_child(child);
+                    commands.trigger_targets(FlightPlanChanged, child);
                 }
             });
 

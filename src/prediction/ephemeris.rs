@@ -371,7 +371,7 @@ impl TrajectoryBuilder for FixedSegmentsBuilder<Backward> {
     }
 }
 
-#[derive(Clone, Copy, Component, Deref, DerefMut)]
+#[derive(Clone, Copy, Debug, Component, Deref, DerefMut)]
 pub struct Mu(pub f64);
 
 pub struct DiscreteStatesContext {
@@ -463,6 +463,22 @@ impl BuilderContext for DiscreteStatesContext {
     }
 }
 
+pub fn direction_from_states(
+    current_sv: StateVector<DVec3>,
+    ref_current_sv: StateVector<DVec3>,
+) -> (DVec3, DVec3, DVec3) {
+    let relative_sv = current_sv - ref_current_sv;
+
+    let prograde = relative_sv.velocity.normalize_or_zero();
+    let normal = relative_sv
+        .position
+        .cross(relative_sv.velocity)
+        .normalize_or_zero();
+    let radial = prograde.cross(normal).normalize_or_zero();
+
+    (prograde, radial, normal)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ReferenceFrame {
     Frenet(Entity),
@@ -474,28 +490,19 @@ impl ReferenceFrame {
     #[inline]
     pub fn direction(
         &self,
-        (current_t, current_state): (Epoch, StateVector<DVec3>),
+        (current_t, current_sv): (Epoch, StateVector<DVec3>),
         ctx: &DiscreteStatesContext,
-    ) -> (DVec3, DVec3, DVec3) {
+    ) -> Option<(DVec3, DVec3, DVec3)> {
         match self {
             Self::Frenet(reference) => {
                 let reference_sv = ctx
                     .states
                     .get(reference)
-                    .and_then(|(ref_traj, _)| ref_traj.state_vector(current_t))
-                    .expect("failed to get reference state vector");
-                let relative_sv = current_state - reference_sv;
+                    .and_then(|(ref_traj, _)| ref_traj.state_vector(current_t))?;
 
-                let prograde = relative_sv.velocity.normalize_or_zero();
-                let normal = relative_sv
-                    .position
-                    .cross(relative_sv.velocity)
-                    .normalize_or_zero();
-                let radial = prograde.cross(normal).normalize_or_zero();
-
-                (prograde, radial, normal)
+                Some(direction_from_states(current_sv, reference_sv))
             }
-            Self::Cartesian => (DVec3::X, DVec3::Y, DVec3::Z),
+            Self::Cartesian => Some((DVec3::X, DVec3::Y, DVec3::Z)),
         }
     }
 }
@@ -506,29 +513,6 @@ pub struct ConstantAcceleration {
     pub duration: Duration,
     pub acceleration: DVec3,
     pub frame: ReferenceFrame,
-}
-
-impl PartialEq for ConstantAcceleration {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.start.eq(&other.start)
-    }
-}
-
-impl Eq for ConstantAcceleration {}
-
-impl PartialOrd for ConstantAcceleration {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ConstantAcceleration {
-    #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.start.cmp(&other.start)
-    }
 }
 
 impl ConstantAcceleration {
@@ -554,10 +538,12 @@ impl ConstantAcceleration {
     #[inline]
     fn acceleration(
         &self,
-        (current_t, current_state): (Epoch, StateVector<DVec3>),
+        (current_t, current_sv): (Epoch, StateVector<DVec3>),
         ctx: &DiscreteStatesContext,
     ) -> DVec3 {
-        let (x_dir, y_dir, z_dir) = self.frame.direction((current_t, current_state), ctx);
+        let (x_dir, y_dir, z_dir) = self.frame.direction((current_t, current_sv), ctx).expect(
+            "failed to compute direction for manoeuvre, ensure the reference trajectory exists",
+        );
 
         self.acceleration.x * x_dir + self.acceleration.y * y_dir + self.acceleration.z * z_dir
     }
@@ -587,6 +573,7 @@ impl DiscreteStatesBuilder {
                 StateVector::new(initial_position, initial_velocity),
                 1.0e-8,
                 1.0e-8,
+                100_000,
             ),
             manoeuvres: std::collections::BTreeMap::new(),
         }
@@ -601,6 +588,27 @@ impl DiscreteStatesBuilder {
     #[inline]
     pub fn state(&self) -> &StateVector<DVec3> {
         self.integrator.state()
+    }
+
+    #[inline]
+    pub fn manoeuvres(&self) -> &std::collections::BTreeMap<Epoch, Option<Manoeuvre>> {
+        &self.manoeuvres
+    }
+
+    #[inline]
+    pub fn set_initial_state(&mut self, time: Epoch, state_vector: StateVector<DVec3>) {
+        self.integrator = DormandPrince5::new(
+            time.to_tai_seconds(),
+            state_vector,
+            self.integrator.rtol(),
+            self.integrator.atol(),
+            self.integrator.n_max(),
+        );
+    }
+
+    #[inline]
+    pub fn set_max_iterations(&mut self, max_iterations: usize) {
+        self.integrator.set_n_max(max_iterations as _);
     }
 
     #[inline]
@@ -619,18 +627,7 @@ impl DiscreteStatesBuilder {
     }
 
     #[inline]
-    pub fn manoeuvres(&self) -> &std::collections::BTreeMap<Epoch, Option<Manoeuvre>> {
-        &self.manoeuvres
-    }
-
-    #[inline]
-    pub fn set_initial_state(&mut self, time: Epoch, state_vector: StateVector<DVec3>) {
-        let (rtol, atol) = self.integrator.tols();
-        self.integrator = DormandPrince5::new(time.to_tai_seconds(), state_vector, rtol, atol);
-    }
-
-    #[inline]
-    pub fn clear_burns(&mut self) {
+    pub fn clear_manoeuvres(&mut self) {
         self.manoeuvres.clear();
     }
 }

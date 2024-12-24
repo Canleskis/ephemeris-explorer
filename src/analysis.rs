@@ -4,6 +4,7 @@ use crate::{
     time::SimulationTime,
     MainState,
 };
+use bevy::math::DVec3;
 use bevy::prelude::*;
 
 #[derive(Component)]
@@ -16,8 +17,7 @@ pub enum SphereOfInfluence {
 impl SphereOfInfluence {
     pub fn radius(&self) -> f64 {
         match self {
-            Self::Fixed(radius) => *radius,
-            Self::Computed(radius) => *radius,
+            Self::Fixed(radius) | Self::Computed(radius) => *radius,
         }
     }
 
@@ -37,10 +37,23 @@ impl Plugin for OrbitalAnalysisPlugin {
     }
 }
 
+pub fn under_soi<'a, I>(iter: I, position: DVec3) -> Option<Entity>
+where
+    I: IntoIterator<Item = (Entity, DVec3, &'a SphereOfInfluence)>,
+{
+    iter.into_iter()
+        .map(|(soi_entity, soi_position, soi)| {
+            (soi_entity, position.distance(soi_position), soi.radius())
+        })
+        .filter(|(_, soi_distance, soi_radius)| soi_distance < soi_radius)
+        .min_by(|(_, a, _), (_, b, _)| a.total_cmp(b))
+        .map(|(entity, _, _)| entity)
+}
+
 fn sphere_of_influence_to_hierarchy(
     mut commands: Commands,
     sim_time: Res<SimulationTime>,
-    query: Query<(Entity, &Trajectory, &hierarchy::Parent), Without<SphereOfInfluence>>,
+    query: Query<(Entity, &Trajectory, Option<&hierarchy::Parent>), Without<SphereOfInfluence>>,
     query_soi: Query<(Entity, &Trajectory, &SphereOfInfluence)>,
 ) {
     for (entity, trajectory, parent) in query.iter() {
@@ -48,19 +61,14 @@ fn sphere_of_influence_to_hierarchy(
             continue;
         };
 
-        let new_parent = query_soi
-            .iter()
-            .filter_map(|(soi_entity, soi_trajectory, soi)| {
-                let soi_position = soi_trajectory.position(sim_time.current())?;
-                let soi_distance = position.distance(soi_position);
-                Some((soi_entity, soi_distance, soi.radius()))
-            })
-            .filter(|(_, soi_distance, soi_radius)| soi_distance < soi_radius)
-            .min_by(|(_, a, _), (_, b, _)| a.total_cmp(b))
-            .map(|(entity, _, _)| entity);
-
+        let new_parent = under_soi(
+            query_soi.iter().filter_map(|(entity, trajectory, soi)| {
+                Some((entity, trajectory.position(sim_time.current())?, soi))
+            }),
+            position,
+        );
         if let Some(new_parent) = new_parent {
-            if new_parent == **parent {
+            if parent.is_some_and(|parent| **parent == new_parent) {
                 continue;
             }
             commands.add(hierarchy::AddChild {
