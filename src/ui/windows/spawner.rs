@@ -1,17 +1,17 @@
 use crate::{
-    flight_plan::{FlightPlan, FlightPlanChanged},
     hierarchy,
-    plot::{PlotPoints, TrajectoryPlot},
-    prediction::{DiscreteStates, DiscreteStatesBuilder, StateVector, Trajectory, TrajectoryData},
+    load::{LoadShipEvent, Ship},
+    prediction::{StateVector, Trajectory, TrajectoryData},
     time::SimulationTime,
-    ui::{get_name, show_tree, IdentedInfo, Labelled},
+    ui::{get_name, show_tree, IdentedInfo},
     MainState, SystemRoot,
 };
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use hifitime::{Duration, Epoch};
+use bevy_file_dialog::prelude::*;
+use hifitime::Duration;
 
 pub struct ShipSpawnerPlugin;
 
@@ -19,10 +19,16 @@ impl Plugin for ShipSpawnerPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            ShipSpawnerWindow::show.run_if(in_state(MainState::Running)),
+            (
+                ShipSpawnerWindow::show.run_if(in_state(MainState::Running)),
+                load_solar_system_state,
+            )
+                .chain(),
         );
     }
 }
+
+pub struct ShipFile;
 
 #[derive(Default, Resource)]
 pub struct ShipSpawnerWindow;
@@ -52,6 +58,12 @@ impl ShipSpawnerWindow {
         egui::Window::new("Ship spawner")
             .open(&mut open)
             .show(ctx, |ui| {
+                if ui.button("From file").clicked() {
+                    commands.dialog().load_multiple_files::<ShipFile>();
+                }
+
+                ui.separator();
+
                 let time = sim_time.current().round(Duration::from_seconds(1.0));
                 ui.label(format!("Current time: {}", time));
 
@@ -153,55 +165,29 @@ impl ShipSpawnerWindow {
 
                     let sv = ref_sv + *spawn_sv;
 
-                    let mut ship = commands.spawn_empty();
-                    let radius = 0.1;
-                    let depth = 3;
-                    ship.insert((
-                        Name::new(name_buffer.clone()),
-                        crate::floating_origin::BigReferenceFrameBundle {
-                            transform: Transform::from_translation(sv.position.as_vec3()),
-                            ..default()
-                        },
-                        crate::selection::Clickable {
-                            radius,
-                            index: depth + 1,
-                        },
-                        crate::camera::CanFollow {
-                            min_distance: radius as f64 * 1.05,
-                            max_distance: 5e10,
-                        },
-                        Labelled {
-                            style: TextStyle {
-                                font_size: 15.0,
-                                color: Color::WHITE,
-                                ..default()
-                            },
-                            offset: Vec2::new(0.0, radius) * 1.1,
-                            index: depth + 1,
-                        },
-                        Trajectory::new(DiscreteStates::new(time, sv.velocity, sv.position)),
-                        DiscreteStatesBuilder::new(ship.id(), time, sv.velocity, sv.position),
-                        FlightPlan::new(time + Duration::from_days(1.0), 100_000),
-                        TrajectoryPlot {
-                            enabled: true,
-                            color: LinearRgba::GREEN.into(),
-                            start: Epoch::default() - Duration::MAX,
-                            end: Epoch::default() + Duration::MAX,
-                            threshold: 0.5,
-                            max_points: 10_000,
-                            reference: Some(*reference),
-                        },
-                        PlotPoints::default(),
-                    ));
-
-                    let child = ship.id();
-                    commands.entity(root).add_child(child);
-                    commands.trigger_targets(FlightPlanChanged, child);
+                    commands.trigger(LoadShipEvent(Ship {
+                        name: name_buffer.clone(),
+                        start: time,
+                        position: sv.position,
+                        velocity: sv.velocity,
+                        burns: Vec::new(),
+                    }));
                 }
             });
 
         if window.is_some() && !open {
             commands.remove_resource::<Self>();
+        }
+    }
+}
+
+fn load_solar_system_state(
+    mut commands: Commands,
+    mut ev_loaded: EventReader<DialogFileLoaded<ShipFile>>,
+) {
+    for loaded in ev_loaded.read() {
+        if let Ok(ship) = serde_json::from_slice(&loaded.contents) {
+            commands.trigger(LoadShipEvent(ship));
         }
     }
 }

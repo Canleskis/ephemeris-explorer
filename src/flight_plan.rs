@@ -101,15 +101,7 @@ pub struct FlightPlan {
 }
 
 impl FlightPlan {
-    pub fn new(end: Epoch, max_iterations: usize) -> Self {
-        Self {
-            end,
-            max_iterations,
-            burns: Vec::new(),
-        }
-    }
-
-    pub fn with(end: Epoch, max_iterations: usize, burns: Vec<Burn>) -> Self {
+    pub fn new(end: Epoch, max_iterations: usize, burns: Vec<Burn>) -> Self {
         Self {
             end,
             max_iterations,

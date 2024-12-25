@@ -12,19 +12,11 @@ use bevy_egui::{egui, EguiContexts};
 use bevy_file_dialog::prelude::*;
 use hifitime::Epoch;
 
-pub struct SolarSystemDir;
-
 pub struct ExportPlugin;
 
 impl Plugin for ExportPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(
-            FileDialogPlugin::new()
-                .with_pick_directory::<SolarSystemDir>()
-                .with_save_file::<ExportFile>(),
-        )
-        .add_event::<ExportSolarSystemEvent>()
-        .add_systems(
+        app.add_event::<ExportSolarSystemEvent>().add_systems(
             Update,
             (
                 ExportWindow::show,
@@ -195,6 +187,8 @@ pub fn reversed_paint_default_icon(ui: &mut egui::Ui, openness: f32, response: &
     ));
 }
 
+pub struct SolarSystemDir;
+
 fn load_solar_system_state(
     asset_server: Res<AssetServer>,
     mut ev_picked: EventReader<DialogDirectoryPicked<SolarSystemDir>>,
@@ -237,7 +231,7 @@ pub struct ExportSolarSystemEvent {
     pub bodies: Vec<Entity>,
 }
 
-struct ExportFile;
+pub struct ExportFile;
 
 fn export_solar_system(
     mut commands: Commands,

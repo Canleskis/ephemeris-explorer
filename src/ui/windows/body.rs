@@ -146,7 +146,7 @@ impl BodyInfoWindow {
         mut query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
         mut query_trajectory: Query<&Trajectory>,
         mut query: Query<(
-            &hierarchy::Parent,
+            Option<&hierarchy::Parent>,
             Option<&mut FlightPlan>,
             &mut TrajectoryPlot,
             &mut Self,
@@ -199,7 +199,7 @@ impl BodyInfoWindow {
                                     ui.horizontal(|ui| {
                                         if ui.button("Confirm").clicked() {
                                             if followed.is_some_and(|f| f == entity) {
-                                                commands.add(SetFollowed(Some(**parent)));
+                                                commands.add(SetFollowed(parent.map(|p| **p)));
                                             }
                                             commands.entity(entity).despawn_recursive();
                                         }

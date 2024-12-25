@@ -337,7 +337,13 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
     where
         V: Clone,
     {
-        *self = Self::new(self.time, self.state.clone(), self.rtol, self.atol, self.n_max);
+        *self = Self::new(
+            self.time,
+            self.state.clone(),
+            self.rtol,
+            self.atol,
+            self.n_max,
+        );
     }
 
     /// Compute the initial stepsize

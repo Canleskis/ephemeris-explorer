@@ -4,8 +4,8 @@ pub use loaders::*;
 
 use crate::MainState;
 
-use bevy::{asset::LoadedFolder, math::DVec3};
 use bevy::prelude::*;
+use bevy::{asset::LoadedFolder, math::DVec3};
 use hifitime::{Duration, Epoch};
 
 #[derive(Resource)]
@@ -230,7 +230,7 @@ pub struct EphemeridesSettings {
 #[derive(Asset, TypePath, Deref, DerefMut, Debug, serde::Deserialize)]
 pub struct HierarchyTree(pub indexmap::IndexMap<String, HierarchyTree>);
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct Burn {
     pub start: Epoch,
     pub duration: Duration,
@@ -238,7 +238,7 @@ pub struct Burn {
     pub reference: Option<String>,
 }
 
-#[derive(Asset, TypePath, Debug, serde::Deserialize)]
+#[derive(Clone, Asset, TypePath, Debug, serde::Deserialize)]
 pub struct Ship {
     pub name: String,
     pub start: Epoch,

@@ -37,14 +37,20 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((WorldUiPlugin, FixedUiPlugin, WindowsUiPlugin))
-            .add_systems(Startup, setup_egui)
-            .add_systems(
-                Update,
-                top_menu
-                    .before(FixedUiSet)
-                    .run_if(in_state(MainState::Running)),
-            );
+        app.add_plugins(
+            FileDialogPlugin::new()
+                .with_pick_directory::<SolarSystemDir>()
+                .with_load_file::<ShipFile>()
+                .with_save_file::<ExportFile>(),
+        )
+        .add_plugins((WorldUiPlugin, FixedUiPlugin, WindowsUiPlugin))
+        .add_systems(Startup, setup_egui)
+        .add_systems(
+            Update,
+            top_menu
+                .before(FixedUiSet)
+                .run_if(in_state(MainState::Running)),
+        );
     }
 }
 

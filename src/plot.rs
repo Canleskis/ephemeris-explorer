@@ -5,7 +5,7 @@ use crate::{
     floating_origin::{BigSpace, ReferenceFrame},
     prediction::{DiscreteStatesBuilder, PredictionCtx, StateVector, Trajectory, TrajectoryData},
     selection::Clickable,
-    MainState
+    MainState,
 };
 
 use bevy::math::DVec3;

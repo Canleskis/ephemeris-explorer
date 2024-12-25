@@ -21,8 +21,7 @@ use crate::{
     load::{LoadSolarSystemEvent, LoadingPlugin},
     plot::{TrajectoryPlotConfig, TrajectoryPlotPlugin},
     prediction::{
-        Backward, DiscreteStatesBuilder, ExtendPredictionEvent, FixedSegmentsBuilder, Forward,
-        PredictionPlugin,
+        Backward, DiscreteStatesBuilder, FixedSegmentsBuilder, Forward, PredictionPlugin,
     },
     selection::SelectionPlugin,
     starlight::StarLightPlugin,
@@ -34,7 +33,6 @@ use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 #[allow(unused)]
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
-use hifitime::Duration;
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MainState {
@@ -88,16 +86,6 @@ fn main() {
         .insert_resource(Msaa::Sample8)
         .insert_resource(TrajectoryPlotConfig::default())
         .add_systems(Startup, default_solar_system)
-        .add_systems(
-            PostUpdate,
-            shortcut_send_prediction.run_if(in_state(MainState::Running)),
-        )
-        // .add_systems(
-        //     PostUpdate,
-        //     print_intersections
-        //         .run_if(in_state(MainState::Running))
-        //         .after(bevy::transform::TransformSystem::TransformPropagate),
-        // )
         .run();
 }
 
@@ -115,22 +103,7 @@ fn default_solar_system(
             events.send(event);
         }
         Err(err) => {
-            bevy::log::error!("Failed to load default solar system: {}", err);
+            panic!("Failed to load default solar system: {}", err);
         }
-    }
-}
-
-fn shortcut_send_prediction(input: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
-    if input.just_pressed(KeyCode::Comma) {
-        let duration = Duration::from_days(400.0);
-        // let duration = Duration::from_hours(2.0);
-        let _sync_count =
-            (duration.total_nanoseconds() / Duration::from_days(25.0).total_nanoseconds()) as usize;
-
-        commands.trigger(ExtendPredictionEvent::<DiscreteStatesBuilder>::all(
-            duration, 100,
-        ));
-
-        // prediction.extend_all(duration, 100);
     }
 }

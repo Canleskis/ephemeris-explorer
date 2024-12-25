@@ -73,29 +73,29 @@ impl Plugin for LoadingPlugin {
                         .and_then(ships_loaded),
                 )
                 .chain(),
-        )
-        .add_systems(
-            OnExit(LoadingStage::Assets),
-            (spawn_bodies, spawn_ships, setup_camera, default_follow).chain(),
         );
 
         app.add_systems(
             OnEnter(EphemeridesLoadingStage::Bodies),
-            compute_ephemerides_bodies,
+            (
+                spawn_loaded_bodies,
+                setup_camera,
+                default_follow,
+                compute_ephemerides_bodies,
+            )
+                .chain(),
         )
         .add_systems(
             Update,
             ephemerides_bodies_progress.run_if(in_state(EphemeridesLoadingStage::Bodies)),
-        )
-        .add_systems(
-            OnEnter(EphemeridesLoadingStage::Ships),
-            (compute_ephemerides_ships, apply_deferred).chain(),
-        )
-        .add_systems(
-            Update,
-            ephemerides_ships_progress.run_if(in_state(EphemeridesLoadingStage::Ships)),
-        )
-        .add_systems(
+        );
+        app.observe(spawn_ship)
+            .add_systems(OnEnter(EphemeridesLoadingStage::Ships), spawn_loaded_ships)
+            .add_systems(
+                Update,
+                ephemerides_ships_progress.run_if(in_state(EphemeridesLoadingStage::Ships)),
+            );
+        app.add_systems(
             Update,
             bypass_ephemerides_loading.run_if(in_state(LoadingStage::Ephemerides)),
         );
@@ -104,7 +104,7 @@ impl Plugin for LoadingPlugin {
             app,
             Handle::default(),
             "../../assets/fonts/Montserrat-Regular.ttf",
-            |bytes: &[u8], _path: String| { Font::try_from_bytes(bytes.to_vec()).unwrap() }
+            |bytes: &[u8], _: String| { Font::try_from_bytes(bytes.to_vec()).unwrap() }
         );
     }
 }
@@ -125,7 +125,7 @@ pub struct LoadSolarSystemEvent {
     pub eph_settings: Handle<EphemeridesSettings>,
     pub hierarchy_tree: Handle<HierarchyTree>,
     pub skybox: Handle<Image>,
-    pub ship: Handle<LoadedFolder>,
+    pub ships: Handle<LoadedFolder>,
 }
 
 impl LoadSolarSystemEvent {
@@ -140,7 +140,7 @@ impl LoadSolarSystemEvent {
             eph_settings: asset_server.load(dir.join("ephemeris.json")),
             hierarchy_tree: asset_server.load(dir.join("hierarchy.json")),
             skybox: asset_server.load(dir.join("skybox.png")),
-            ship: asset_server.load_folder(dir.join("ships")),
+            ships: asset_server.load_folder(dir.join("ships")),
         })
     }
 }
@@ -159,7 +159,7 @@ pub fn handle_load_events(
             handle: event.skybox.clone(),
         });
         commands.insert_resource(ShipsFolderHandle {
-            handle: event.ship.clone(),
+            handle: event.ships.clone(),
         });
 
         next_state.set(MainState::Loading);
@@ -225,7 +225,7 @@ impl Rotating {
     }
 }
 
-fn spawn_bodies(
+fn spawn_loaded_bodies(
     mut commands: Commands,
     solar_system: UniqueAsset<SolarSystem>,
     hierachy_tree: UniqueAsset<HierarchyTree>,
@@ -403,15 +403,17 @@ fn spawn_bodies(
     commands.insert_resource(SimulationTime::new(system.epoch));
 }
 
-fn spawn_ships(
+#[derive(Event)]
+pub struct LoadShipEvent(pub Ship);
+
+fn spawn_ship(
+    trigger: Trigger<LoadShipEvent>,
     mut commands: Commands,
-    folder: Res<ShipsFolderHandle>,
-    assets: Res<Assets<Ship>>,
-    folder_assets: Res<Assets<LoadedFolder>>,
     query_names: Query<(Entity, &Name)>,
     root: Query<Entity, With<SystemRoot>>,
 ) {
     let root = root.single();
+    let ship = &trigger.event().0;
     let find_by_name = |reference| {
         query_names
             .iter()
@@ -419,6 +421,90 @@ fn spawn_ships(
             .map(|(entity, _)| entity)
     };
 
+    let radius = 1.0;
+
+    let end = ship
+        .burns
+        .last()
+        .map(|burn| burn.start + burn.duration)
+        .map(|end| end + ((end - ship.start) / 5).round(Duration::from_hours(1.0)))
+        .filter(|end| *end > ship.start + Duration::from_days(1.0))
+        .unwrap_or(ship.start + Duration::from_days(1.0));
+
+    let mut entity = commands.spawn_empty();
+    entity.insert((
+        // No state scope needed as it is always a child of the root.
+        Name::new(ship.name.clone()),
+        BigReferenceFrameBundle {
+            transform: Transform::from_translation(ship.position.as_vec3()),
+            ..default()
+        },
+        Clickable { radius, index: 99 },
+        CanFollow {
+            min_distance: radius as f64 * 1.05,
+            max_distance: 5e10,
+        },
+        Labelled {
+            style: TextStyle {
+                font_size: 15.0,
+                color: Color::WHITE,
+                ..default()
+            },
+            offset: Vec2::new(0.0, radius) * 1.1,
+            index: 99,
+        },
+        Trajectory::new(DiscreteStates::new(
+            ship.start,
+            ship.velocity,
+            ship.position,
+        )),
+        DiscreteStatesBuilder::new(entity.id(), ship.start, ship.velocity, ship.position),
+        FlightPlan::new(
+            end,
+            10_000,
+            ship.burns
+                .iter()
+                .map(|burn| {
+                    let (reference, frame) = burn
+                        .reference
+                        .as_ref()
+                        .and_then(find_by_name)
+                        .map(|entity| (entity, BurnFrame::Frenet))
+                        .unwrap_or((root, BurnFrame::Cartesian));
+                    Burn::with(
+                        burn.start,
+                        burn.duration,
+                        burn.acceleration,
+                        reference,
+                        frame,
+                    )
+                })
+                .collect(),
+        ),
+        TrajectoryPlot {
+            enabled: true,
+            color: LinearRgba::GREEN.into(),
+            start: Epoch::from_tai_duration(-Duration::MAX),
+            end: Epoch::from_tai_duration(Duration::MAX),
+            threshold: 0.5,
+            max_points: 10_000,
+            reference: None,
+        },
+        PlotPoints::default(),
+    ));
+
+    let child = entity.id();
+    commands.entity(root).add_child(child);
+
+    commands.trigger_targets(FlightPlanChanged, child);
+}
+
+fn spawn_loaded_ships(
+    mut commands: Commands,
+    folder: Res<ShipsFolderHandle>,
+    assets: Res<Assets<Ship>>,
+    folder_assets: Res<Assets<LoadedFolder>>,
+) {
     let Some(folder) = folder_assets.get(&folder.handle) else {
         return;
     };
@@ -428,80 +514,7 @@ fn spawn_ships(
         .iter()
         .filter_map(|handle| assets.get(&handle.clone().try_typed().ok()?))
     {
-        let radius = 1.0;
-
-        let end = ship
-            .burns
-            .last()
-            .map(|burn| burn.start + burn.duration)
-            .map(|end| end + ((end - ship.start) / 5).round(Duration::from_hours(1.0)))
-            .filter(|end| *end > ship.start + Duration::from_days(1.0))
-            .unwrap_or(ship.start + Duration::from_days(1.0));
-
-        let mut entity = commands.spawn_empty();
-        entity.insert((
-            // No state scope needed as it is always a child of the root.
-            Name::new(ship.name.clone()),
-            BigReferenceFrameBundle {
-                transform: Transform::from_translation(ship.position.as_vec3()),
-                ..default()
-            },
-            Clickable { radius, index: 99 },
-            CanFollow {
-                min_distance: radius as f64 * 1.05,
-                max_distance: 5e10,
-            },
-            Labelled {
-                style: TextStyle {
-                    font_size: 15.0,
-                    color: Color::WHITE,
-                    ..default()
-                },
-                offset: Vec2::new(0.0, radius) * 1.1,
-                index: 99,
-            },
-            Trajectory::new(DiscreteStates::new(
-                ship.start,
-                ship.velocity,
-                ship.position,
-            )),
-            DiscreteStatesBuilder::new(entity.id(), ship.start, ship.velocity, ship.position),
-            FlightPlan::with(
-                end,
-                10_000,
-                ship.burns
-                    .iter()
-                    .map(|burn| {
-                        let (reference, frame) = burn
-                            .reference
-                            .as_ref()
-                            .and_then(find_by_name)
-                            .map(|entity| (entity, BurnFrame::Frenet))
-                            .unwrap_or((root, BurnFrame::Cartesian));
-                        Burn::with(
-                            burn.start,
-                            burn.duration,
-                            burn.acceleration,
-                            reference,
-                            frame,
-                        )
-                    })
-                    .collect(),
-            ),
-            TrajectoryPlot {
-                enabled: true,
-                color: LinearRgba::GREEN.into(),
-                start: Epoch::from_tai_duration(-Duration::MAX),
-                end: Epoch::from_tai_duration(Duration::MAX),
-                threshold: 0.5,
-                max_points: 10_000,
-                reference: None,
-            },
-            PlotPoints::default(),
-        ));
-
-        let child = entity.id();
-        commands.entity(root).add_child(child);
+        commands.trigger(LoadShipEvent(ship.clone()));
     }
 }
 
@@ -597,27 +610,22 @@ fn ephemerides_bodies_progress(
     }
 }
 
-fn compute_ephemerides_ships(
-    mut commands: Commands,
-    query_flight_path: Query<Entity, With<FlightPlan>>,
-) {
-    for entity in query_flight_path.iter() {
-        commands.trigger_targets(FlightPlanChanged, entity);
-    }
-}
-
 fn ephemerides_ships_progress(
     mut state: ResMut<NextState<MainState>>,
     mut query: Query<&mut Text, With<LoadingText>>,
-    query_tracker: Query<&PredictionTracker<DiscreteStatesBuilder>>,
+    query_tracker: Query<
+        Option<&PredictionTracker<DiscreteStatesBuilder>>,
+        With<DiscreteStatesBuilder>,
+    >,
 ) {
-    if query_tracker.is_empty() {
+    if query_tracker.iter().all(|t| t.is_none()) {
         state.set(MainState::Running);
         return;
     }
 
     let total_progress = query_tracker
         .iter()
+        .flatten()
         .map(PredictionTracker::progress)
         .sum::<f32>()
         / query_tracker.iter().len().max(1) as f32;
