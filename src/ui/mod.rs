@@ -8,6 +8,7 @@ pub use world::*;
 
 use crate::{
     hierarchy,
+    load::LoadSolarSystemEvent,
     prediction::{StateVector, Trajectory, TrajectoryData},
     MainState,
 };
@@ -41,14 +42,14 @@ impl Plugin for UiPlugin {
             FileDialogPlugin::new()
                 .with_pick_directory::<SolarSystemDir>()
                 .with_load_file::<ShipFile>()
-                .with_save_file::<ExportFile>(),
+                .with_save_file::<ExportSolarSystemFile>()
+                .with_save_file::<ExportShipFile>(),
         )
         .add_plugins((WorldUiPlugin, FixedUiPlugin, WindowsUiPlugin))
         .add_systems(Startup, setup_egui)
         .add_systems(
             Update,
-            top_menu
-                .before(FixedUiSet)
+            (load_solar_system_state, top_menu.before(FixedUiSet))
                 .run_if(in_state(MainState::Running)),
         );
     }
@@ -173,6 +174,29 @@ fn setup_egui(mut contexts: EguiContexts) {
                 },
             }
         });
+    }
+}
+
+pub struct SolarSystemDir;
+
+fn load_solar_system_state(
+    asset_server: Res<AssetServer>,
+    mut ev_picked: EventReader<DialogDirectoryPicked<SolarSystemDir>>,
+    mut events: EventWriter<LoadSolarSystemEvent>,
+) {
+    for picked in ev_picked.read() {
+        match LoadSolarSystemEvent::try_from_dir(&picked.path, &asset_server) {
+            Ok(event) => {
+                events.send(event);
+            }
+            Err(err) => {
+                bevy::log::error!(
+                    "Failed to load solar system at {}: {}",
+                    picked.path.display(),
+                    err
+                );
+            }
+        }
     }
 }
 

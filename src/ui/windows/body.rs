@@ -12,6 +12,7 @@ use crate::{
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
+use bevy_file_dialog::prelude::*;
 use hifitime::{Duration, Epoch};
 use std::str::FromStr;
 
@@ -81,6 +82,8 @@ impl PlotOverwrite {
         }
     }
 }
+
+pub struct ExportShipFile;
 
 #[derive(Component)]
 struct BodyInfoWindow {
@@ -179,11 +182,48 @@ impl BodyInfoWindow {
                         return;
                     };
 
-                    if let Some(delete) = &mut info.delete_body {
-                        if ui.button("Delete ship").clicked() {
-                            *delete = true;
-                        }
+                    if let Some((flight_plan, delete)) =
+                        flight_plan.as_mut().zip(info.delete_body.as_mut())
+                    {
+                        ui.horizontal(|ui| {
+                            if ui.button("Export").clicked() {
+                                let mut names = query_hierarchy.transmute_lens();
+                                let bytes =
+                                    query_trajectory.get(entity).ok().and_then(|trajectory| {
+                                        let time = trajectory.start();
+                                        let sv = trajectory.state_vector(time)?;
+                                        let burns = flight_plan
+                                            .burns
+                                            .iter()
+                                            .map(|burn| burn_to_value(burn, names.query()))
+                                            .collect::<Vec<_>>();
+                                        Some(
+                                            serde_json::to_vec_pretty(&serde_json::json!({
+                                                "name": name,
+                                                "start": time,
+                                                "position": sv.position,
+                                                "velocity": sv.velocity,
+                                                "burns": burns,
+                                            }))
+                                            .unwrap(),
+                                        )
+                                    });
 
+                                if let Some(bytes) = bytes {
+                                    commands
+                                        .dialog()
+                                        .add_filter("JSON", &["json"])
+                                        .save_file::<ExportShipFile>(bytes);
+                                }
+                            }
+
+                            if ui.button("Delete ship").clicked() {
+                                *delete = true;
+                            }
+                        });
+                    }
+
+                    if let Some(delete) = &mut info.delete_body {
                         if *delete {
                             egui::Window::new("Confirm deletion")
                                 .resizable(false)
@@ -715,4 +755,18 @@ impl BodyInfoWindow {
 
         changed
     }
+}
+
+fn burn_to_value(burn: &Burn, query: Query<&Name>) -> serde_json::Value {
+    let mut json = serde_json::json!({
+        "start": burn.start,
+        "duration": burn.duration,
+        "acceleration": burn.acceleration,
+    });
+
+    if let BurnFrame::Frenet = burn.frame {
+        json["reference"] = serde_json::json!(query.get(burn.reference).unwrap().to_string());
+    }
+
+    json
 }

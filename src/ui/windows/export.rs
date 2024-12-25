@@ -1,6 +1,6 @@
 use crate::{
+    flight_plan::FlightPlan,
     hierarchy,
-    load::LoadSolarSystemEvent,
     prediction::{Mu, Trajectory, TrajectoryData},
     time::SimulationTime,
     ui::{epoch_clamped_parser, show_tree, ParsedTextEdit},
@@ -20,11 +20,25 @@ impl Plugin for ExportPlugin {
             Update,
             (
                 ExportWindow::show,
-                load_solar_system_state,
-                (export_solar_system, export_solar_system_result).chain(),
+                export_solar_system,
             )
                 .run_if(in_state(MainState::Running)),
         );
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
+pub enum ExportType {
+    State { epoch: hifitime::Epoch },
+}
+
+impl std::fmt::Display for ExportType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExportType::State { .. } => {
+                write!(f, "Export state")
+            }
+        }
     }
 }
 
@@ -32,7 +46,7 @@ impl Plugin for ExportPlugin {
 pub struct ExportWindow;
 
 impl ExportWindow {
-    #[expect(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, clippy::type_complexity)]
     fn show(
         mut contexts: EguiContexts,
         mut commands: Commands,
@@ -40,7 +54,10 @@ impl ExportWindow {
         window: Option<Res<Self>>,
         sim_time: Res<SimulationTime>,
         query_trajectory: Query<Entity, With<Trajectory>>,
-        query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
+        mut query_hierarchy: Query<
+            (Entity, &Name, Option<&hierarchy::Children>),
+            Or<(With<SystemRoot>, Without<FlightPlan>)>,
+        >,
         root: Query<Entity, With<SystemRoot>>,
         mut bodies: Local<Option<bevy::utils::EntityHashSet<Entity>>>,
         mut cached_exports: Local<Option<[ExportType; 1]>>,
@@ -95,14 +112,15 @@ impl ExportWindow {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = [1.0, 3.0].into();
                     show_tree(
                         root,
-                        &query_hierarchy,
+                        &query_hierarchy.transmute_lens().query(),
                         |i| i != 0,
                         ui,
                         |ui, state, (entity, name, children), depth| {
                             let has_children = children.is_some_and(|c| !c.is_empty());
-                            let has_trajectory = query_trajectory.get(entity).is_ok();
+                            let has_trajectory = query_trajectory.contains(entity);
                             if has_trajectory {
                                 ui.add_visible_ui(has_children, |ui| {
                                     let selected_count = children
@@ -126,9 +144,7 @@ impl ExportWindow {
                                         }
                                     }
                                 });
-                            }
 
-                            if has_trajectory {
                                 let checked = bodies.contains(&entity);
                                 if ui.selectable_label(checked, name.as_str()).clicked() {
                                     match bodies.entry(entity) {
@@ -187,51 +203,13 @@ pub fn reversed_paint_default_icon(ui: &mut egui::Ui, openness: f32, response: &
     ));
 }
 
-pub struct SolarSystemDir;
-
-fn load_solar_system_state(
-    asset_server: Res<AssetServer>,
-    mut ev_picked: EventReader<DialogDirectoryPicked<SolarSystemDir>>,
-    mut events: EventWriter<LoadSolarSystemEvent>,
-) {
-    for picked in ev_picked.read() {
-        match LoadSolarSystemEvent::try_from_dir(&picked.path, &asset_server) {
-            Ok(event) => {
-                events.send(event);
-            }
-            Err(err) => {
-                bevy::log::error!(
-                    "Failed to load solar system at {}: {}",
-                    picked.path.display(),
-                    err
-                );
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, PartialOrd)]
-pub enum ExportType {
-    State { epoch: hifitime::Epoch },
-}
-
-impl std::fmt::Display for ExportType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExportType::State { .. } => {
-                write!(f, "Export state")
-            }
-        }
-    }
-}
-
 #[derive(Event, PartialEq, PartialOrd)]
 pub struct ExportSolarSystemEvent {
     pub export: ExportType,
     pub bodies: Vec<Entity>,
 }
 
-pub struct ExportFile;
+pub struct ExportSolarSystemFile;
 
 fn export_solar_system(
     mut commands: Commands,
@@ -240,56 +218,28 @@ fn export_solar_system(
 ) {
     if let Some(event) = event.read().next() {
         let bytes = match event.export {
-            ExportType::State { epoch } => {
-                #[derive(serde::Serialize)]
-                struct BodyJson {
-                    name: String,
-                    mu: f64,
-                    position: bevy::math::DVec3,
-                    velocity: bevy::math::DVec3,
-                }
-                #[derive(serde::Serialize)]
-                struct StateJson {
-                    epoch: hifitime::Epoch,
-                    bodies: Vec<BodyJson>,
-                }
-
-                let bodies = query
+            ExportType::State { epoch } => serde_json::to_vec_pretty(&serde_json::json!({
+                "epoch": epoch,
+                "bodies": query
                     .iter_many(&event.bodies)
                     .map(|(name, mu, trajectory)| {
-                        trajectory.state_vector(epoch).map(|state_vector| BodyJson {
-                            name: name.to_string(),
-                            mu: **mu,
-                            position: state_vector.position,
-                            velocity: state_vector.velocity,
-                        })
+                        trajectory.state_vector(epoch).map(|state_vector|
+                            serde_json::json!({
+                                "name": name.to_string(),
+                                "mu": **mu,
+                                "position": state_vector.position,
+                                "velocity": state_vector.velocity,
+                            })
+                        )
                     })
-                    .collect::<Option<Vec<_>>>();
-
-                match bodies {
-                    None => {
-                        bevy::log::error!("Something went wrong when exporting bodies");
-                        return;
-                    }
-                    Some(bodies) => {
-                        serde_json::to_vec_pretty(&StateJson { epoch, bodies }).unwrap()
-                    }
-                }
-            }
+                    .collect::<Option<Vec<_>>>()
+            }))
+            .unwrap(),
         };
 
         commands
             .dialog()
             .add_filter("JSON", &["json"])
-            .save_file::<ExportFile>(bytes);
-    }
-}
-
-fn export_solar_system_result(mut ev_saved: EventReader<DialogFileSaved<ExportFile>>) {
-    for ev in ev_saved.read() {
-        match ev.result {
-            Ok(_) => bevy::log::info!("File {} successfully saved", ev.file_name),
-            Err(ref err) => bevy::log::error!("Failed to save {}: {}", ev.file_name, err),
-        }
+            .save_file::<ExportSolarSystemFile>(bytes);
     }
 }

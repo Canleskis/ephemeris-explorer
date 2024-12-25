@@ -406,6 +406,13 @@ fn spawn_loaded_bodies(
 #[derive(Event)]
 pub struct LoadShipEvent(pub Ship);
 
+pub fn find_by_name(query: &Query<(Entity, &Name)>, reference: &str) -> Option<Entity> {
+    query
+        .iter()
+        .find(|(_, name)| name.as_str() == reference)
+        .map(|(entity, _)| entity)
+}
+
 fn spawn_ship(
     trigger: Trigger<LoadShipEvent>,
     mut commands: Commands,
@@ -414,12 +421,6 @@ fn spawn_ship(
 ) {
     let root = root.single();
     let ship = &trigger.event().0;
-    let find_by_name = |reference| {
-        query_names
-            .iter()
-            .find(|(_, name)| name.as_str() == reference)
-            .map(|(entity, _)| entity)
-    };
 
     let radius = 1.0;
 
@@ -468,7 +469,7 @@ fn spawn_ship(
                     let (reference, frame) = burn
                         .reference
                         .as_ref()
-                        .and_then(find_by_name)
+                        .and_then(|reference| find_by_name(&query_names, reference))
                         .map(|entity| (entity, BurnFrame::Frenet))
                         .unwrap_or((root, BurnFrame::Cartesian));
                     Burn::with(

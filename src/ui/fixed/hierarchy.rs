@@ -27,6 +27,7 @@ pub fn solar_system_hierarchy(
             egui::ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = [1.0, 3.0].into();
                     show_tree(
                         root,
                         &query_hierarchy,
@@ -35,7 +36,6 @@ pub fn solar_system_hierarchy(
                         |ui, state, (entity, name, children), _| {
                             let has_children = children.is_some_and(|c| !c.is_empty());
 
-                            ui.spacing_mut().item_spacing = [1.0, 3.0].into();
                             ui.add_visible_ui(has_children, |ui| {
                                 state.show_toggle_button(
                                     ui,

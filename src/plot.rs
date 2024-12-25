@@ -289,10 +289,8 @@ fn plot_manoeuvres(
                 continue;
             };
 
-            let (prograde, radial, normal) = burn
-                .reference_frame()
-                .direction((burn.start, sv), &ctx)
-                .unwrap();
+            let (prograde, radial, normal) =
+                burn.reference_frame().direction((burn.start, sv), &ctx);
             let prograde = transform_vector3(prograde, root);
             let radial = transform_vector3(radial, root);
             let normal = transform_vector3(normal, root);

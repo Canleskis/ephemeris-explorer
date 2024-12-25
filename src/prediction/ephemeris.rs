@@ -492,17 +492,18 @@ impl ReferenceFrame {
         &self,
         (current_t, current_sv): (Epoch, StateVector<DVec3>),
         ctx: &DiscreteStatesContext,
-    ) -> Option<(DVec3, DVec3, DVec3)> {
+    ) -> (DVec3, DVec3, DVec3) {
         match self {
             Self::Frenet(reference) => {
                 let reference_sv = ctx
                     .states
                     .get(reference)
-                    .and_then(|(ref_traj, _)| ref_traj.state_vector(current_t))?;
+                    .and_then(|(ref_traj, _)| ref_traj.state_vector(current_t))
+                    .unwrap_or_default();
 
-                Some(direction_from_states(current_sv, reference_sv))
+                direction_from_states(current_sv, reference_sv)
             }
-            Self::Cartesian => Some((DVec3::X, DVec3::Y, DVec3::Z)),
+            Self::Cartesian => (DVec3::X, DVec3::Y, DVec3::Z),
         }
     }
 }
@@ -541,10 +542,7 @@ impl ConstantAcceleration {
         (current_t, current_sv): (Epoch, StateVector<DVec3>),
         ctx: &DiscreteStatesContext,
     ) -> DVec3 {
-        let (x_dir, y_dir, z_dir) = self.frame.direction((current_t, current_sv), ctx).expect(
-            "failed to compute direction for manoeuvre, ensure the reference trajectory exists",
-        );
-
+        let (x_dir, y_dir, z_dir) = self.frame.direction((current_t, current_sv), ctx);
         self.acceleration.x * x_dir + self.acceleration.y * y_dir + self.acceleration.z * z_dir
     }
 }
