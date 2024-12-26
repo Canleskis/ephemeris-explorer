@@ -3,7 +3,7 @@ use crate::{
     hierarchy,
     prediction::{Mu, Trajectory, TrajectoryData},
     time::SimulationTime,
-    ui::{epoch_clamped_parser, show_tree, ParsedTextEdit},
+    ui::{epoch_clamped_parser, show_tree, FixedUiSet, ParsedTextEdit},
     MainState, SystemRoot,
 };
 
@@ -18,10 +18,7 @@ impl Plugin for ExportPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<ExportSolarSystemEvent>().add_systems(
             Update,
-            (
-                ExportWindow::show,
-                export_solar_system,
-            )
+            (ExportWindow::show.after(FixedUiSet), export_solar_system)
                 .run_if(in_state(MainState::Running)),
         );
     }

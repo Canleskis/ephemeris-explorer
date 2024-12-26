@@ -6,7 +6,10 @@ use crate::{
     prediction::{DiscreteStates, DiscreteStatesBuilder, Trajectory, TrajectoryData},
     selection::Selected,
     time::SimulationTime,
-    ui::{get_name, nformat, relative_state_vector, show_tree, IdentedInfo, ParsedTextEdit},
+    ui::{
+        get_name, nformat, relative_state_vector, show_tree, FixedUiSet, IdentedInfo,
+        ParsedTextEdit,
+    },
     MainState, SystemRoot,
 };
 
@@ -26,7 +29,10 @@ impl Plugin for BodyInfoPlugin {
         )
         .add_systems(
             Update,
-            (BodyInfoWindow::show, BodyInfoWindow::persisting)
+            (
+                BodyInfoWindow::show.after(FixedUiSet),
+                BodyInfoWindow::persisting,
+            )
                 .chain()
                 .run_if(in_state(MainState::Running)),
         );

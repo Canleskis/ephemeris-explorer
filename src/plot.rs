@@ -59,22 +59,24 @@ pub struct TrajectoryPlotPlugin;
 
 impl Plugin for TrajectoryPlotPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<TrajectoryHitPoint>().add_systems(
-            PostUpdate,
-            (
-                compute_plot_points,
+        app.init_resource::<TrajectoryPlotConfig>()
+            .add_event::<TrajectoryHitPoint>()
+            .add_systems(
+                PostUpdate,
                 (
-                    plot_trajectories,
-                    plot_manoeuvres,
-                    trajectory_picking.run_if(not(
-                        crate::ui::is_using_pointer.or_else(crate::camera::is_using_pointer)
-                    )),
-                ),
-            )
-                .chain()
-                .run_if(in_state(MainState::Running))
-                .after(bevy::transform::TransformSystem::TransformPropagate),
-        );
+                    compute_plot_points,
+                    (
+                        plot_trajectories,
+                        plot_manoeuvres,
+                        trajectory_picking
+                            .run_if(not(crate::ui::is_using_pointer
+                                .or_else(crate::camera::is_using_pointer))),
+                    ),
+                )
+                    .chain()
+                    .run_if(in_state(MainState::Running))
+                    .after(bevy::transform::TransformSystem::TransformPropagate),
+            );
     }
 }
 

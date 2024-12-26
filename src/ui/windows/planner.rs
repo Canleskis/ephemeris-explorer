@@ -5,6 +5,7 @@ use crate::{
         TrajectoryBuilder,
     },
     time::SimulationTime,
+    ui::FixedUiSet,
     MainState, SystemRoot,
 };
 
@@ -19,7 +20,9 @@ impl Plugin for PredictionPlannerPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            PredictionPlannerWindow::show.run_if(in_state(MainState::Running)),
+            PredictionPlannerWindow::show
+                .after(FixedUiSet)
+                .run_if(in_state(MainState::Running)),
         );
     }
 }

@@ -19,7 +19,7 @@ use crate::{
     flight_plan::FlightPlanPlugin,
     floating_origin::FloatingOriginPlugin,
     load::{LoadSolarSystemEvent, LoadingPlugin},
-    plot::{TrajectoryPlotConfig, TrajectoryPlotPlugin},
+    plot::TrajectoryPlotPlugin,
     prediction::{
         Backward, DiscreteStatesBuilder, FixedSegmentsBuilder, Forward, PredictionPlugin,
     },
@@ -31,7 +31,7 @@ use crate::{
 
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
-#[allow(unused)]
+#[expect(unused)]
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -84,7 +84,6 @@ fn main() {
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
         .insert_resource(Msaa::Sample8)
-        .insert_resource(TrajectoryPlotConfig::default())
         .add_systems(Startup, default_solar_system)
         .run();
 }

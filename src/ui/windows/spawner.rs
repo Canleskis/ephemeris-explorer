@@ -3,7 +3,7 @@ use crate::{
     load::{LoadShipEvent, Ship},
     prediction::{StateVector, Trajectory, TrajectoryData},
     time::SimulationTime,
-    ui::{get_name, show_tree, IdentedInfo},
+    ui::{get_name, show_tree, FixedUiSet, IdentedInfo},
     MainState, SystemRoot,
 };
 
@@ -20,10 +20,11 @@ impl Plugin for ShipSpawnerPlugin {
         app.add_systems(
             Update,
             (
-                ShipSpawnerWindow::show.run_if(in_state(MainState::Running)),
+                ShipSpawnerWindow::show.after(FixedUiSet),
                 load_solar_system_state,
             )
-                .chain(),
+                .chain()
+                .run_if(in_state(MainState::Running)),
         );
     }
 }
