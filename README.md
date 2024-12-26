@@ -1,5 +1,9 @@
 # Ephemeris Explorer
 
+<div align="center">
+    <img src="ephemeris-explorer-preview.gif" alt="preview gif">
+</div>
+
 Ephemeris Explorer aims to be a multi-purpose interactive experience of gravitationally bound systems, be it stellar systems, planetary systems or satellite systems.
 It uses concepts from various research, notably [Numerical Representation of Planetary Ephemerides](https://adsabs.harvard.edu/full/1989CeMec..45..305N) to generate accurate[^1] trajectories of celestial bodies and presents them in an interactive manner using the [Bevy Engine](https://bevyengine.org/) and [egui](https://github.com/emilk/egui).
 
