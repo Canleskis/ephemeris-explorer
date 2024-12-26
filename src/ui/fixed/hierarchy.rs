@@ -46,7 +46,7 @@ pub fn solar_system_hierarchy(
                             // Camera follow toggle
                             ui.scope(|ui| {
                                 let is_followed = followed.0 == Some(entity);
-                                if ui.selectable_label(is_followed, "📌").clicked() {
+                                if ui.selectable_label(is_followed, "⌖").clicked() {
                                     followed.replace(entity);
                                 }
                             });

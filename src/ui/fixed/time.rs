@@ -74,6 +74,9 @@ pub fn time_controls(
         return;
     };
 
+    const SMALLEST: f64 = 1e-1;
+    const LARGEST: f64 = 1e10;
+
     time_scale_history.add(sim_time.real_time_scale());
 
     egui::TopBottomPanel::bottom("Time").show(ctx, |ui| {
@@ -99,6 +102,17 @@ pub fn time_controls(
                 sim_time.paused = !sim_time.paused;
             }
 
+            let step_up = |ts: &mut f64| *ts = (*ts * 10.0).clamp(-LARGEST, LARGEST);
+            let step_down = |ts: &mut f64| *ts = (*ts / 10.0).clamp(-LARGEST, LARGEST);
+
+            if ui.button("⏪").clicked() {
+                match sim_time.time_scale {
+                    m if m > -SMALLEST && m <= SMALLEST => sim_time.time_scale = -SMALLEST,
+                    m if m > 0.0 => step_down(&mut sim_time.time_scale),
+                    _ => step_up(&mut sim_time.time_scale),
+                }
+            }
+
             ui.scope(|ui| {
                 let computed_time_scale = time_scale_history.average();
 
@@ -108,10 +122,10 @@ pub fn time_controls(
                     ui.visuals_mut().override_text_color = Some(egui::Color32::RED);
                 }
 
-                let slider = egui::Slider::new(&mut sim_time.time_scale, -1e10..=1e10)
+                let slider = egui::Slider::new(&mut sim_time.time_scale, -LARGEST..=LARGEST)
                     .logarithmic(true)
                     .fixed_decimals(1)
-                    .smallest_positive(1e-3)
+                    .smallest_positive(SMALLEST / 100.0)
                     .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.6 });
 
                 let slider = match *scale {
@@ -140,6 +154,14 @@ pub fn time_controls(
                     });
                 }
             });
+
+            if ui.button("⏩").clicked() {
+                match sim_time.time_scale {
+                    m if (-SMALLEST..SMALLEST).contains(&m) => sim_time.time_scale = SMALLEST,
+                    m if m > 0.0 => step_up(&mut sim_time.time_scale),
+                    _ => step_down(&mut sim_time.time_scale),
+                }
+            }
 
             egui::ComboBox::from_id_source("time_scale")
                 .selected_text(scale.to_string())
