@@ -1,6 +1,6 @@
 use crate::{
-    camera::Followed, hierarchy, plot::TrajectoryPlot, selection::Selected, ui::show_tree,
-    SystemRoot,
+    camera::Followed, hierarchy, load::SystemRoot, plot::TrajectoryPlot, selection::Selected,
+    ui::show_tree,
 };
 
 use bevy::prelude::*;

@@ -19,7 +19,7 @@ use crate::{
     starlight::Star,
     time::{BoundsTime, SimulationTime},
     ui::Labelled,
-    MainState, SystemRoot,
+    MainState,
 };
 
 use bevy::asset::{LoadedFolder, RecursiveDependencyLoadState};

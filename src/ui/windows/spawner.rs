@@ -1,10 +1,11 @@
 use crate::{
     hierarchy,
+    load::SystemRoot,
     load::{LoadShipEvent, Ship},
     prediction::{StateVector, Trajectory, TrajectoryData},
     time::SimulationTime,
     ui::{get_name, show_tree, FixedUiSet, IdentedInfo},
-    MainState, SystemRoot,
+    MainState,
 };
 
 use bevy::math::DVec3;

@@ -1,11 +1,12 @@
 use crate::{
     flight_plan::{Burn, FlightPlan, FlightPlanChanged},
+    load::SystemRoot,
     plot::{trajectory_picking, PlotPoints, TrajectoryHitPoint, TrajectoryPlot, PICK_THRESHOLD},
     prediction::{Trajectory, TrajectoryData},
     selection::Selected,
     time::SimulationTime,
     ui::nformat,
-    MainState, SystemRoot,
+    MainState,
 };
 
 use bevy::prelude::*;

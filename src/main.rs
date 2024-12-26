@@ -30,6 +30,7 @@ use crate::{
 };
 
 use bevy::prelude::*;
+use bevy::window::WindowMode;
 use bevy_egui::EguiPlugin;
 #[expect(unused)]
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -40,11 +41,6 @@ pub enum MainState {
     Loading,
     Running,
 }
-
-/// All the bodies in a stellar system, planetary system or satellite system should be a child of a
-/// root entity with this component.
-#[derive(Component)]
-pub struct SystemRoot;
 
 fn main() {
     App::new()
@@ -85,6 +81,7 @@ fn main() {
         .enable_state_scoped_entities::<MainState>()
         .insert_resource(Msaa::Sample8)
         .add_systems(Startup, default_solar_system)
+        .add_systems(PreUpdate, enter_full_screen)
         .run();
 }
 
@@ -103,6 +100,20 @@ fn default_solar_system(
         }
         Err(err) => {
             panic!("Failed to load default solar system: {}", err);
+        }
+    }
+}
+
+fn enter_full_screen(
+    kb: Res<ButtonInput<KeyCode>>,
+    mut query_window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
+        let mode = &mut query_window.single_mut().mode;
+        bevy::log::info!("Toggling window mode");
+        match *mode {
+            WindowMode::Windowed => *mode = WindowMode::BorderlessFullscreen,
+            _ => *mode = WindowMode::Windowed,
         }
     }
 }

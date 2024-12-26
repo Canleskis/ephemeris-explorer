@@ -246,3 +246,8 @@ pub struct Ship {
     pub velocity: DVec3,
     pub burns: Vec<Burn>,
 }
+
+/// All the bodies in a stellar system, planetary system or satellite system should be a child of a
+/// root entity with this component.
+#[derive(Component)]
+pub struct SystemRoot;

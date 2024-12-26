@@ -2,6 +2,7 @@ use crate::{
     camera::{Followed, SetFollowed},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     hierarchy,
+    load::SystemRoot,
     plot::TrajectoryPlot,
     prediction::{DiscreteStates, DiscreteStatesBuilder, Trajectory, TrajectoryData},
     selection::Selected,
@@ -10,7 +11,7 @@ use crate::{
         get_name, nformat, relative_state_vector, show_tree, FixedUiSet, IdentedInfo,
         ParsedTextEdit,
     },
-    MainState, SystemRoot,
+    MainState,
 };
 
 use bevy::prelude::*;
