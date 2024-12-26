@@ -44,7 +44,7 @@ where
     B: TrajectoryBuilder + Component,
 {
     fn build(&self, app: &mut App) {
-        app.insert_resource(AutoExtendSettings::<B>::new(false))
+        app.insert_resource(AutoExtendSettings::<B>::new(true))
             .add_systems(
                 First,
                 auto_extend::<B>

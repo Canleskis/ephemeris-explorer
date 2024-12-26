@@ -5,20 +5,17 @@ version = "0.1.0"
 
 [dependencies]
 bevy = { version = "0.14.2", features = ["jpeg"] }
-bevy_egui = { version = "0.29.0", features = ["immutable_ctx"]}
+bevy_egui = { version = "0.29.0", features = ["immutable_ctx"] }
 egui_extras = { version = "0.28.1" }
 big_space = "0.7.0"
 bevy_file_dialog = "0.6.0"
 bevy-inspector-egui = "0.26.0"
 
-particular = { git = "https://github.com/Canleskis/particular.git", features = ["glam"] }
-rand = "0"
-humantime = "2"
+particular = { git = "https://github.com/Canleskis/particular.git", features = [
+    "glam",
+] }
 crossbeam-channel = "0.5"
-polynomial = "0.2.6"
-# anise = "0.3"
-hifitime = "4.0.1"
-rayon = "1"
+hifitime = "4.0.2"
 poly_it = { version = "0.2.3", features = ["smallvec", "serde"] }
 smallvec = { version = "1.13.2", features = ["serde"] }
 thousands = "0.2.0"
