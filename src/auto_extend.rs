@@ -59,7 +59,7 @@ fn auto_extend<B>(
     time: Res<Time>,
     sim_time: Res<SimulationTime>,
     auto_extend: Res<AutoExtendSettings<B>>,
-    root: Query<Option<&PredictionTracker<B>>, With<B>>,
+    query_tracker: Query<Option<&PredictionTracker<B>>, With<B>>,
 ) where
     B: TrajectoryBuilder + Component,
 {
@@ -68,16 +68,16 @@ fn auto_extend<B>(
     }
 
     let boundary = std::cmp::max_by(sim_time.start(), sim_time.end(), B::cmp);
-    let delta = sim_time.time_scale.abs() * Duration::from_seconds(1.0);
-    let next = B::add(sim_time.current(), delta);
+    let delta = sim_time.time_scale * Duration::from_seconds(1.0);
+    let next = sim_time.current() + delta;
     if !B::cmp(&next, &boundary).is_ge() {
         return;
     }
     // TODO: Make this configurable or based on the system somehow.
     let min = Duration::from_days(1.0);
-    let duration = (delta * time.delta_seconds_f64().min(0.1)).max(min);
+    let duration = (delta.abs() * time.delta_seconds_f64()).max(min);
 
-    for tracker in root.iter() {
+    for tracker in query_tracker.iter() {
         if tracker.is_some() {
             return;
         }
