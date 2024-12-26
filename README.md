@@ -17,11 +17,11 @@ On top of showing the bodies in the system and their trajectories, the user inte
 
 - **Hierarchy**: The left panel provides a hierarchical view of the celestial bodies within the current system. Clicking the 📌 allows setting the reference frame of the camera, which it will follow. You can toggle trajectory plotting using the ○ button, and toggle trajectory plotting of the children of a body using the A button. Clicking a body's name or a body in the viewport selects it and allows you to read information about the body and configure plotting.
 
-- **Body information**: When a body is selected, information about the current state of the body is displayed. You can also configure the plotting of the body's trajectory. Changing the `Reference` of the body changes some of the displayed information and changes the reference frame of the body's trajectory.
-
-- **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting a start epoch and an end epoch. You can pause and cancel ongoing predictions. By default, predictions will auto-extend when the current time approaches the prediction bounds.
+- **Body information**: When a body is selected, information about the current state of the body is displayed. You can also configure the plotting of the body's trajectory. Changing the `Reference` of the body changes some of the displayed information and changes the reference frame of the body's trajectory. If the body is a ship, you can also export it and its flight plan to a file and delete it from the current system.
 
 - **Flight Planning**: Allows to add manoeuvres to ships. Manoeuvres are defined by a start epoch, a duration and an acceleration in a reference frame. Using the same window that displays body information, you can add, remove and edit manoeuvres. When a manoeuvre is changed, the trajectory of the ship is recomputed asynchronously. If the flight plan is shorter than the current prediction bounds, the ship will freeze at the end of its trajectory.
+
+- **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting a start epoch and an end epoch. You can pause and cancel ongoing predictions. By default, predictions will auto-extend when the current time approaches the prediction bounds.
 
 - **Trajectory Picking**: You can hover or click points on the trajectories to display information about the body at that point in time as well as adding manoeuvres for ships. Multiple points might be selected when picking a trajectory if the points are close together and belong to the same body.
 
@@ -44,6 +44,8 @@ On top of showing the bodies in the system and their trajectories, the user inte
     ]
 }
 ```
+
+- **Ship Spawner**: Allows to spawn ships in the system. Ships are defined by a name and a position and a velocity in a reference frame. You can also import a ship and its flight plan from a file.
 
 - **Prediction Debug**: Displays information about each trajectory.
 
