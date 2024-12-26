@@ -15,6 +15,7 @@ use crate::{
         Backward, DiscreteStates, DiscreteStatesBuilder, ExtendPredictionEvent, FixedSegments,
         FixedSegmentsBuilder, Forward, Mu, PredictionTracker, Trajectory, DIV,
     },
+    rotation::Rotating,
     selection::Clickable,
     starlight::Star,
     time::{BoundsTime, SimulationTime},
@@ -205,24 +206,6 @@ fn ships_loaded(folder: Res<ShipsFolderHandle>, asset_server: Res<AssetServer>) 
         asset_server.recursive_dependency_load_state(&folder.handle),
         RecursiveDependencyLoadState::Loaded
     )
-}
-
-#[derive(Component)]
-pub struct Rotating {
-    #[expect(unused)]
-    right_ascension: f64,
-    #[expect(unused)]
-    declination: f64,
-    reference_epoch: Epoch,
-    reference_rotation: f64,
-    rotation_rate: f64,
-}
-
-impl Rotating {
-    pub fn at(&self, epoch: Epoch) -> bevy::math::DQuat {
-        let dt = (epoch - self.reference_epoch).to_unit(hifitime::Unit::Day);
-        bevy::math::DQuat::from_rotation_z(self.reference_rotation + dt * self.rotation_rate)
-    }
 }
 
 fn spawn_loaded_bodies(

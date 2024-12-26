@@ -2,6 +2,7 @@ use crate::{
     floating_origin::{BigSpace, GridCell, ReferenceFrame},
     plot::TrajectoryPlotConfig,
     prediction::{Trajectory, TrajectoryData},
+    rotation::Rotating,
     MainState,
 };
 
@@ -114,8 +115,6 @@ fn sync_position_to_time(
     }
 }
 
-// Temporary until all bodies have proper rotation.
-use crate::load::Rotating;
 fn sync_rotation_to_time(
     sim_time: Res<SimulationTime>,
     mut query: Query<(&mut Transform, &Rotating)>,

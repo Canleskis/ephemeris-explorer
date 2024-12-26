@@ -7,6 +7,7 @@ mod hierarchy;
 mod load;
 mod plot;
 mod prediction;
+mod rotation;
 mod selection;
 mod starlight;
 mod time;
