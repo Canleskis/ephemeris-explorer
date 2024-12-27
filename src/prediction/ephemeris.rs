@@ -662,7 +662,7 @@ impl TrajectoryBuilder for DiscreteStatesBuilder {
     /// start of the appended trajectory.
     #[inline]
     fn join(lhs: &mut Self::Trajectory, rhs: Self::Trajectory) {
-        lhs.clear_after(rhs.start());
+        lhs.clear_after(rhs.start() - Duration::EPSILON);
         lhs.extend(rhs);
     }
 

@@ -456,6 +456,14 @@ impl FixedSegments {
         self.segment_index_exclusive(at - self.start)
     }
 
+    fn segment_index(&self, time: Duration) -> Option<usize> {
+        if time.is_negative() || time >= self.span() {
+            return None;
+        }
+
+        Some((time.total_nanoseconds() / self.granule.total_nanoseconds()) as usize)
+    }
+
     fn segment_index_exclusive(&self, time: Duration) -> Option<usize> {
         if time.is_negative() || time > self.span() {
             return None;
@@ -467,14 +475,6 @@ impl FixedSegments {
             (time.total_nanoseconds().saturating_sub(1) / self.granule.total_nanoseconds())
                 as usize,
         )
-    }
-
-    fn segment_index(&self, time: Duration) -> Option<usize> {
-        if time.is_negative() || time >= self.span() {
-            return None;
-        }
-
-        Some((time.total_nanoseconds() / self.granule.total_nanoseconds()) as usize)
     }
 
     pub fn granule(&self) -> Duration {
