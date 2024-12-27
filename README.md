@@ -4,20 +4,20 @@
     <img src="ephemeris-explorer-preview.gif" alt="preview gif">
 </div>
 
-Ephemeris Explorer aims to be a multi-purpose interactive experience of gravitationally bound systems, be it stellar systems, planetary systems or satellite systems.
+Ephemeris Explorer aims to be a multi-purpose interactive visualisation of gravitationally bound systems, be it stellar systems, planetary systems or satellite systems.
 It uses concepts from various research, notably [Numerical Representation of Planetary Ephemerides](https://adsabs.harvard.edu/full/1989CeMec..45..305N) to generate accurate[^1] trajectories of celestial bodies and presents them in an interactive manner using the [Bevy Engine](https://bevyengine.org/) and [egui](https://github.com/emilk/egui).
 
 [^1]: The accuracy of the current implementation is limited by the fact that the acceleration computation does not take into account general relativity and all bodies are considered to be spheres with an homogeneous mass distribution.
 
 ## User Interface and Key Bindings
 
-On top of showing the bodies in the system and their trajectories, the user interface allows for various ways to interact with the system:
+On top of showing the bodies in the system and their trajectories, the user interface provides the following set of features:
 
 - **Camera Controls**: The camera can be moved using the WASD keys, A and D for roll, as well as Space and Left Control to move up and down. The up and down arrow keys allow to change the FOV. The mouse can be used for pitch and yaw when the left mouse button is held down. You can also use orbit controls around the followed body by holding the right mouse button.
 
 - **Hierarchy**: The left panel provides a hierarchical view of the celestial bodies within the current system. Clicking the ⌖ allows setting the reference frame of the camera. You can toggle trajectory plotting using the ○ button, and toggle trajectory plotting of the children of a body using the A button. Clicking a body's name or a body in the viewport selects it and allows you to read information about the body and configure plotting.
 
-- **Body information**: When a body is selected, information about the current state of the body is displayed. You can also configure the plotting of the body's trajectory. Changing the `Reference` of the body changes some of the displayed information and changes the reference frame of the body's trajectory. If the body is a ship, you can also export it and its flight plan to a file and delete it from the current system.
+- **Body Information**: When a body is selected, information about the current state of the body is displayed. You can also configure the plotting of the body's trajectory. Changing the `Reference` of the body changes some of the displayed information and changes the reference frame of the body's trajectory. If the body is a ship, you can also export it and its flight plan to a file and delete it from the current system.
 
 - **Flight Planning**: Allows to add manoeuvres to ships. Manoeuvres are defined by a start epoch, a duration and an acceleration in a reference frame. Using the same window that displays body information, you can add, remove and edit manoeuvres. When a manoeuvre is changed, the trajectory of the ship is recomputed asynchronously. If the flight plan is shorter than the current prediction bounds, the ship will freeze at the end of its trajectory.
 
