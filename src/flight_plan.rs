@@ -171,13 +171,16 @@ fn compute_flight_plan(
                 .zip(previous.burns.iter())
                 .filter_map(|(burn, previous)| {
                     let start = burn.start.min(previous.start);
-                    if (burn.start != previous.start
+
+                    if (burn.start < min && previous.start < min)
+                        || (burn.start > max && previous.start > max)
+                    {
+                        None
+                    } else if (burn.start != previous.start
                         || burn.enabled != previous.enabled
                         || burn.overlaps != previous.overlaps)
                         && (burn.enabled || previous.enabled)
                         && (!burn.overlaps || !previous.overlaps)
-                        && (burn.start >= min || previous.start >= min)
-                        && (burn.start <= max || previous.start <= max)
                     {
                         Some(start - Duration::EPSILON)
                     } else if (burn.duration != previous.duration
@@ -199,11 +202,12 @@ fn compute_flight_plan(
                 .flatten()
                 .min()
         })
-        .unwrap_or(Some(min));
+        .map_or(Some(min), |last_valid| last_valid.min(Some(max)));
 
     let Some(last_valid) = last_valid else {
         return;
     };
+
     // TODO: We could theoretically restart from the point before the new start time in some
     // cases, but the integrator needs the previous error of that point to calculate the new
     // step size, which we don't store. So for now we just restart from the previous integrator
@@ -216,8 +220,10 @@ fn compute_flight_plan(
         .next_back()
         .map_or(min, |(t, _)| *t);
 
+    println!("Restarting from {:?}", restart);
+
     let Some(&restart_sv) = trajectory.get(restart) else {
-        bevy::log::error!("someting went wrong when trying to compute the flight plan");
+        bevy::log::error!("something went wrong when trying to compute the flight plan");
         return;
     };
 
