@@ -21,15 +21,15 @@ On top of showing the bodies in the system and their trajectories, the user inte
 
 - **Flight Planning**: Allows to add manoeuvres to ships. Manoeuvres are defined by a start epoch, a duration and an acceleration in a reference frame. Using the same window that displays body information, you can add, remove and edit manoeuvres. When a manoeuvre is changed, the trajectory of the ship is recomputed asynchronously. If the flight plan is shorter than the current prediction bounds, the ship will freeze at the end of its trajectory.
 
-- **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting a start epoch and an end epoch. You can pause and cancel ongoing predictions. By default, predictions will auto-extend when the current time approaches the prediction bounds.
+- **Prediction Planner**: Allows to extend the ephemerides forward or backward in time independently and asynchronously by selecting start and end epochs. You can pause and cancel ongoing predictions. By default, predictions will auto-extend when the current time approaches the prediction bounds.
 
-- **Trajectory Picking**: You can hover or click points on the trajectories to display information about the body at that point in time as well as adding manoeuvres for ships. Multiple points might be selected when picking a trajectory if the points are close together and belong to the same body.
+- **Trajectory Picking**: You can hover over or click on the trajectories to display information about the body at that point in time as well as adding manoeuvres for ships. Multiple points might be selected when picking a trajectory if the points are close together and belong to the same body.
 
 - **Time Controls**: Allows to change the speed of the simulation, pause it or set the epoch.
 
-- **Export**: Allows to export the current state of the system to a file, selecting which bodies are included. The file can be loaded back into the system using the `Load` button.
+- **Export**: Allows to export the current state of the system to a file, selecting which bodies are included.
 
-- **Load**: Allows to load a system from a file. The file should be a JSON file containing the state of the system. See `export-solar-system` for a python program that allows the generation of such files using NASA's development ephemerides and [skyfield](https://rhodesmill.org/skyfield/). The file should be formatted as follows:
+- **Load**: Allows loading a system from a directory. The directory should contain four files: `ephemeris.json` for the ephemerides configuration, `hierarchy.json`, `state.json` for the initial state of the system, and a `skybox.png`. The initial state file should be a JSON containing the state of the system. See `export-solar-system` for a python program that generates such files using NASA's development ephemerides and [skyfield](https://rhodesmill.org/skyfield/). It should be formatted as follows:
 
 ```json
 {
@@ -45,7 +45,7 @@ On top of showing the bodies in the system and their trajectories, the user inte
 }
 ```
 
-- **Ship Spawner**: Allows to spawn ships in the system. Ships are defined by a name and a position and a velocity in a reference frame. You can also import a ship and its flight plan from a file.
+- **Ship Spawner**: Allows to spawn ships in the system. Ships are defined by a name as well as a position and velocity within a reference frame. You can also import a ship and its flight plan from a file.
 
 - **Prediction Debug**: Displays information about each trajectory.
 
