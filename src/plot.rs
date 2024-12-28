@@ -127,6 +127,7 @@ impl Plugin for TrajectoryPlotPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TrajectoryPlotConfig>()
             .add_event::<TrajectoryHitPoint>()
+            .add_systems(Startup, setup_gizmos)
             .add_systems(
                 PostUpdate,
                 (
@@ -143,6 +144,12 @@ impl Plugin for TrajectoryPlotPlugin {
                     .run_if(in_state(MainState::Running))
                     .after(bevy::transform::TransformSystem::TransformPropagate),
             );
+    }
+}
+
+fn setup_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+    for (_, config, _) in config_store.iter_mut() {
+        config.line_width = 1.0;
     }
 }
 
@@ -364,7 +371,7 @@ fn plot_manoeuvres(
             let normal = transform_vector3(normal, root);
 
             let direction = camera_transform.translation() - pos;
-            let size = direction.length() * 0.01;
+            let size = direction.length() * 0.02;
             gizmos.arrow(pos, pos + prograde * size, LinearRgba::GREEN);
             gizmos.arrow(pos, pos + normal * size, LinearRgba::BLUE);
             gizmos.arrow(pos, pos + radial * size, LinearRgba::RED);

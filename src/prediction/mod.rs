@@ -280,7 +280,7 @@ fn dispatch_predictions<B>(
             let ctx = std::sync::Arc::clone(&ctx);
 
             async move {
-                bevy::log::info!("Computing {} prediction for {}", name, duration);
+                bevy::log::debug!("Computing {} prediction for {}", name, duration);
                 let t0 = std::time::Instant::now();
 
                 let sync_freq = duration / sync_count.max(1) as i64;
@@ -295,7 +295,7 @@ fn dispatch_predictions<B>(
                     }
 
                     if let Err(step_error) = instance.step(&ctx) {
-                        bevy::log::warn!("{name}: {step_error}");
+                        bevy::log::debug!("{name}: {step_error}");
                         next = instance.time();
                         end = next;
                     }
@@ -305,7 +305,7 @@ fn dispatch_predictions<B>(
 
                         let completed = std::mem::replace(instance, instance.continued());
                         if sender.send(completed).is_err() || B::cmp(&current, &end).is_ge() {
-                            bevy::log::info!("Stopping {} prediction thread", name);
+                            bevy::log::debug!("Stopping {} prediction thread", name);
                             break;
                         }
 
@@ -313,7 +313,7 @@ fn dispatch_predictions<B>(
                     }
                 }
 
-                bevy::log::info!("Computing {} prediction took: {:?}", name, t0.elapsed());
+                bevy::log::debug!("Computing {} prediction took: {:?}", name, t0.elapsed());
             }
         });
 
