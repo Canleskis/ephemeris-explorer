@@ -454,6 +454,8 @@ impl BodyInfoWindow {
                     ui.add_space(2.0);
                     ui.spacing_mut().text_edit_width = 240.0;
 
+                    let mut changed = false;
+
                     let Ok(trajectory) = query_trajectory.get_mut(entity) else {
                         return;
                     };
@@ -462,7 +464,21 @@ impl BodyInfoWindow {
                     let min_time = trajectory.start();
                     let max_time = Epoch::from_tai_duration(Duration::MAX);
 
-                    let mut changed = false;
+                    ui.horizontal(|ui| {
+                        ui.label("Max iterations:");
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut flight_plan.max_iterations, 0..=1_000_000)
+                                    .logarithmic(true),
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    });
+
+                    ui.add_space(5.0);
+
                     ui.horizontal(|ui| {
                         ui.label("End:").changed();
                         if ui
@@ -484,20 +500,12 @@ impl BodyInfoWindow {
 
                     ui.add_space(5.0);
 
-                    ui.horizontal(|ui| {
-                        ui.label("Max iterations:");
-                        if ui
-                            .add(
-                                egui::Slider::new(&mut flight_plan.max_iterations, 0..=1_000_000)
-                                    .logarithmic(true),
-                            )
-                            .changed()
-                        {
-                            changed = true;
-                        }
-                    });
+                    ui.label(format!(
+                        "Total delta-v: {:.3} km/s",
+                        flight_plan.total_delta_v() / 1e3
+                    ));
 
-                    ui.add_space(10.0);
+                    ui.add_space(5.0);
 
                     ui.horizontal(|ui| {
                         let new_button = ui.button("New burn");
@@ -515,7 +523,7 @@ impl BodyInfoWindow {
                             ui.add_enabled(any_to_delete, egui::Button::new("Delete selected"));
                         if delete_button.clicked() {
                             flight_plan.burns.retain(|burn| !delete.remove(&burn.id));
-                            // Clear in case a burn was already deleted in another way
+                            // Clear in case a burn was deleted through another way
                             delete.clear();
                             changed = true;
                         }
@@ -720,7 +728,6 @@ impl BodyInfoWindow {
 
                 IdentedInfo::new("Acceleration:", &mut burn.acceleration).show(ui, |ui, acc| {
                     ui.spacing_mut().interact_size = [60.0, 18.0].into();
-                    let delta_v = |a| a / 1e3 * burn.duration.to_seconds();
 
                     ui.horizontal(|ui| {
                         ui_coordinate(burn.frame, ui, "x");
@@ -731,7 +738,6 @@ impl BodyInfoWindow {
                             changed = true;
                         }
                         ui.label("m/s²");
-                        ui.label(format!("({:.3} km/s)", delta_v(acc.x)));
                     });
 
                     ui.horizontal(|ui| {
@@ -743,7 +749,6 @@ impl BodyInfoWindow {
                             changed = true;
                         }
                         ui.label("m/s²");
-                        ui.label(format!("({:.3} km/s)", delta_v(acc.y)));
                     });
 
                     ui.horizontal(|ui| {
@@ -755,9 +760,12 @@ impl BodyInfoWindow {
                             changed = true;
                         }
                         ui.label("m/s²");
-                        ui.label(format!("({:.3} km/s)", delta_v(acc.z)));
                     });
                 });
+
+                ui.add_space(2.0);
+
+                ui.label(format!("Delta-v: {:.3} km/s", burn.delta_v() / 1e3));
             });
 
         changed

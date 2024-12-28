@@ -80,8 +80,16 @@ impl Burn {
         }
     }
 
+    pub fn active(&self) -> bool {
+        self.enabled && !self.overlaps
+    }
+
     pub fn end(&self) -> Epoch {
         self.start + self.duration
+    }
+
+    pub fn delta_v(&self) -> f64 {
+        self.acceleration.length() * self.duration.to_seconds()
     }
 
     pub fn reference_frame(&self) -> ReferenceFrame {
@@ -118,6 +126,14 @@ impl FlightPlan {
                 .enumerate()
                 .any(|(j, burn)| i != j && burn.overlaps_with(&self.burns[i]));
         }
+    }
+
+    pub fn total_delta_v(&self) -> f64 {
+        self.burns
+            .iter()
+            .filter(|burn| burn.active())
+            .map(Burn::delta_v)
+            .sum()
     }
 }
 
