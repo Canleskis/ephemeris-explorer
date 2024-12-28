@@ -32,6 +32,72 @@ pub struct TrajectoryPlot {
 pub struct PlotPoints(pub Vec<(Epoch, Vec3)>);
 
 impl PlotPoints {
+    // Adapted from Principia's PlotMethod3.
+    // (https://github.com/mockingbirdnest/Principia/blob/2024080411-Klein/ksp_plugin/planetarium_body.hpp)
+    pub fn new(
+        eval: impl Fn(Epoch) -> StateVector<DVec3>,
+        min: Epoch,
+        max: Epoch,
+        camera_transform: &GlobalTransform,
+        tan2_angular_resolution: f64,
+        max_points: usize,
+    ) -> Self {
+        let tan2_angular_resolution = tan2_angular_resolution * tan2_angular_resolution;
+        let final_time = max;
+        let mut previous_time = min;
+
+        let mut previous = eval(previous_time);
+        let mut delta = (final_time - previous_time).to_seconds();
+
+        let mut points = Vec::new();
+        points.push((previous_time, previous.position.as_vec3()));
+
+        let mut t: Epoch;
+        let mut estimated_tan2_error = None::<f64>;
+        let mut current: StateVector<DVec3>;
+
+        while points.len() < max_points && previous_time < final_time {
+            loop {
+                if let Some(estimated_tan2_error) = estimated_tan2_error {
+                    delta *= 0.9
+                        * (tan2_angular_resolution / estimated_tan2_error)
+                            .sqrt()
+                            .sqrt();
+                }
+
+                t = previous_time + delta;
+
+                if t > final_time {
+                    t = final_time;
+                    delta = (t - previous_time).to_seconds();
+                }
+
+                let extrapolated_position = previous.position + previous.velocity * delta;
+                current = eval(t);
+
+                // Prevent catastrophic retries
+                if estimated_tan2_error.is_some_and(|error| error == 0.0) {
+                    break;
+                }
+
+                estimated_tan2_error = Some(
+                    angular_distance(camera_transform, extrapolated_position, current.position)
+                        / 16.0,
+                );
+
+                if estimated_tan2_error.is_some_and(|error| error <= tan2_angular_resolution) {
+                    break;
+                }
+            }
+
+            previous_time = t;
+            previous = current;
+            points.push((t, current.position.as_vec3()));
+        }
+
+        Self(points)
+    }
+
     pub fn evaluate(&self, at: Epoch) -> Option<Vec3> {
         match self.binary_search_by(|(t, _)| t.cmp(&at)) {
             Ok(i) => Some(self[i].1),
@@ -93,10 +159,10 @@ pub fn to_global_pos(pos: DVec3, root: &ReferenceFrame) -> Vec3 {
         .translation()
 }
 
-pub fn to_global_sv(sv: StateVector<DVec3>, root: &ReferenceFrame) -> StateVector<Vec3> {
+pub fn to_global_sv(sv: StateVector<DVec3>, root: &ReferenceFrame) -> StateVector<DVec3> {
     StateVector {
-        velocity: transform_vector3(sv.velocity, root),
-        position: to_global_pos(sv.position, root),
+        velocity: transform_vector3(sv.velocity, root).as_dvec3(),
+        position: to_global_pos(sv.position, root).as_dvec3(),
     }
 }
 
@@ -128,7 +194,7 @@ fn compute_plot_points(
                 plot.threshold * ARC_MINUTE * p.fov
             }
             _ => unreachable!(),
-        };
+        } as f64;
 
         let (eval, min, max): (&dyn Fn(_) -> _, _, _) =
             if let Some((_, ref_trajectory, ..)) = plot.reference.and_then(|r| query.get(r).ok()) {
@@ -157,7 +223,7 @@ fn compute_plot_points(
         let min = plot.start.clamp(min, max);
         let max = plot.end.clamp(min, max);
 
-        **points = plot_points(eval, min, max, camera_transform, threshold, plot.max_points);
+        *points = PlotPoints::new(eval, min, max, camera_transform, threshold, plot.max_points)
     }
 }
 
@@ -306,73 +372,9 @@ fn plot_manoeuvres(
     }
 }
 
-// Adapted from Principia's PlotMethod3.
-// (https://github.com/mockingbirdnest/Principia/blob/2024080411-Klein/ksp_plugin/planetarium_body.hpp)
-fn plot_points(
-    eval: impl Fn(Epoch) -> StateVector<Vec3>,
-    min: Epoch,
-    max: Epoch,
-    camera_transform: &GlobalTransform,
-    tan2_angular_resolution: f32,
-    max_points: usize,
-) -> Vec<(Epoch, Vec3)> {
-    let tan2_angular_resolution = tan2_angular_resolution * tan2_angular_resolution;
-    let final_time = max;
-    let mut previous_time = min;
-
-    let mut previous = eval(previous_time);
-    let mut delta = (final_time - previous_time).to_seconds() as f32;
-
-    let mut points = Vec::new();
-    points.push((previous_time, previous.position));
-
-    let mut t: Epoch;
-    let mut estimated_tan2_error = None::<f32>;
-    let mut current: StateVector<Vec3>;
-
-    while points.len() < max_points && previous_time < final_time {
-        loop {
-            if let Some(estimated_tan2_error) = estimated_tan2_error {
-                delta *= 0.9
-                    * (tan2_angular_resolution / estimated_tan2_error)
-                        .sqrt()
-                        .sqrt();
-            }
-
-            t = previous_time + delta as f64;
-
-            if t > final_time {
-                t = final_time;
-                delta = (t - previous_time).to_seconds() as f32;
-            }
-
-            let extrapolated_position = previous.position + previous.velocity * delta;
-            current = eval(t);
-
-            // Prevent catastrophic retries
-            if estimated_tan2_error.is_some_and(|error| error == 0.0) {
-                break;
-            }
-
-            estimated_tan2_error = Some(
-                angular_distance(camera_transform, extrapolated_position, current.position) / 16.0,
-            );
-
-            if estimated_tan2_error.is_some_and(|error| error <= tan2_angular_resolution) {
-                break;
-            }
-        }
-
-        previous_time = t;
-        previous = current;
-        points.push((t, current.position));
-    }
-
-    points
-}
-
-fn angular_distance(camera_transform: &GlobalTransform, p1: Vec3, p2: Vec3) -> f32 {
-    let camera_position = camera_transform.translation();
+#[inline]
+fn angular_distance(camera_transform: &GlobalTransform, p1: DVec3, p2: DVec3) -> f64 {
+    let camera_position = camera_transform.translation().as_dvec3();
     let v1 = (p1 - camera_position).normalize();
     let v2 = (p2 - camera_position).normalize();
 
