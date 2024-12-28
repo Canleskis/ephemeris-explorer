@@ -220,8 +220,6 @@ fn compute_flight_plan(
         .next_back()
         .map_or(min, |(t, _)| *t);
 
-    println!("Restarting from {:?}", restart);
-
     let Some(&restart_sv) = trajectory.get(restart) else {
         bevy::log::error!("something went wrong when trying to compute the flight plan");
         return;

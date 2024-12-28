@@ -9,7 +9,7 @@ It uses concepts from various research, notably [Numerical Representation of Pla
 
 [^1]: The accuracy of the current implementation is limited by the fact that the acceleration computation does not take into account general relativity and all bodies are considered to be spheres with an homogeneous mass distribution.
 
-## User Interface and Key Bindings
+## User interface and key bindings
 
 On top of showing the bodies in the system and their trajectories, the user interface provides the following set of features:
 
@@ -53,10 +53,10 @@ On top of showing the bodies in the system and their trajectories, the user inte
 
 Generating accurate ephemerides for a given system requires the configuration of the following parameters:
 
-- An epoch at which is provided the state vectors of the bodies in the system, as well as the gravitational parameters of the bodies. This data is loaded with the `state.json` files in the provided systems.
-- A time step or delta time `dt` and for each body the sample count `count` and the degree `deg` of the piecewise polynomial interpolation. This data is loaded with the `ephemeris.json` files in the provided systems. For now, the parameters need to be hand-tuned for each system to ensure the accuracy of the ephemerides. You can compute an estimate of the error from the interpolation in the `Ephemerides Debug` interface.
+- A starting epoch, for which the state vectors of the bodies in the system are provided, as well as their gravitational parameters. This data is loaded with the `state.json` file.
+- A time step or delta time `dt` and for each body the sample count `count` and the degree `deg` of the piecewise polynomial interpolation. This data is loaded with the `ephemeris.json` file. For now, the parameters need to be hand-tuned for each system to ensure the accuracy of the ephemerides. You can compute an estimate of the error from the interpolation in the `Ephemerides Debug` interface.
 
-The initial state is used as the starting point for the generation of the ephemerides, whilst the other parameters define the accuracy of the ephemerides. More specifically, each polynomial of degree `deg` is interpolated using 9 samples from the numerical integration. The sample count `count` and the delta `dt` define the distance between each of these samples. For example, with `dt = 1 min`, the resulting trajectory of a body with `count = 2` will be made of polynomials that have been interpolated with 9 samples at `t = 0 min`, `t = 2 min`, ..., `t = 16 min`. As such, each polynomial will be valid for `8 * count * dt` and the delta between each sample will be `count * dt`.  
+The initial state is used as the starting point for the generation of the ephemerides, whilst the other parameters define the accuracy of the ephemerides. More specifically, each polynomial of degree `deg` is interpolated using 9 samples from the numerical integration. The sample count `count` and the delta `dt` define the distance between each of these samples. For example, with `dt = 1 min`, the resulting trajectory of a body with `count = 10` will be made of polynomials that have been interpolated with 9 samples at `t = 0 min`, `t = 10 min`, ..., `t = 80 min`. As such, each polynomial will be valid for `8 * count * dt` and the delta between each sample will be `count * dt`.  
 Currently, the interpolation is done using a least squares polynomial fit using the [poly_it](https://github.com/SkyeC0re/polyit-rs) crate.  
 
 This implementation was custom made for this project and is not validated in any way. It is also better suited to stable trajectories and incorrect configuration of a system will result non-continuous polynomials within the trajectories.
