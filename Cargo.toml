@@ -27,6 +27,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 indexmap = { version = "2", features = ["serde"] }
 toml = "0.8"
 thiserror = "1.0.63"
+rand = "0.8"
 
 [profile.dev]
 opt-level = 1

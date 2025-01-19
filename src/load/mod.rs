@@ -425,6 +425,8 @@ fn spawn_ship(
         ship.position,
     );
 
+    let mut rng = rand::thread_rng();
+
     let mut entity = commands.spawn_empty();
     entity.insert((
         // No state scope needed as it is always a child of the root.
@@ -477,7 +479,13 @@ fn spawn_ship(
         ),
         TrajectoryPlot {
             enabled: true,
-            color: LinearRgba::GREEN.into(),
+            color: LinearRgba::new(
+                rand::Rng::gen_range(&mut rng, 0.0..1.0),
+                rand::Rng::gen_range(&mut rng, 0.0..1.0),
+                rand::Rng::gen_range(&mut rng, 0.0..1.0),
+                1.0,
+            )
+            .into(),
             start: Epoch::from_tai_duration(-Duration::MAX),
             end: Epoch::from_tai_duration(Duration::MAX),
             threshold: 0.5,
