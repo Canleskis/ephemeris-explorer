@@ -6,14 +6,8 @@ pub use fixed::*;
 pub use windows::*;
 pub use world::*;
 
-use crate::{
-    hierarchy,
-    load::LoadSolarSystemEvent,
-    prediction::{StateVector, Trajectory, TrajectoryData},
-    MainState,
-};
+use crate::{hierarchy, load::LoadSolarSystemEvent, MainState};
 
-use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContext, EguiContexts};
 use bevy_file_dialog::prelude::*;
@@ -295,22 +289,6 @@ fn get_name(entity: Entity, mut query: bevy::ecs::system::QueryLens<&Name>) -> S
         .ok()
         .map(|name| name.to_string())
         .unwrap_or_else(|| "Unknown".to_string())
-}
-
-#[inline]
-fn relative_state_vector(
-    entity: Entity,
-    reference: Option<Entity>,
-    at: Epoch,
-    mut query: bevy::ecs::system::QueryLens<&Trajectory>,
-) -> Option<StateVector<DVec3>> {
-    let query = query.query();
-    query.get(entity).ok().and_then(|t| {
-        let Some(reference) = reference else {
-            return t.state_vector(at);
-        };
-        t.relative_state_vector(at, query.get(reference).ok()?)
-    })
 }
 
 fn show_tree(

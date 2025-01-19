@@ -104,7 +104,7 @@ impl ShipSpawnerWindow {
                 egui::Grid::new("Spawn info")
                     .min_col_width(200.0)
                     .show(ui, |ui| {
-                        let speed = |v| 1e-3f64.max(v / 100.0);
+                        let speed = |v| 1e-2f64.max(v * 1e-2);
                         IdentedInfo::new("Position", &mut spawn_sv.position)
                             .hover_text(format!("Position relative to {}", "me"))
                             .show(ui, |ui, position| {

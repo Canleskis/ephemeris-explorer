@@ -1,16 +1,14 @@
 use crate::{
     camera::{Followed, SetFollowed},
+    compound_trajectory::{CompoundTrajectoryData, TrajectoryReferenceTranslated},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     hierarchy,
     load::SystemRoot,
     plot::TrajectoryPlot,
-    prediction::{DiscreteStates, DiscreteStatesBuilder, Trajectory, TrajectoryData},
+    prediction::{Trajectory, TrajectoryData},
     selection::Selected,
     time::SimulationTime,
-    ui::{
-        get_name, nformat, relative_state_vector, show_tree, FixedUiSet, IdentedInfo,
-        ParsedTextEdit,
-    },
+    ui::{get_name, nformat, show_tree, FixedUiSet, FlightTarget, IdentedInfo, ParsedTextEdit},
     MainState,
 };
 
@@ -108,9 +106,9 @@ fn precision() -> Duration {
 impl BodyInfoWindow {
     fn init(
         mut commands: Commands,
-        query: Query<(Entity, &TrajectoryPlot, Option<&DiscreteStatesBuilder>), Without<Self>>,
+        query: Query<(Entity, &TrajectoryPlot, Option<&FlightPlan>), Without<Self>>,
     ) {
-        for (entity, plot, builder) in &query {
+        for (entity, plot, flight_plan) in &query {
             commands.entity(entity).insert(Self {
                 auto_plot_reference: true,
                 plot_start_overwrite: Some(PlotOverwrite {
@@ -118,7 +116,7 @@ impl BodyInfoWindow {
                     kind: OverwriteKind::Current,
                 }),
                 plot_end_overwrite: None,
-                delete_body: builder.map(|_| false),
+                delete_body: flight_plan.map(|_| false),
             });
         }
     }
@@ -126,11 +124,17 @@ impl BodyInfoWindow {
     fn persisting(
         sim_time: Res<SimulationTime>,
         selected: Res<Selected>,
-        mut query: Query<(Entity, &hierarchy::Parent, &mut TrajectoryPlot, &mut Self)>,
+        mut query: Query<(
+            Entity,
+            &hierarchy::Parent,
+            &mut TrajectoryReferenceTranslated,
+            &mut TrajectoryPlot,
+            &mut Self,
+        )>,
     ) {
-        for (entity, parent, mut plot, mut info) in &mut query {
+        for (entity, parent, mut data, mut plot, mut info) in &mut query {
             if info.auto_plot_reference {
-                plot.reference = Some(**parent);
+                data.relative.reference = Some(**parent);
             }
 
             if let Some(overwrite) = &info.plot_start_overwrite {
@@ -146,7 +150,7 @@ impl BodyInfoWindow {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, clippy::type_complexity)]
     fn show(
         mut commands: Commands,
         mut contexts: EguiContexts,
@@ -154,10 +158,12 @@ impl BodyInfoWindow {
         followed: Res<Followed>,
         sim_time: Res<SimulationTime>,
         mut query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
-        mut query_trajectory: Query<&Trajectory>,
+        query_trajectory: Query<&Trajectory>,
         mut query: Query<(
             Option<&hierarchy::Parent>,
             Option<&mut FlightPlan>,
+            Option<&mut FlightTarget>,
+            &mut TrajectoryReferenceTranslated,
             &mut TrajectoryPlot,
             &mut Self,
         )>,
@@ -184,8 +190,13 @@ impl BodyInfoWindow {
                 .default_pos([ctx.screen_rect().size().x - 11.0, 33.0])
                 .resizable([false, true])
                 .show(ctx, |ui| {
-                    let Ok((parent, mut flight_plan, mut plot, mut info)) = query.get_mut(entity)
+                    let Ok((parent, mut flight_plan, mut target, mut data, mut plot, mut info)) =
+                        query.get_mut(entity)
                     else {
+                        return;
+                    };
+
+                    let Some(relative) = data.relative.fetch(&query_trajectory) else {
                         return;
                     };
 
@@ -260,15 +271,15 @@ impl BodyInfoWindow {
                         ui.separator();
                     }
 
-                    let plot_reference_name = &plot
+                    let plot_reference_name = &data
+                        .relative
                         .reference
-                        .map(|r| get_name(r, query_hierarchy.transmute_lens()))
+                        .map(|entity| get_name(entity, query_hierarchy.transmute_lens()))
                         .unwrap_or_else(|| "None".to_string());
 
-                    ui.checkbox(&mut info.auto_plot_reference, "Auto");
-
-                    ui.add_enabled_ui(!info.auto_plot_reference, |ui| {
-                        ui.horizontal(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut info.auto_plot_reference, "Auto");
+                        ui.add_enabled_ui(!info.auto_plot_reference, |ui| {
                             ui.label("Reference:");
                             egui::ComboBox::from_id_source("Reference")
                                 .wrap_mode(egui::TextWrapMode::Extend)
@@ -283,7 +294,7 @@ impl BodyInfoWindow {
                                             ui.horizontal(|ui| {
                                                 ui.add_enabled_ui(entity != ref_entity, |ui| {
                                                     ui.selectable_value(
-                                                        &mut plot.reference,
+                                                        &mut data.relative.reference,
                                                         Some(ref_entity),
                                                         ref_name.as_str(),
                                                     )
@@ -305,12 +316,7 @@ impl BodyInfoWindow {
                     egui::Grid::new("Prediction info")
                         .min_col_width(200.0)
                         .show(ui, |ui| {
-                            let sv = relative_state_vector(
-                                entity,
-                                plot.reference,
-                                sim_time.current(),
-                                query_trajectory.transmute_lens(),
-                            );
+                            let sv = relative.state_vector(sim_time.current());
 
                             IdentedInfo::new("Position", sv.map(|sv| sv.position))
                                 .hover_text(format!("Position relative to {}", plot_reference_name))
@@ -362,7 +368,7 @@ impl BodyInfoWindow {
                     ui.add_space(5.0);
                     ui.separator();
                     ui.heading("Plotting");
-                    ui.add_space(5.0);
+                    ui.add_space(4.0);
 
                     ui.checkbox(&mut plot.enabled, "Enabled");
 
@@ -454,22 +460,56 @@ impl BodyInfoWindow {
                     ui.add_space(2.0);
                     ui.spacing_mut().text_edit_width = 240.0;
 
+                    if let Some(target) = target.as_deref_mut() {
+                        let target_name = target
+                            .map(|entity| get_name(entity, query_hierarchy.transmute_lens()))
+                            .unwrap_or_else(|| "None".to_string());
+                        ui.horizontal(|ui| {
+                            ui.label("Target:");
+                            egui::ComboBox::from_id_source("Target")
+                                .wrap_mode(egui::TextWrapMode::Extend)
+                                .selected_text(target_name)
+                                .show_ui(ui, |ui| {
+                                    show_tree(
+                                        root,
+                                        &query_hierarchy,
+                                        |_| true,
+                                        ui,
+                                        |ui, _, (ref_entity, ref_name, _), _| {
+                                            ui.horizontal(|ui| {
+                                                ui.add_enabled_ui(entity != ref_entity, |ui| {
+                                                    ui.selectable_value(
+                                                        &mut **target,
+                                                        Some(ref_entity),
+                                                        ref_name.as_str(),
+                                                    )
+                                                    .on_disabled_hover_text(
+                                                        "Cannot use itself as a target",
+                                                    );
+                                                });
+                                                ui.add_space(10.0);
+                                            });
+                                        },
+                                    );
+                                });
+                        });
+                    }
+
+                    ui.add_space(2.0);
+
                     let mut changed = false;
 
-                    let Ok(trajectory) = query_trajectory.get_mut(entity) else {
-                        return;
-                    };
-                    let trajectory = trajectory.downcast_ref::<DiscreteStates>();
-
-                    let min_time = trajectory.start();
+                    let min_time = relative.trajectory.start();
                     let max_time = Epoch::from_tai_duration(Duration::MAX);
 
                     ui.horizontal(|ui| {
                         ui.label("Max iterations:");
+                        let speed = 1e-1f64.max(flight_plan.max_iterations as f64 * 1e-1);
                         if ui
                             .add(
-                                egui::Slider::new(&mut flight_plan.max_iterations, 0..=1_000_000)
-                                    .logarithmic(true),
+                                egui::DragValue::new(&mut flight_plan.max_iterations)
+                                    .speed(speed)
+                                    .range(0..=1_000_000),
                             )
                             .changed()
                         {
@@ -477,7 +517,7 @@ impl BodyInfoWindow {
                         }
                     });
 
-                    ui.add_space(5.0);
+                    ui.add_space(2.0);
 
                     ui.horizontal(|ui| {
                         ui.label("End:").changed();
@@ -500,13 +540,6 @@ impl BodyInfoWindow {
 
                     ui.add_space(5.0);
 
-                    ui.label(format!(
-                        "Total delta-v: {:.3} km/s",
-                        flight_plan.total_delta_v() / 1e3
-                    ));
-
-                    ui.add_space(5.0);
-
                     ui.horizontal(|ui| {
                         let new_button = ui.button("New burn");
                         if new_button.clicked() {
@@ -514,7 +547,7 @@ impl BodyInfoWindow {
                             let start = last_burn.map(|b| b.end()).unwrap_or(min_time);
                             flight_plan
                                 .burns
-                                .push(Burn::new(start, plot.reference.unwrap_or(root)));
+                                .push(Burn::new(start, data.relative.reference.unwrap_or(root)));
                             changed = true;
                         }
 
@@ -535,8 +568,16 @@ impl BodyInfoWindow {
 
                     ui.add_space(5.0);
 
+                    ui.label(format!(
+                        "Total delta-v: {:.3} km/s",
+                        flight_plan.total_delta_v() / 1e3
+                    ));
+
+                    ui.add_space(2.0);
+
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
+                        .min_scrolled_height(214.0)
                         .show(ui, |ui| {
                             flight_plan
                                 .burns
@@ -636,7 +677,9 @@ impl BodyInfoWindow {
                         )
                         .changed()
                     {
-                        burn.start = Epoch::from_tai_seconds(start).round(precision());
+                        burn.start = Epoch::from_tai_seconds(start)
+                            .round(precision())
+                            .max(min_time);
                         changed = true;
                     }
                 });

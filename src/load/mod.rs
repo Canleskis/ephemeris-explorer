@@ -5,21 +5,22 @@ pub use solar_system::*;
 pub use ui::*;
 
 use crate::{
-    analysis::SphereOfInfluence,
+    analysis::{under_soi, SphereOfInfluence},
     camera::{CanFollow, Followed, OrbitCamera},
+    compound_trajectory::TrajectoryReferenceTranslated,
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     floating_origin::{BigReferenceFrameBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
     hierarchy,
     plot::{PlotPoints, TrajectoryPlot},
     prediction::{
         Backward, DiscreteStates, DiscreteStatesBuilder, ExtendPredictionEvent, FixedSegments,
-        FixedSegmentsBuilder, Forward, Mu, PredictionTracker, Trajectory, DIV,
+        FixedSegmentsBuilder, Forward, Mu, PredictionTracker, Trajectory, TrajectoryData, DIV,
     },
     rotation::Rotating,
     selection::Clickable,
     starlight::Star,
     time::{BoundsTime, SimulationTime},
-    ui::Labelled,
+    ui::{FlightTarget, Labelled},
     MainState,
 };
 
@@ -280,7 +281,8 @@ fn spawn_loaded_bodies(
                 })
                 .unwrap_or(SphereOfInfluence::Fixed(f64::INFINITY));
 
-            let mut entity = commands.spawn((
+            let mut entity = commands.spawn_empty();
+            entity.insert((
                 // No state scope needed as it is always a child of the root.
                 Name::new(name.clone()),
                 BigReferenceFrameBundle {
@@ -318,8 +320,8 @@ fn spawn_loaded_bodies(
                     end: Epoch::from_tai_duration(Duration::MAX),
                     threshold: 0.5,
                     max_points: 10_000,
-                    reference: Some(parent),
                 },
+                TrajectoryReferenceTranslated::new(entity.id(), Some(parent), solar_system.epoch),
                 PlotPoints::default(),
             ));
 
@@ -400,6 +402,7 @@ fn spawn_ship(
     trigger: Trigger<LoadShipEvent>,
     mut commands: Commands,
     query_names: Query<(Entity, &Name)>,
+    query_soi: Query<(Entity, &Trajectory, &SphereOfInfluence)>,
     root: Query<Entity, With<SystemRoot>>,
 ) {
     let root = root.single();
@@ -414,6 +417,13 @@ fn spawn_ship(
         .map(|end| end + ((end - ship.start) / 5).round(Duration::from_hours(1.0)))
         .filter(|end| *end > ship.start + Duration::from_days(1.0))
         .unwrap_or(ship.start + Duration::from_days(1.0));
+
+    let parent = under_soi(
+        query_soi.iter().filter_map(|(entity, trajectory, soi)| {
+            Some((entity, trajectory.position(ship.start)?, soi))
+        }),
+        ship.position,
+    );
 
     let mut entity = commands.spawn_empty();
     entity.insert((
@@ -472,8 +482,9 @@ fn spawn_ship(
             end: Epoch::from_tai_duration(Duration::MAX),
             threshold: 0.5,
             max_points: 10_000,
-            reference: None,
         },
+        TrajectoryReferenceTranslated::new(entity.id(), parent, ship.start),
+        FlightTarget(None),
         PlotPoints::default(),
     ));
 

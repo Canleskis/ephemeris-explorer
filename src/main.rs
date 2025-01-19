@@ -12,6 +12,7 @@ mod selection;
 mod starlight;
 mod time;
 mod ui;
+mod compound_trajectory;
 
 use crate::{
     analysis::OrbitalAnalysisPlugin,

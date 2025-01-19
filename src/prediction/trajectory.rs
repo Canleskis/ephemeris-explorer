@@ -9,6 +9,7 @@ pub trait TrajectoryData {
 
     fn end(&self) -> Epoch;
 
+    #[inline]
     fn contains(&self, time: Epoch) -> bool {
         time >= self.start() && time <= self.end()
     }
@@ -16,6 +17,7 @@ pub trait TrajectoryData {
     /// Returns the number of interpolants in the trajectory.
     fn len(&self) -> usize;
 
+    #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -23,19 +25,42 @@ pub trait TrajectoryData {
     fn position(&self, at: Epoch) -> Option<DVec3>;
 
     fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>>;
+}
 
-    fn clear(&mut self);
+impl<T: TrajectoryData> TrajectoryData for &T {
+    #[inline]
+    fn start(&self) -> Epoch {
+        (**self).start()
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        (**self).end()
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        (**self).len()
+    }
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<DVec3> {
+        (**self).position(at)
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
+        (**self).state_vector(at)
+    }
 }
 
 pub trait TrajectoryInner: TrajectoryData + DeepSizeOf + Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
-
-    fn clone_box(&self) -> Box<dyn TrajectoryInner>;
 }
 
-impl<T: TrajectoryData + DeepSizeOf + Clone + Send + Sync + 'static> TrajectoryInner for T {
+impl<T: TrajectoryData + DeepSizeOf + Send + Sync + 'static> TrajectoryInner for T {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -43,34 +68,14 @@ impl<T: TrajectoryData + DeepSizeOf + Clone + Send + Sync + 'static> TrajectoryI
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
-
-    fn clone_box(&self) -> Box<dyn TrajectoryInner> {
-        Box::new(self.clone())
-    }
 }
 
 #[derive(Component)]
 pub struct Trajectory(Box<dyn TrajectoryInner>);
 
-impl Clone for Trajectory {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self(self.0.clone_box())
-    }
-}
-
 impl Trajectory {
     pub fn new<T: TrajectoryInner + 'static>(trajectory: T) -> Self {
         Self(Box::new(trajectory))
-    }
-
-    pub fn relative_state_vector(&self, at: Epoch, to: &Self) -> Option<StateVector<DVec3>> {
-        Some(self.state_vector(at)? - to.state_vector(at)?)
-    }
-
-    #[expect(unused)]
-    pub fn relative_position(&self, at: Epoch, to: &Self) -> Option<DVec3> {
-        Some(self.position(at)? - to.position(at)?)
     }
 
     pub fn try_downcast_ref<T: TrajectoryInner + 'static>(&self) -> Option<&T> {
@@ -126,9 +131,147 @@ impl TrajectoryData for Trajectory {
     fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
         self.0.state_vector(at)
     }
+}
 
-    fn clear(&mut self) {
-        self.0.clear()
+#[derive(Clone, Copy)]
+pub struct RelativeTrajectory<T1, T2 = T1> {
+    pub trajectory: T1,
+    pub reference: Option<T2>,
+}
+
+impl<T1, T2> RelativeTrajectory<T1, T2> {
+    pub fn new(trajectory: T1, reference: Option<T2>) -> Self {
+        Self {
+            trajectory,
+            reference,
+        }
+    }
+}
+
+impl<T1: TrajectoryData, T2: TrajectoryData> RelativeTrajectory<T1, T2> {
+    pub fn closest_separation(&self, precision: f64, max_iterations: usize) -> Option<Epoch> {
+        let trajectory = &self.trajectory;
+        let reference = self.reference.as_ref()?;
+
+        let mut left = trajectory.start().max(reference.start());
+        let mut right = trajectory.end().min(reference.end());
+
+        if right <= left {
+            return None;
+        }
+
+        let distance = |at| {
+            trajectory
+                .position(at)
+                .unwrap()
+                .distance(reference.position(at).unwrap())
+        };
+
+        let mut i = 0;
+        loop {
+            i += 1;
+            let total_secs = right - left;
+            let mid1 = left + total_secs / 3;
+            let mid2 = right - total_secs / 3;
+
+            match distance(mid1) - distance(mid2) {
+                d if d.abs() < precision || i > max_iterations => {
+                    return Some(mid1 + (mid2 - mid1) / 2);
+                }
+                d if d.is_sign_positive() => left = mid1,
+                _ => right = mid2,
+            }
+        }
+    }
+}
+
+impl<T1: TrajectoryData, T2: TrajectoryData> TrajectoryData for RelativeTrajectory<T1, T2> {
+    #[inline]
+    fn start(&self) -> Epoch {
+        self.trajectory.start().max(
+            self.reference
+                .as_ref()
+                .map_or(Epoch::from_tai_duration(Duration::MIN), T2::start),
+        )
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        self.trajectory.end().min(
+            self.reference
+                .as_ref()
+                .map_or(Epoch::from_tai_duration(Duration::MAX), T2::end),
+        )
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.trajectory
+            .len()
+            .min(self.reference.as_ref().map_or(usize::MAX, T2::len))
+    }
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<DVec3> {
+        let reference_pos = self
+            .reference
+            .as_ref()
+            .map_or(Some(Default::default()), |t| t.position(at));
+        Some(self.trajectory.position(at)? - reference_pos?)
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
+        let reference_sv = self
+            .reference
+            .as_ref()
+            .map_or(Some(Default::default()), |t| t.state_vector(at));
+        Some(self.trajectory.state_vector(at)? - reference_sv?)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct RelativeTrajectoryTranslated<T1, T2 = T1> {
+    pub trajectory: RelativeTrajectory<T1, T2>,
+    pub translation: DVec3,
+}
+
+impl<T1, T2> RelativeTrajectoryTranslated<T1, T2> {
+    #[expect(unused)]
+    pub fn new(trajectory: RelativeTrajectory<T1, T2>, translation: DVec3) -> Self {
+        Self {
+            trajectory,
+            translation,
+        }
+    }
+}
+
+impl<T1: TrajectoryData, T2: TrajectoryData> TrajectoryData
+    for RelativeTrajectoryTranslated<T1, T2>
+{
+    #[inline]
+    fn start(&self) -> Epoch {
+        self.trajectory.start()
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        self.trajectory.end()
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.trajectory.len()
+    }
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<DVec3> {
+        Some(self.trajectory.position(at)? + self.translation)
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
+        Some(self.trajectory.state_vector(at)? + StateVector::from_position(self.translation))
     }
 }
 
@@ -343,10 +486,6 @@ impl TrajectoryData for FixedSegments {
                 // As such, dx/dt = dx/dτ * dτ/dt = dx/dτ / granule.
                 StateVector::new(position, velocity / self.granule.to_seconds())
             })
-    }
-
-    fn clear(&mut self) {
-        self.segments.clear();
     }
 }
 
@@ -840,12 +979,6 @@ impl TrajectoryData for DiscreteStates {
                 })
             }
         }
-    }
-
-    fn clear(&mut self) {
-        let &(start, sv) = self.0.first().unwrap();
-        self.0.clear();
-        self.0.push((start, sv));
     }
 }
 

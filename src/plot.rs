@@ -1,6 +1,5 @@
-use core::f32;
-
 use crate::{
+    compound_trajectory::{CompoundTrajectoryData, TrajectoryReferenceTranslated},
     flight_plan::FlightPlan,
     floating_origin::{BigSpace, ReferenceFrame},
     prediction::{DiscreteStatesBuilder, PredictionCtx, StateVector, Trajectory, TrajectoryData},
@@ -12,11 +11,6 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use hifitime::Epoch;
 
-#[derive(Resource, Default)]
-pub struct TrajectoryPlotConfig {
-    pub current_time: Epoch,
-}
-
 #[derive(Component, Default)]
 pub struct TrajectoryPlot {
     pub enabled: bool,
@@ -25,9 +19,9 @@ pub struct TrajectoryPlot {
     pub end: Epoch,
     pub threshold: f32,
     pub max_points: usize,
-    pub reference: Option<Entity>,
 }
 
+/// Global space position of the points of a trajectory.
 #[derive(Default, Debug, Component, Deref, DerefMut)]
 pub struct PlotPoints(pub Vec<(Epoch, Vec3)>);
 
@@ -125,16 +119,15 @@ pub struct TrajectoryPlotPlugin;
 
 impl Plugin for TrajectoryPlotPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TrajectoryPlotConfig>()
-            .add_event::<TrajectoryHitPoint>()
+        app.add_event::<TrajectoryHitPoint>()
             .add_systems(Startup, setup_gizmos)
             .add_systems(
                 PostUpdate,
                 (
-                    compute_plot_points,
+                    compute_plot_points::<TrajectoryReferenceTranslated>,
                     (
                         plot_trajectories,
-                        plot_manoeuvres,
+                        plot_burns,
                         trajectory_picking
                             .run_if(not(crate::ui::is_using_pointer
                                 .or_else(crate::camera::is_using_pointer))),
@@ -173,23 +166,25 @@ pub fn to_global_sv(sv: StateVector<DVec3>, root: &ReferenceFrame) -> StateVecto
     }
 }
 
-fn compute_plot_points(
-    config: Res<TrajectoryPlotConfig>,
-    query: Query<(Entity, &Trajectory, &TrajectoryPlot)>,
-    mut query_points: Query<&mut PlotPoints>,
+pub fn compute_plot_points<C>(
+    query_trajectory: Query<C::QueryData<'_>>,
+    mut query: Query<(&mut PlotPoints, &C, &TrajectoryPlot)>,
     root: Query<&ReferenceFrame, With<BigSpace>>,
     camera: Query<(&GlobalTransform, &Projection)>,
-) {
+) where
+    C: CompoundTrajectoryData,
+{
     let Ok((camera_transform, proj)) = camera.get_single() else {
         return;
     };
     let root = root.single();
 
-    for (entity, trajectory, plot) in query.iter() {
-        let Ok(mut points) = query_points.get_mut(entity) else {
+    for (mut points, data, plot) in query.iter_mut() {
+        points.clear();
+
+        let Some(trajectory) = data.fetch(&query_trajectory) else {
             continue;
         };
-        points.clear();
 
         if !plot.enabled || trajectory.is_empty() || plot.start >= plot.end {
             continue;
@@ -203,32 +198,13 @@ fn compute_plot_points(
             _ => unreachable!(),
         } as f64;
 
-        let (eval, min, max): (&dyn Fn(_) -> _, _, _) =
-            if let Some((_, ref_trajectory, ..)) = plot.reference.and_then(|r| query.get(r).ok()) {
-                let Some(ref_current_pos) = ref_trajectory.position(config.current_time) else {
-                    continue;
-                };
-                (
-                    &move |at| {
-                        let relative_sv = trajectory
-                            .relative_state_vector(at, ref_trajectory)
-                            .unwrap()
-                            + StateVector::from_position(ref_current_pos);
-                        to_global_sv(relative_sv, root)
-                    },
-                    trajectory.start().max(ref_trajectory.start()),
-                    trajectory.end().min(ref_trajectory.end()),
-                )
-            } else {
-                (
-                    &|at| to_global_sv(trajectory.state_vector(at).unwrap(), root),
-                    trajectory.start(),
-                    trajectory.end(),
-                )
-            };
+        let start = trajectory.start();
+        let end = trajectory.end();
 
-        let min = plot.start.clamp(min, max);
-        let max = plot.end.clamp(min, max);
+        let min = plot.start.clamp(start, end);
+        let max = plot.end.clamp(start, end);
+
+        let eval = |at| to_global_sv(trajectory.state_vector(at).unwrap(), root);
 
         *points = PlotPoints::new(eval, min, max, camera_transform, threshold, plot.max_points)
     }
@@ -338,7 +314,7 @@ fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &TrajectoryP
     }
 }
 
-fn plot_manoeuvres(
+fn plot_burns(
     mut gizmos: Gizmos,
     query: Query<(&Trajectory, &TrajectoryPlot, &PlotPoints, &FlightPlan)>,
     root: Query<&ReferenceFrame, With<BigSpace>>,

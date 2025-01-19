@@ -1,6 +1,6 @@
 use crate::{
     floating_origin::{BigSpace, GridCell, ReferenceFrame},
-    plot::TrajectoryPlotConfig,
+    compound_trajectory::TrajectoryReferenceTranslated,
     prediction::{Trajectory, TrajectoryData},
     rotation::Rotating,
     MainState,
@@ -61,7 +61,7 @@ impl Plugin for SimulationTimePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             First,
-            (sync_bounds, flow_time, sync_plot_config)
+            (sync_bounds, flow_time, sync_translation_epoch)
                 .chain()
                 .after(bevy::time::TimeSystem)
                 .run_if(in_state(MainState::Running)),
@@ -91,8 +91,13 @@ fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {
         (sim_time.current - previous).total_nanoseconds() as f64 / delta.total_nanoseconds() as f64;
 }
 
-fn sync_plot_config(mut config: ResMut<TrajectoryPlotConfig>, time: Res<SimulationTime>) {
-    config.current_time = time.current();
+fn sync_translation_epoch(
+    time: Res<SimulationTime>,
+    mut query: Query<&mut TrajectoryReferenceTranslated>,
+) {
+    for mut relative in query.iter_mut() {
+        relative.translation_epoch = time.current();
+    }
 }
 
 fn sync_position_to_time(

@@ -181,7 +181,7 @@ fn compute_flight_plan(
             let iterations = (flight_plan.max_iterations != previous.max_iterations).then_some(min);
             let added = first_missing(&flight_plan.burns, &previous.burns);
             let removed = first_missing(&previous.burns, &flight_plan.burns);
-            let changes = flight_plan
+            let burns = flight_plan
                 .burns
                 .iter()
                 .zip(previous.burns.iter())
@@ -213,7 +213,7 @@ fn compute_flight_plan(
                 })
                 .min();
 
-            [end, iterations, added, removed, changes]
+            [end, iterations, added, removed, burns]
                 .into_iter()
                 .flatten()
                 .min()
@@ -245,7 +245,7 @@ fn compute_flight_plan(
     builder.set_initial_state(restart, restart_sv);
     builder.set_max_iterations(flight_plan.max_iterations);
     for burn in &flight_plan.burns {
-        if !burn.enabled || burn.overlaps {
+        if !burn.enabled || burn.overlaps || burn.start < min {
             continue;
         }
         builder.insert_manoeuvre(ConstantAcceleration::new(

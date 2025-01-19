@@ -1,8 +1,9 @@
 use crate::{
+    compound_trajectory::{CompoundTrajectoryData, TrajectoryReferenceTranslated},
     flight_plan::{Burn, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
-    plot::{trajectory_picking, PlotPoints, TrajectoryHitPoint, TrajectoryPlot, PICK_THRESHOLD},
-    prediction::{Trajectory, TrajectoryData},
+    plot::{PlotPoints, TrajectoryHitPoint, TrajectoryPlot, PICK_THRESHOLD},
+    prediction::{RelativeTrajectory, Trajectory, TrajectoryData},
     selection::Selected,
     time::SimulationTime,
     ui::nformat,
@@ -28,9 +29,11 @@ impl Plugin for WorldUiPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    draw_intersections
+                    show_separation
+                        .after(crate::plot::compute_plot_points::<TrajectoryReferenceTranslated>),
+                    show_intersections
                         .before(bevy_egui::EguiSet::ProcessOutput)
-                        .after(trajectory_picking),
+                        .after(crate::plot::trajectory_picking),
                     (update_labels_position, hide_overlapped_labels).chain(),
                     update_labels_color,
                 )
@@ -213,14 +216,20 @@ fn update_labels_color(
 }
 
 #[expect(clippy::too_many_arguments)]
-fn draw_intersections(
+fn show_intersections(
     mut contexts: EguiContexts,
     mut gizmos: Gizmos,
     mut commands: Commands,
     input: Res<ButtonInput<MouseButton>>,
     mut sim_time: ResMut<SimulationTime>,
     mut events: EventReader<TrajectoryHitPoint>,
-    mut query_points: Query<(&Name, &PlotPoints, &TrajectoryPlot, Option<&mut FlightPlan>)>,
+    mut query_points: Query<(
+        &Name,
+        &PlotPoints,
+        &TrajectoryReferenceTranslated,
+        &TrajectoryPlot,
+        Option<&mut FlightPlan>,
+    )>,
     query_trajectory: Query<&Trajectory>,
     query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
     mut persisted: Local<Vec<TrajectoryHitPoint>>,
@@ -264,16 +273,14 @@ fn draw_intersections(
         let is_persisted = i == 1;
         // All hits are on the same entity.
         let entity = hits[0].entity;
-        let (name, points, plot, mut flight_plan) = query_points.get_mut(entity).unwrap();
-        let trajectory = query_trajectory.get(entity).unwrap();
-        let ref_trajectory = plot.reference.and_then(|r| query_trajectory.get(r).ok());
+        let Ok((name, points, data, plot, mut flight_plan)) = query_points.get_mut(entity) else {
+            continue;
+        };
+        let relative = data.relative.fetch(&query_trajectory);
         let window_data = hits
             .iter()
             .filter_map(|hit| {
-                let real_sv = match ref_trajectory {
-                    Some(to) => trajectory.relative_state_vector(hit.time, to),
-                    None => trajectory.state_vector(hit.time),
-                }?;
+                let real_sv = relative?.state_vector(hit.time)?;
                 let position = points.evaluate(hit.time)?;
                 let vp_position = camera.world_to_viewport(camera_transform, position)?;
                 Some((vp_position, position, real_sv, hit.time))
@@ -298,6 +305,7 @@ fn draw_intersections(
             .fade_in(false)
             .fade_out(false)
             .title_bar(false)
+            .constrain(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -315,6 +323,7 @@ fn draw_intersections(
                     });
                 });
                 ui.separator();
+
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, true])
                     .show_rows(
@@ -352,7 +361,9 @@ fn draw_intersections(
                                                             {
                                                                 flight_plan.burns.push(Burn::new(
                                                                     time,
-                                                                    plot.reference.unwrap_or(root),
+                                                                    data.relative
+                                                                        .reference
+                                                                        .unwrap_or(root),
                                                                 ));
                                                                 commands.trigger_targets(
                                                                     FlightPlanChanged,
@@ -367,7 +378,7 @@ fn draw_intersections(
                                     .map_or(false, |r| r.response.contains_pointer());
 
                                 let direction = camera_transform.translation() - *position;
-                                let size = direction.length() * fov * PICK_THRESHOLD;
+                                let size = direction.length() * PICK_THRESHOLD * fov;
                                 gizmos.circle(
                                     *position,
                                     Dir3::new(direction).unwrap(),
@@ -403,4 +414,82 @@ fn close_button(ui: &mut egui::Ui) -> egui::Response {
     ui.painter() // paints /
         .line_segment([rect.right_top(), rect.left_bottom()], stroke);
     response
+}
+
+#[derive(Clone, Copy, Component, Deref, DerefMut)]
+pub struct FlightTarget(pub Option<Entity>);
+
+fn show_separation(
+    mut contexts: EguiContexts,
+    mut gizmos: Gizmos,
+    query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
+    query_data: Query<(
+        &Trajectory,
+        &PlotPoints,
+        &TrajectoryReferenceTranslated,
+        &Name,
+        Option<&FlightTarget>,
+    )>,
+) {
+    let Some(ctx) = contexts.try_ctx_mut() else {
+        return;
+    };
+
+    let (camera_transform, camera, proj) = query_camera.single();
+    let fov = match proj {
+        Projection::Perspective(p) => p.fov,
+        _ => return,
+    };
+
+    let color = LinearRgba::gray(0.4);
+
+    for (trajectory, points, data, name, target) in query_data.iter() {
+        (|| {
+            let target = (**target?)?;
+            let (target_trajectory, target_points, target_data, ..) =
+                query_data.get(target).ok()?;
+            let relative = RelativeTrajectory::new(trajectory, Some(target_trajectory));
+            let at = relative.closest_separation(1e-3, 100)?;
+
+            let position = points.evaluate(at)?;
+            let direction = camera_transform.translation() - position;
+            let size = direction.length() * 4e-3 * fov;
+            gizmos.circle(position, direction.try_into().unwrap(), size, color);
+
+            let target_position = target_points.evaluate(at)?;
+            let direction = camera_transform.translation() - target_position;
+            let size = direction.length() * 4e-3 * fov;
+            gizmos.circle(target_position, direction.try_into().unwrap(), size, color);
+
+            let separation_line = data.relative.reference == target_data.relative.reference;
+            if separation_line {
+                gizmos.line(position, target_position, color);
+            }
+
+            let window_position = match separation_line {
+                true => (position + target_position) / 2.0,
+                false => position,
+            };
+            let window_position = camera.world_to_viewport(camera_transform, window_position)?
+                + Vec2::new(10.0, -15.0);
+
+            let distance = relative.position(at)?.length();
+
+            egui::Window::new(name.as_str())
+                .id(egui::Id::new(name.to_string() + "#separation"))
+                .fixed_pos(window_position.to_array())
+                .fixed_size([200.0, 200.0])
+                .collapsible(false)
+                .resizable(false)
+                .fade_in(false)
+                .fade_out(false)
+                .title_bar(false)
+                .constrain(false)
+                .show(ctx, |ui| {
+                    ui.label(nformat!("Separation: {:.2} km", distance));
+                });
+
+            Some(())
+        })();
+    }
 }
