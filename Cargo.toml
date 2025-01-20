@@ -1,7 +1,10 @@
 [package]
 edition = "2021"
-name = "ephemeris-explorer"
-version = "0.1.0"
+name = "ephemeris_explorer"
+version = "0.0.1"
+
+[build-dependencies]
+embed-resource = "1"
 
 [dependencies]
 bevy = { version = "0.14.2", features = ["jpeg"] }
@@ -34,3 +37,10 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.dist]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

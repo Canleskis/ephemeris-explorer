@@ -1,0 +1,166 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version - in the form of v1.2.3'
+        required: true
+        type: string
+
+env:
+  GAME_EXECUTABLE_NAME: ephemeris_explorer
+  GAME_OSX_APP_NAME: EphemerisExplorer
+
+permissions:
+  contents: write
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get tag
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+    outputs:
+      version: ${{ inputs.version || steps.tag.outputs.tag }}
+
+  build-macOS:
+    runs-on: macos-latest
+    needs: get-version
+    env:
+      # macOS 11.0 Big Sur is the first version to support universal binaries
+      MACOSX_DEPLOYMENT_TARGET: 11.0
+      VERSION: ${{needs.get-version.outputs.version}}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Remove build script
+        run: |
+          rm build.rs
+      - name: Install rust toolchain for Apple Silicon
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+      - name: Build release for Apple Silicon
+        run: |
+          SDKROOT=$(xcrun -sdk macosx --show-sdk-path) cargo build --profile dist --target=aarch64-apple-darwin
+      - name: Install rust toolchain for Apple x86
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: x86_64-apple-darwin
+      - name: Build release for x86 Apple
+        run: |
+          SDKROOT=$(xcrun -sdk macosx --show-sdk-path) cargo build --profile dist --target=x86_64-apple-darwin
+      - name: Create Universal Binary
+        run: |
+          lipo -create -output target/dist/${{ env.GAME_EXECUTABLE_NAME }} target/aarch64-apple-darwin/dist/${{ env.GAME_EXECUTABLE_NAME }} target/x86_64-apple-darwin/dist/${{ env.GAME_EXECUTABLE_NAME }}
+      - name: Create release
+        run: |
+          mkdir -p build/macos/src/Game.app/Contents/MacOS/assets
+          cp -r assets/ build/macos/src/Game.app/Contents/MacOS/assets
+          cp -r credits/ build/macos/src/Game.app/Contents/MacOS/credits
+          cp target/dist/${{ env.GAME_EXECUTABLE_NAME }} build/macos/src/Game.app/Contents/MacOS/
+          mv build/macos/src/Game.app build/macos/src/${{ env.GAME_OSX_APP_NAME }}.app
+          ln -s /Applications build/macos/src/
+          hdiutil create -fs HFS+ -volname "${{ env.GAME_OSX_APP_NAME }}" -srcfolder build/macos/src ${{ env.GAME_EXECUTABLE_NAME }}.dmg
+      - name: Upload release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ env.GAME_EXECUTABLE_NAME }}.dmg
+          asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_macOS.dmg
+          release_name: ${{ env.VERSION }}
+          tag: ${{ env.VERSION }}
+          overwrite: true
+
+  build-linux:
+    runs-on: ubuntu-latest
+    needs: get-version
+    env:
+      VERSION: ${{needs.get-version.outputs.version}}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install Dependencies
+        run: sudo apt-get update; sudo apt-get install pkg-config libx11-dev libasound2-dev libudev-dev
+      - name: Build release
+        run: |
+          cargo build --profile dist
+      - name: Prepare release
+        run: |
+          chmod +x target/dist/${{ env.GAME_EXECUTABLE_NAME }}
+          mv target/dist/${{ env.GAME_EXECUTABLE_NAME }} .
+      - name: Bundle release
+        run: |
+          tar -czf ${{ env.GAME_EXECUTABLE_NAME }}_linux.tar.gz ${{ env.GAME_EXECUTABLE_NAME }} assets credits
+      - name: Upload release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ env.GAME_EXECUTABLE_NAME }}_linux.tar.gz
+          asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_linux.tar.gz
+          release_name: ${{ env.VERSION }}
+          tag: ${{ env.VERSION }}
+          overwrite: true
+
+  build-windows:
+    runs-on: windows-latest
+    needs: get-version
+    env:
+      VERSION: ${{needs.get-version.outputs.version}}
+      BUILD_INSTALLER: ${{ false }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install dotnet
+        if: ${{ env.BUILD_INSTALLER }}
+        uses: actions/setup-dotnet@v3
+        with:
+          global-json-file: build/windows/installer/global.json
+      - name: Build release
+        run: |
+          cargo build --profile dist
+      - name: Prepare release
+        run: |
+          mkdir target/dist/assets && cp -r assets target/dist/assets
+          mkdir target/dist/credits && cp -r credits target/dist/credits
+      - name: Zip release
+        uses: vimtor/action-zip@v1.1
+        with:
+          files: target/dist/assets/ target/dist/credits/ target/dist/${{ env.GAME_EXECUTABLE_NAME }}.exe
+          dest: ${{ env.GAME_EXECUTABLE_NAME }}_windows.zip
+      - name: Create Installer
+        if: ${{ env.BUILD_INSTALLER }}
+        run: dotnet build -p:Version=${{ env.VERSION }} -c Release build/windows/installer/Installer.wixproj --output installer
+      - name: Upload release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ env.GAME_EXECUTABLE_NAME }}_windows.zip
+          asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_windows.zip
+          tag: ${{ env.VERSION }}
+          overwrite: true
+      - name: Upload installer
+        if: ${{ env.BUILD_INSTALLER }}
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: installer/en-US/installer.msi
+          asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_windows.msi
+          release_name: ${{ env.VERSION }}
+          tag: ${{ env.VERSION }}
+          overwrite: true
