@@ -1,6 +1,6 @@
 use crate::{
-    floating_origin::{BigSpace, GridCell, ReferenceFrame},
     compound_trajectory::TrajectoryReferenceTranslated,
+    floating_origin::{BigSpace, GridCell, ReferenceFrame},
     prediction::{Trajectory, TrajectoryData},
     rotation::Rotating,
     MainState,

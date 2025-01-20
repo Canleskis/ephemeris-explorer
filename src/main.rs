@@ -1,6 +1,7 @@
 mod analysis;
 mod auto_extend;
 mod camera;
+mod compound_trajectory;
 mod flight_plan;
 mod floating_origin;
 mod hierarchy;
@@ -12,7 +13,6 @@ mod selection;
 mod starlight;
 mod time;
 mod ui;
-mod compound_trajectory;
 
 use crate::{
     analysis::OrbitalAnalysisPlugin,

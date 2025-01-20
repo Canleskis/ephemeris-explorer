@@ -375,7 +375,7 @@ fn show_intersections(
                                                 });
                                         })
                                     })
-                                    .map_or(false, |r| r.response.contains_pointer());
+                                    .is_some_and(|r| r.response.contains_pointer());
 
                                 let direction = camera_transform.translation() - *position;
                                 let size = direction.length() * PICK_THRESHOLD * fov;
