@@ -118,7 +118,6 @@ jobs:
     needs: get-version
     env:
       VERSION: ${{needs.get-version.outputs.version}}
-      BUILD_INSTALLER: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -126,11 +125,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      - name: Install dotnet
-        if: ${{ env.BUILD_INSTALLER }}
-        uses: actions/setup-dotnet@v3
-        with:
-          global-json-file: build/windows/installer/global.json
       - name: Build release
         run: |
           cargo build --profile dist
@@ -143,24 +137,11 @@ jobs:
         with:
           files: target/dist/assets/ target/dist/credits/ target/dist/${{ env.GAME_EXECUTABLE_NAME }}.exe
           dest: ${{ env.GAME_EXECUTABLE_NAME }}_windows.zip
-      - name: Create Installer
-        if: ${{ env.BUILD_INSTALLER }}
-        run: dotnet build -p:Version=${{ env.VERSION }} -c Release build/windows/installer/Installer.wixproj --output installer
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ${{ env.GAME_EXECUTABLE_NAME }}_windows.zip
           asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_windows.zip
-          tag: ${{ env.VERSION }}
-          overwrite: true
-      - name: Upload installer
-        if: ${{ env.BUILD_INSTALLER }}
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: installer/en-US/installer.msi
-          asset_name: ${{ env.GAME_EXECUTABLE_NAME }}_${{ env.VERSION }}_windows.msi
-          release_name: ${{ env.VERSION }}
           tag: ${{ env.VERSION }}
           overwrite: true
