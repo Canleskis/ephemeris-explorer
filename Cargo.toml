@@ -13,6 +13,8 @@ egui_extras = { version = "0.28.1" }
 big_space = "0.7.0"
 bevy_file_dialog = "0.6.0"
 bevy-inspector-egui = "0.26.0"
+image = { version = "0.25", default-features = false }
+winit = { version = "0.30", default-features = false }
 
 particular = { git = "https://github.com/Canleskis/particular.git", features = [
     "glam",

@@ -1,10 +1,19 @@
-# Ephemeris Explorer
-
 <div align="center">
-    <img src="ephemeris-explorer-preview.gif" alt="preview gif">
+    <picture>
+        <source srcset="logo_title_dark.png" media="(prefers-color-scheme: dark)">
+        <img src="logo_title_light.png" alt="title logo" width="500px">
+    </picture>
 </div>
 
-Ephemeris Explorer aims to be a multi-purpose interactive visualisation of gravitationally bound systems, be it stellar systems, planetary systems or satellite systems.
+&nbsp;
+
+<div align="center">
+    <img src="ephemeris-explorer-preview.gif" alt="preview gif" width="100%">
+</div>
+
+&nbsp;
+
+Ephemeris Explorer aims to be a multi-purpose interactive simulation of gravitationally bound systems, be it stellar systems, planetary systems or satellite systems.
 It uses concepts from various research, notably [Numerical Representation of Planetary Ephemerides](https://adsabs.harvard.edu/full/1989CeMec..45..305N) to generate accurate[^1] trajectories of celestial bodies and presents them in an interactive manner using the [Bevy Engine](https://bevyengine.org/) and [egui](https://github.com/emilk/egui).
 
 [^1]: The accuracy of the current implementation is limited by the fact that the acceleration computation does not take into account general relativity and all bodies are considered to be spheres with an homogeneous mass distribution.

@@ -82,9 +82,44 @@ fn main() {
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
         .insert_resource(Msaa::Sample8)
-        .add_systems(Startup, default_solar_system)
+        .add_systems(Startup, (set_window_icon, default_solar_system))
         .add_systems(PreUpdate, enter_full_screen)
         .run();
+}
+
+// Sets the icon on windows and X11
+fn set_window_icon(
+    windows: NonSend<bevy::winit::WinitWindows>,
+    primary_window: Query<Entity, With<bevy::window::PrimaryWindow>>,
+) {
+    let primary_entity = primary_window.single();
+    let Some(primary) = windows.get_window(primary_entity) else {
+        return;
+    };
+    let icon_buf = std::io::Cursor::new(include_bytes!(
+        "../build/macos/AppIcon.iconset/icon_256x256.png"
+    ));
+    if let Ok(image) = image::load(icon_buf, image::ImageFormat::Png) {
+        let image = image.into_rgba8();
+        let (width, height) = image.dimensions();
+        let rgba = image.into_raw();
+        let icon = winit::window::Icon::from_rgba(rgba, width, height).unwrap();
+        primary.set_window_icon(Some(icon));
+    };
+}
+
+fn enter_full_screen(
+    kb: Res<ButtonInput<KeyCode>>,
+    mut query_window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
+        let mode = &mut query_window.single_mut().mode;
+        bevy::log::info!("Toggling window mode");
+        match *mode {
+            WindowMode::Windowed => *mode = WindowMode::BorderlessFullscreen,
+            _ => *mode = WindowMode::Windowed,
+        }
+    }
 }
 
 const DEFAULT_SOLAR_SYSTEM_PATH: &str = "systems/full_solar_system_2433282.500372499";
@@ -102,20 +137,6 @@ fn default_solar_system(
         }
         Err(err) => {
             panic!("Failed to load default solar system: {}", err);
-        }
-    }
-}
-
-fn enter_full_screen(
-    kb: Res<ButtonInput<KeyCode>>,
-    mut query_window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
-) {
-    if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
-        let mode = &mut query_window.single_mut().mode;
-        bevy::log::info!("Toggling window mode");
-        match *mode {
-            WindowMode::Windowed => *mode = WindowMode::BorderlessFullscreen,
-            _ => *mode = WindowMode::Windowed,
         }
     }
 }
