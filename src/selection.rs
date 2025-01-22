@@ -1,5 +1,5 @@
 use bevy::input::mouse::MouseMotion;
-use bevy::math::Dir3;
+use bevy::picking::backend::ray::RayMap;
 use bevy::prelude::*;
 
 #[derive(Component, Default)]
@@ -34,10 +34,10 @@ impl Plugin for SelectionPlugin {
 
 fn entity_picker(
     mut click_entity_events: EventWriter<ClickEvent>,
+    ray_map: Res<RayMap>,
     mouse_input: Res<ButtonInput<MouseButton>>,
     mut mouse_move: EventReader<MouseMotion>,
-    query_window: Query<&Window>,
-    query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
+    query_camera: Query<&Projection, With<Camera>>,
     query_can_select: Query<(Entity, &GlobalTransform, &Clickable)>,
 ) {
     if !mouse_input.just_pressed(MouseButton::Left) || !mouse_move.is_empty() {
@@ -45,10 +45,7 @@ fn entity_picker(
         return;
     }
 
-    let Ok(window) = query_window.get_single() else {
-        return;
-    };
-    let Ok((camera_transform, camera, proj)) = query_camera.get_single() else {
+    let Ok(proj) = query_camera.get_single() else {
         return;
     };
     let fov = match proj {
@@ -56,16 +53,10 @@ fn entity_picker(
         _ => return,
     };
 
-    let ray = window.cursor_position().and_then(|position| {
-        Some(bevy::math::bounding::RayCast3d::from_ray(
-            camera.viewport_to_world(camera_transform, position)?,
-            f32::MAX,
-        ))
-    });
-
-    let Some(ray) = ray else {
+    let Some((_, ray)) = ray_map.iter().next() else {
         return;
     };
+    let ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
 
     let clicked_entity = query_can_select
         .iter()
@@ -102,11 +93,13 @@ fn _show_pickable_zone(
     };
 
     for (transform, can_select) in &query_can_select {
-        let distance = transform.translation() - camera_transform.translation();
-        let radius = can_select.radius + distance.length_squared() / 100.0;
+        let direction = transform.translation() - camera_transform.translation();
+        let radius = can_select.radius + direction.length_squared() / 100.0;
         gizmos.circle(
-            transform.translation(),
-            Dir3::new_unchecked(distance.normalize()),
+            transform
+                .compute_transform()
+                .looking_to(direction, Vec3::Y)
+                .to_isometry(),
             radius,
             Color::WHITE,
         );

@@ -71,7 +71,7 @@ fn sphere_of_influence_to_hierarchy(
             if parent.is_some_and(|parent| **parent == new_parent) {
                 continue;
             }
-            commands.add(hierarchy::AddChild {
+            commands.queue(hierarchy::AddChild {
                 parent: new_parent,
                 child: entity,
             });

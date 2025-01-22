@@ -7,12 +7,11 @@ version = "0.0.1"
 embed-resource = "1"
 
 [dependencies]
-bevy = { version = "0.14.2", features = ["jpeg"] }
-bevy_egui = { version = "0.29.0", features = ["immutable_ctx"] }
-egui_extras = { version = "0.28.1" }
-big_space = "0.7.0"
-bevy_file_dialog = "0.6.0"
-bevy-inspector-egui = "0.26.0"
+bevy = { version = "0.15.1", features = ["jpeg", "bevy_remote"] }
+bevy_egui = { version = "0.32.0", features = ["immutable_ctx"] }
+egui_extras = { version = "0.30.0" }
+big_space = { version = "0.9.1", features = ["camera"] }
+bevy_file_dialog = { git = "https://github.com/richardhozak/bevy_file_dialog.git" }
 image = { version = "0.25", default-features = false }
 winit = { version = "0.30", default-features = false }
 
@@ -21,17 +20,17 @@ particular = { git = "https://github.com/Canleskis/particular.git", features = [
 ] }
 crossbeam-channel = "0.5"
 hifitime = "4.0.2"
-poly_it = { version = "0.2.3", features = ["smallvec", "serde"] }
+poly_it = { version = "0.2.4", features = ["smallvec", "serde"] }
 smallvec = { version = "1.13.2", features = ["serde"] }
 thousands = "0.2.0"
-uuid = { version = "1.0", features = ["v4"] }
+uuid = { version = "1.1", features = ["v4"] }
 deepsize = "0.2.0"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 indexmap = { version = "2", features = ["serde"] }
 toml = "0.8"
-thiserror = "1.0.63"
+thiserror = "2"
 rand = "0.8"
 
 [profile.dev]

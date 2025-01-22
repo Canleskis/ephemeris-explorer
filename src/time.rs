@@ -1,6 +1,6 @@
 use crate::{
     compound_trajectory::TrajectoryReferenceTranslated,
-    floating_origin::{BigSpace, GridCell, ReferenceFrame},
+    floating_origin::{BigSpace, Grid, GridCell},
     prediction::{Trajectory, TrajectoryData},
     rotation::Rotating,
     MainState,
@@ -103,7 +103,7 @@ fn sync_translation_epoch(
 fn sync_position_to_time(
     sim_time: Res<SimulationTime>,
     mut query: Query<(&mut Transform, &mut GridCell, &Trajectory)>,
-    root: Query<&ReferenceFrame, With<BigSpace>>,
+    root: Query<&Grid, With<BigSpace>>,
 ) {
     if sim_time.start() >= sim_time.end() {
         return;

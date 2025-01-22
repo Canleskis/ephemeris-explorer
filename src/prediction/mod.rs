@@ -180,7 +180,7 @@ where
 {
     fn build(&self, app: &mut App) {
         app.add_event::<ExtendPredictionEvent<B>>()
-            .observe(dispatch_predictions::<B>)
+            .add_observer(dispatch_predictions::<B>)
             .add_systems(PreUpdate, process_prediction_data::<B>);
 
         let ctx = B::Context::from_world(app.world());

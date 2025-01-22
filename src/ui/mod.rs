@@ -58,13 +58,15 @@ fn setup_egui(mut contexts: EguiContexts) {
                     "Hack".to_owned(),
                     egui::FontData::from_static(include_bytes!(
                         "../../assets/fonts/Hack-Regular.ttf"
-                    )),
+                    ))
+                    .into(),
                 ),
                 (
                     "Montserrat".to_owned(),
                     egui::FontData::from_static(include_bytes!(
                         "../../assets/fonts/Montserrat-Regular.ttf"
-                    )),
+                    ))
+                    .into(),
                 ),
                 (
                     "NotoEmoji-Regular".to_owned(),
@@ -74,7 +76,8 @@ fn setup_egui(mut contexts: EguiContexts) {
                     .tweak(egui::FontTweak {
                         scale: 0.81, // make it smaller
                         ..Default::default()
-                    }),
+                    })
+                    .into(),
                 ),
                 (
                     "emoji-icon-font".to_owned(),
@@ -87,7 +90,8 @@ fn setup_egui(mut contexts: EguiContexts) {
                         y_offset_factor: 0.11, // move glyphs down to better align with common fonts
                         baseline_offset_factor: -0.11, // ...now the entire row is a bit down so shift it back
                         ..Default::default()
-                    }),
+                    })
+                    .into(),
                 ),
             ]);
 

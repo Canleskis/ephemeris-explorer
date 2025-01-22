@@ -163,7 +163,7 @@ pub fn time_controls(
                 }
             }
 
-            egui::ComboBox::from_id_source("time_scale")
+            egui::ComboBox::from_id_salt("time_scale")
                 .selected_text(scale.to_string())
                 .show_ui(ui, |ui| {
                     for value in TimeScale::values() {

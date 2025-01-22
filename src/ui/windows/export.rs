@@ -57,7 +57,7 @@ impl ExportWindow {
             Or<(With<SystemRoot>, Without<FlightPlan>)>,
         >,
         root: Query<Entity, With<SystemRoot>>,
-        mut bodies: Local<Option<bevy::utils::EntityHashSet<Entity>>>,
+        mut bodies: Local<Option<bevy::ecs::entity::EntityHashSet>>,
         mut cached_exports: Local<Option<[ExportType; 1]>>,
         mut current: Local<usize>,
     ) {
@@ -83,7 +83,7 @@ impl ExportWindow {
                         bodies: bodies.iter().copied().collect(),
                     });
                 }
-                egui::ComboBox::from_id_source("export type").show_index(
+                egui::ComboBox::from_id_salt("export type").show_index(
                     ui,
                     &mut current,
                     export.len(),
@@ -120,7 +120,11 @@ impl ExportWindow {
                             let has_children = children.is_some_and(|c| !c.is_empty());
                             let has_trajectory = query_trajectory.contains(entity);
                             if has_trajectory {
-                                ui.add_visible_ui(has_children, |ui| {
+                                let mut ui_builder = egui::UiBuilder::new();
+                                if !has_children {
+                                    ui_builder = ui_builder.invisible();
+                                }
+                                ui.scope_builder(ui_builder, |ui| {
                                     let selected_count = children
                                         .into_iter()
                                         .flatten()

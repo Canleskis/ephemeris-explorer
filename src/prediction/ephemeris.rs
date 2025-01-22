@@ -376,7 +376,7 @@ pub struct Mu(pub f64);
 
 pub struct DiscreteStatesContext {
     range: std::ops::RangeInclusive<Epoch>,
-    states: bevy::utils::EntityHashMap<Entity, (FixedSegments, Mu)>,
+    states: bevy::ecs::entity::EntityHashMap<(FixedSegments, Mu)>,
 }
 
 impl DiscreteStatesContext {
@@ -416,7 +416,7 @@ impl DiscreteStatesContext {
 
     #[inline]
     fn from_ref_world(world: &World) -> Self {
-        let states: bevy::utils::EntityHashMap<_, _> = Self::iter_world_trajectories(world)
+        let states: bevy::ecs::entity::EntityHashMap<_> = Self::iter_world_trajectories(world)
             .map(|(e, (t, m))| (e, (t.clone(), *m)))
             .collect();
 

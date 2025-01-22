@@ -72,7 +72,7 @@ fn update_parent(world: &mut World, child: Entity, new_parent: Entity) -> Option
 }
 
 fn remove_from_children(world: &mut World, parent: Entity, child: Entity) {
-    let Some(mut parent) = world.get_entity_mut(parent) else {
+    let Ok(mut parent) = world.get_entity_mut(parent) else {
         return;
     };
     let Some(mut children) = parent.get_mut::<Children>() else {

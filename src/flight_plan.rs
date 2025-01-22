@@ -145,7 +145,7 @@ pub struct FlightPlanPlugin;
 
 impl Plugin for FlightPlanPlugin {
     fn build(&self, app: &mut App) {
-        app.observe(compute_flight_plan);
+        app.add_observer(compute_flight_plan);
     }
 }
 
@@ -169,7 +169,7 @@ fn compute_flight_plan(
     };
     let trajectory = trajectory.downcast_ref::<DiscreteStates>();
     let min = trajectory.start();
-    let max = trajectory.end();
+    let max = flight_plan.end;
 
     flight_plan.compute_overlaps();
 
@@ -260,7 +260,7 @@ fn compute_flight_plan(
         commands.trigger(ExtendPredictionEvent::<DiscreteStatesBuilder>::with(
             [entity],
             Duration::EPSILON.max(flight_plan.end - restart),
-            100,
+            usize::MAX,
         ));
     }
 }

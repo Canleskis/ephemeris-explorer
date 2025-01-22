@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod analysis;
 mod auto_extend;
 mod camera;
@@ -34,8 +36,6 @@ use crate::{
 use bevy::prelude::*;
 use bevy::window::WindowMode;
 use bevy_egui::EguiPlugin;
-#[expect(unused)]
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MainState {
@@ -79,9 +79,12 @@ fn main() {
             AutoExtendPlugin::<FixedSegmentsBuilder<Forward>>::default(),
             AutoExtendPlugin::<FixedSegmentsBuilder<Backward>>::default(),
         ))
+        .add_plugins((
+            bevy::remote::RemotePlugin::default(),
+            bevy::remote::http::RemoteHttpPlugin::default(),
+        ))
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
-        .insert_resource(Msaa::Sample8)
         .add_systems(Startup, (set_window_icon, default_solar_system))
         .add_systems(PreUpdate, enter_full_screen)
         .run();
@@ -116,7 +119,9 @@ fn enter_full_screen(
         let mode = &mut query_window.single_mut().mode;
         bevy::log::info!("Toggling window mode");
         match *mode {
-            WindowMode::Windowed => *mode = WindowMode::BorderlessFullscreen,
+            WindowMode::Windowed => {
+                *mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+            }
             _ => *mode = WindowMode::Windowed,
         }
     }

@@ -21,11 +21,9 @@ fn add_loading_screen(mut commands: Commands) {
     let camera = commands
         .spawn((
             StateScoped(MainState::Loading),
-            Camera3dBundle {
-                camera: Camera {
-                    order: isize::MAX,
-                    ..default()
-                },
+            Camera3d::default(),
+            Camera {
+                order: isize::MAX,
                 ..default()
             },
         ))
@@ -34,30 +32,23 @@ fn add_loading_screen(mut commands: Commands) {
     commands
         .spawn((
             StateScoped(MainState::Loading),
-            NodeBundle {
-                style: Style {
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                background_color: BackgroundColor(Color::BLACK),
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+
                 ..default()
             },
+            BackgroundColor(Color::BLACK),
             LoadingScreen,
             TargetCamera(camera),
         ))
         .with_children(|parent| {
             parent.spawn((
-                TextBundle::from_section(
-                    "Loading...",
-                    TextStyle {
-                        font_size: 40.0,
-                        color: Color::WHITE,
-                        ..default()
-                    },
-                ),
+                Text::new("Loading..."),
+                TextFont::from_font_size(32.0),
+                TextColor(Color::WHITE),
                 LoadingText,
             ));
         });
@@ -77,7 +68,7 @@ pub fn text_on_load<A: Asset>(
 
     if let Some(path) = loaded_path {
         for mut text in query.iter_mut() {
-            text.sections[0].value = format!("Loaded {}", path);
+            **text = format!("Loaded {}", path);
         }
     }
 }

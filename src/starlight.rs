@@ -26,23 +26,20 @@ fn setup_lights(mut commands: Commands, query: Query<(Entity, &Star), Added<Star
             .spawn((
                 Name::new(format!("{}'s starlight", entity)),
                 StarLight(entity),
-                DirectionalLightBundle {
-                    directional_light: DirectionalLight {
-                        color: star.color,
-                        illuminance: star.illuminance,
-                        shadows_enabled: true,
-                        ..default()
-                    },
-                    cascade_shadow_config: bevy::pbr::CascadeShadowConfigBuilder {
-                        num_cascades: 4,
-                        minimum_distance: 100.0,
-                        maximum_distance: 1e9,
-                        first_cascade_far_bound: 2000.0,
-                        overlap_proportion: 0.2,
-                    }
-                    .build(),
+                DirectionalLight {
+                    color: star.color,
+                    illuminance: star.illuminance,
+                    shadows_enabled: true,
                     ..default()
                 },
+                bevy::pbr::CascadeShadowConfigBuilder {
+                    num_cascades: 4,
+                    minimum_distance: 100.0,
+                    maximum_distance: 1e9,
+                    first_cascade_far_bound: 2000.0,
+                    overlap_proportion: 0.2,
+                }
+                .build(),
             ))
             .set_parent(entity);
     }

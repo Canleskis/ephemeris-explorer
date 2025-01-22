@@ -76,7 +76,7 @@ impl ShipSpawnerWindow {
 
                 ui.add_space(5.0);
 
-                egui::ComboBox::from_id_source("Reference")
+                egui::ComboBox::from_id_salt("Reference")
                     .wrap_mode(egui::TextWrapMode::Extend)
                     .selected_text(get_name(*reference, query_hierarchy.transmute_lens()))
                     .show_ui(ui, |ui| {

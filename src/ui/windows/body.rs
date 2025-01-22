@@ -257,7 +257,7 @@ impl BodyInfoWindow {
                                     ui.horizontal(|ui| {
                                         if ui.button("Confirm").clicked() {
                                             if followed.is_some_and(|f| f == entity) {
-                                                commands.add(SetFollowed(parent.map(|p| **p)));
+                                                commands.queue(SetFollowed(parent.map(|p| **p)));
                                             }
                                             commands.entity(entity).despawn_recursive();
                                         }
@@ -281,7 +281,7 @@ impl BodyInfoWindow {
                         ui.checkbox(&mut info.auto_plot_reference, "Auto");
                         ui.add_enabled_ui(!info.auto_plot_reference, |ui| {
                             ui.label("Reference:");
-                            egui::ComboBox::from_id_source("Reference")
+                            egui::ComboBox::from_id_salt("Reference")
                                 .wrap_mode(egui::TextWrapMode::Extend)
                                 .selected_text(plot_reference_name)
                                 .show_ui(ui, |ui| {
@@ -466,7 +466,7 @@ impl BodyInfoWindow {
                             .unwrap_or_else(|| "None".to_string());
                         ui.horizontal(|ui| {
                             ui.label("Target:");
-                            egui::ComboBox::from_id_source("Target")
+                            egui::ComboBox::from_id_salt("Target")
                                 .wrap_mode(egui::TextWrapMode::Extend)
                                 .selected_text(target_name)
                                 .show_ui(ui, |ui| {
@@ -716,7 +716,7 @@ impl BodyInfoWindow {
                     ui.label("Frame:");
                     ui.add_space(27.0);
 
-                    egui::ComboBox::from_id_source("Frame")
+                    egui::ComboBox::from_id_salt("Frame")
                         .selected_text(burn.frame.to_string())
                         .show_ui(ui, |ui| {
                             for value in BurnFrame::values() {
@@ -730,7 +730,7 @@ impl BodyInfoWindow {
                         });
 
                     if matches!(burn.frame, BurnFrame::Frenet) {
-                        egui::ComboBox::from_id_source("Reference")
+                        egui::ComboBox::from_id_salt("Reference")
                             .wrap_mode(egui::TextWrapMode::Extend)
                             .selected_text(get_name(
                                 burn.reference,

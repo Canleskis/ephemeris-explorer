@@ -36,7 +36,11 @@ pub fn solar_system_hierarchy(
                         |ui, state, (entity, name, children), _| {
                             let has_children = children.is_some_and(|c| !c.is_empty());
 
-                            ui.add_visible_ui(has_children, |ui| {
+                            let mut ui_builder = egui::UiBuilder::new();
+                            if !has_children {
+                                ui_builder = ui_builder.invisible();
+                            }
+                            ui.scope_builder(ui_builder, |ui| {
                                 state.show_toggle_button(
                                     ui,
                                     egui::collapsing_header::paint_default_icon,
@@ -62,8 +66,12 @@ pub fn solar_system_hierarchy(
                                     ui.toggle_value(&mut plot.enabled, "○");
                                 });
 
+                                let mut ui_builder = egui::UiBuilder::new();
+                                if !has_children {
+                                    ui_builder = ui_builder.invisible();
+                                }
                                 // Children plot toggle
-                                ui.add_visible_ui(has_children, |ui| {
+                                ui.scope_builder(ui_builder, |ui| {
                                     ui.visuals_mut().selection.bg_fill =
                                         egui::Color32::from_gray(80);
 

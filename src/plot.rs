@@ -1,14 +1,14 @@
 use crate::{
     compound_trajectory::{CompoundTrajectoryData, TrajectoryReferenceTranslated},
     flight_plan::FlightPlan,
-    floating_origin::{BigSpace, ReferenceFrame},
+    floating_origin::{BigSpace, Grid},
     prediction::{DiscreteStatesBuilder, PredictionCtx, StateVector, Trajectory, TrajectoryData},
     selection::Clickable,
     MainState,
 };
 
-use bevy::math::DVec3;
 use bevy::prelude::*;
+use bevy::{math::DVec3, picking::backend::ray::RayMap};
 use hifitime::Epoch;
 
 #[derive(Component, Default)]
@@ -128,9 +128,9 @@ impl Plugin for TrajectoryPlotPlugin {
                     (
                         plot_trajectories,
                         plot_burns,
-                        trajectory_picking
-                            .run_if(not(crate::ui::is_using_pointer
-                                .or_else(crate::camera::is_using_pointer))),
+                        trajectory_picking.run_if(not(
+                            crate::ui::is_using_pointer.or(crate::camera::is_using_pointer)
+                        )),
                     ),
                 )
                     .chain()
@@ -146,20 +146,20 @@ fn setup_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
     }
 }
 
-pub fn transform_vector3(v: DVec3, root: &ReferenceFrame) -> Vec3 {
+pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
     root.local_floating_origin()
-        .reference_frame_transform()
+        .grid_transform()
         .transform_vector3(v)
         .as_vec3()
 }
 
-pub fn to_global_pos(pos: DVec3, root: &ReferenceFrame) -> Vec3 {
+pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
     let (cell, translation) = root.translation_to_grid(pos);
     root.global_transform(&cell, &Transform::from_translation(translation))
         .translation()
 }
 
-pub fn to_global_sv(sv: StateVector<DVec3>, root: &ReferenceFrame) -> StateVector<DVec3> {
+pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
     StateVector {
         velocity: transform_vector3(sv.velocity, root).as_dvec3(),
         position: to_global_pos(sv.position, root).as_dvec3(),
@@ -169,7 +169,7 @@ pub fn to_global_sv(sv: StateVector<DVec3>, root: &ReferenceFrame) -> StateVecto
 pub fn compute_plot_points<C>(
     query_trajectory: Query<C::QueryData<'_>>,
     mut query: Query<(&mut PlotPoints, &C, &TrajectoryPlot)>,
-    root: Query<&ReferenceFrame, With<BigSpace>>,
+    root: Query<&Grid, With<BigSpace>>,
     camera: Query<(&GlobalTransform, &Projection)>,
 ) where
     C: CompoundTrajectoryData,
@@ -213,16 +213,13 @@ pub fn compute_plot_points<C>(
 pub const PICK_THRESHOLD: f32 = 6e-3;
 
 pub fn trajectory_picking(
-    query_window: Query<&Window>,
+    ray_map: Res<RayMap>,
     query_clickable: Query<(&GlobalTransform, &Clickable)>,
-    query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
+    query_camera: Query<&Projection, With<Camera>>,
     query_points: Query<(Entity, &PlotPoints)>,
     mut events: EventWriter<TrajectoryHitPoint>,
 ) {
-    let Ok(window) = query_window.get_single() else {
-        return;
-    };
-    let Ok((camera_transform, camera, proj)) = query_camera.get_single() else {
+    let Ok(proj) = query_camera.get_single() else {
         return;
     };
 
@@ -231,16 +228,10 @@ pub fn trajectory_picking(
         _ => return,
     };
 
-    let ray = window.cursor_position().and_then(|position| {
-        Some(bevy::math::bounding::RayCast3d::from_ray(
-            camera.viewport_to_world(camera_transform, position)?,
-            f32::MAX,
-        ))
-    });
-
-    let Some(mut ray) = ray else {
+    let Some((_, ray)) = ray_map.iter().next() else {
         return;
     };
+    let mut ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
 
     ray.max = query_clickable
         .iter()
@@ -317,7 +308,7 @@ fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &TrajectoryP
 fn plot_burns(
     mut gizmos: Gizmos,
     query: Query<(&Trajectory, &TrajectoryPlot, &PlotPoints, &FlightPlan)>,
-    root: Query<&ReferenceFrame, With<BigSpace>>,
+    root: Query<&Grid, With<BigSpace>>,
     camera: Query<&GlobalTransform, With<Camera>>,
     ctx: Res<PredictionCtx<DiscreteStatesBuilder>>,
 ) {

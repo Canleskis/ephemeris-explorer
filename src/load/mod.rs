@@ -6,10 +6,10 @@ pub use ui::*;
 
 use crate::{
     analysis::{under_soi, SphereOfInfluence},
-    camera::{CanFollow, Followed, OrbitCamera},
+    camera::{CameraController, CanFollow, Followed, OrbitCamera},
     compound_trajectory::TrajectoryReferenceTranslated,
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
-    floating_origin::{BigReferenceFrameBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
+    floating_origin::{BigGridBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
     hierarchy,
     plot::{PlotPoints, TrajectoryPlot},
     prediction::{
@@ -68,11 +68,11 @@ impl Plugin for LoadingPlugin {
                 .after(handle_load_events)
                 .run_if(
                     in_state(LoadingStage::Assets)
-                        .and_then(bodies_loaded)
-                        .and_then(eph_settings_loaded)
-                        .and_then(hierarchy_loaded)
-                        .and_then(skybox_loaded)
-                        .and_then(ships_loaded),
+                        .and(bodies_loaded)
+                        .and(eph_settings_loaded)
+                        .and(hierarchy_loaded)
+                        .and(skybox_loaded)
+                        .and(ships_loaded),
                 )
                 .chain(),
         );
@@ -91,7 +91,7 @@ impl Plugin for LoadingPlugin {
             Update,
             ephemerides_bodies_progress.run_if(in_state(EphemeridesLoadingStage::Bodies)),
         );
-        app.observe(spawn_ship)
+        app.add_observer(spawn_ship)
             .add_systems(OnEnter(EphemeridesLoadingStage::Ships), spawn_loaded_ships)
             .add_systems(
                 Update,
@@ -177,28 +177,28 @@ fn finish_assets_loading(world: &mut World) {
 fn bodies_loaded(solar_system: UniqueAsset<SolarSystem>) -> bool {
     matches!(
         solar_system.recursive_dependency_load_state(),
-        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed
+        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed(_)
     )
 }
 
 fn eph_settings_loaded(eph_settings: UniqueAsset<EphemeridesSettings>) -> bool {
     matches!(
         eph_settings.recursive_dependency_load_state(),
-        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed
+        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed(_)
     )
 }
 
 fn hierarchy_loaded(hierarchy: UniqueAsset<HierarchyTree>) -> bool {
     matches!(
         hierarchy.recursive_dependency_load_state(),
-        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed
+        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed(_)
     )
 }
 
 fn skybox_loaded(skybox: Res<SkyboxHandle>, asset_server: Res<AssetServer>) -> bool {
     matches!(
         asset_server.recursive_dependency_load_state(&skybox.handle),
-        RecursiveDependencyLoadState::Failed
+        RecursiveDependencyLoadState::Failed(_)
     ) || skybox.reconfigured
 }
 
@@ -285,7 +285,7 @@ fn spawn_loaded_bodies(
             entity.insert((
                 // No state scope needed as it is always a child of the root.
                 Name::new(name.clone()),
-                BigReferenceFrameBundle {
+                BigGridBundle {
                     transform: Transform::from_translation(body.position.as_vec3()),
                     ..default()
                 },
@@ -298,11 +298,8 @@ fn spawn_loaded_bodies(
                     max_distance: 5e10,
                 },
                 Labelled {
-                    style: TextStyle {
-                        font_size: 15.0,
-                        color: Color::WHITE,
-                        ..default()
-                    },
+                    font: TextFont::from_font_size(12.0),
+                    colour: TextColor(Color::WHITE),
                     offset: Vec2::new(0.0, radius) * 1.1,
                     index: depth + 1,
                 },
@@ -335,13 +332,9 @@ fn spawn_loaded_bodies(
 
             entity.with_children(|parent| {
                 let mut child = parent.spawn((
-                    PbrBundle {
-                        // The mesh is a sphere of `radius`, so we scale based on it.
-                        transform: Transform::from_scale(visual.radii.as_vec3() / radius),
-                        mesh: visual.mesh.clone(),
-                        material: visual.material.clone(),
-                        ..default()
-                    },
+                    Transform::from_scale(visual.radii.as_vec3() / radius),
+                    Mesh3d(visual.mesh.clone()),
+                    MeshMaterial3d(visual.material.clone()),
                     Rotating {
                         right_ascension: visual.right_ascension,
                         declination: visual.declination,
@@ -364,7 +357,7 @@ fn spawn_loaded_bodies(
 
             let child = entity.id();
             commands.entity(root).add_child(child);
-            commands.add(hierarchy::AddChild { parent, child });
+            commands.queue(hierarchy::AddChild { parent, child });
 
             spawn_from_hierarchy(
                 depth + 1,
@@ -408,7 +401,7 @@ fn spawn_ship(
     let root = root.single();
     let ship = &trigger.event().0;
 
-    let radius = 1.0;
+    let radius = 0.01;
 
     let end = ship
         .burns
@@ -431,7 +424,7 @@ fn spawn_ship(
     entity.insert((
         // No state scope needed as it is always a child of the root.
         Name::new(ship.name.clone()),
-        BigReferenceFrameBundle {
+        BigGridBundle {
             transform: Transform::from_translation(ship.position.as_vec3()),
             ..default()
         },
@@ -441,11 +434,8 @@ fn spawn_ship(
             max_distance: 5e10,
         },
         Labelled {
-            style: TextStyle {
-                font_size: 15.0,
-                color: Color::WHITE,
-                ..default()
-            },
+            font: TextFont::from_font_size(12.0),
+            colour: TextColor(Color::WHITE),
             offset: Vec2::new(0.0, radius) * 1.1,
             index: 99,
         },
@@ -529,35 +519,34 @@ fn setup_camera(
     commands
         .spawn((
             // No state scope needed as it is always a child of the root.
-            Camera3dBundle {
-                camera: Camera {
-                    hdr: true,
-                    ..default()
-                },
-                projection: Projection::Perspective(PerspectiveProjection {
-                    fov: 45f32.to_radians(),
-                    near: 0.001,
-                    ..default()
-                }),
-                exposure: bevy::render::camera::Exposure { ev100: 12.0 },
+            Camera3d::default(),
+            Camera {
+                hdr: true,
                 ..default()
             },
-            PerspectiveProjection::default(),
+            PerspectiveProjection {
+                fov: 45f32.to_radians(),
+                near: 0.001,
+                ..default()
+            },
+            bevy::render::camera::Exposure { ev100: 12.0 },
+            bevy::core_pipeline::bloom::Bloom::NATURAL,
+            Msaa::Sample8,
             Skybox {
                 image: skybox.handle.clone(),
                 brightness: 1000.0,
+                rotation: Quat::IDENTITY,
             },
             FloatingOrigin,
             GridCell::default(),
             OrbitCamera::default().with_distance(5e4),
-            big_space::camera::CameraController::default()
+            CameraController::default()
                 .with_speed_bounds([1e-17, 10e35])
                 .with_smoothness(0.0, 0.0)
                 .with_speed(1.0)
                 .with_speed_pitch(0.02)
                 .with_speed_yaw(0.02)
                 .with_speed_roll(0.5),
-            bevy::core_pipeline::bloom::BloomSettings::NATURAL,
             IsDefaultUiCamera,
         ))
         .set_parent(root.single());
@@ -609,7 +598,7 @@ fn ephemerides_bodies_progress(
         .unwrap_or(1.0);
     let progress = (forward_progress + backward_progress) / 2.0;
     for mut text in query.iter_mut() {
-        text.sections[0].value = format!("Computing ephemerides (1/2): {:.0}%", progress * 100.0);
+        **text = format!("Computing ephemerides (1/2): {:.0}%", progress * 100.0);
     }
 }
 
@@ -633,7 +622,7 @@ fn ephemerides_ships_progress(
         .sum::<f32>()
         / query_tracker.iter().len().max(1) as f32;
     for mut text in query.iter_mut() {
-        text.sections[0].value = format!(
+        **text = format!(
             "Computing ephemerides (2/2): {:.0}%",
             total_progress * 100.0
         );

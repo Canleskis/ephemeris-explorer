@@ -75,7 +75,7 @@ fn auto_extend<B>(
     }
     // TODO: Make this configurable or based on the system somehow.
     let min = Duration::from_days(1.0);
-    let duration = (delta.abs() * time.delta_seconds_f64()).max(min);
+    let duration = (delta.abs() * time.delta_secs_f64()).max(min);
 
     for tracker in query_tracker.iter() {
         if tracker.is_some() {

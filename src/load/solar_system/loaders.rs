@@ -3,7 +3,7 @@ use super::{
     SolarSystem,
 };
 
-use bevy::asset::{AssetPath, AsyncReadExt};
+use bevy::asset::AssetPath;
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use hifitime::{Duration, Epoch};
@@ -36,11 +36,11 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
 
     type Error = BodyLoaderError;
 
-    fn load<'a>(
-        &'a self,
-        reader: &'a mut bevy::asset::io::Reader,
-        _: &'a (),
-        ctx: &'a mut bevy::asset::LoadContext,
+    fn load(
+        &self,
+        reader: &mut dyn bevy::asset::io::Reader,
+        _: &(),
+        ctx: &mut bevy::asset::LoadContext,
     ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         #[derive(Deserialize, Clone)]
         #[serde(default)]
@@ -210,11 +210,11 @@ impl bevy::asset::AssetLoader for SolarSystemLoader {
 
     type Error = SolarSystemLoaderError;
 
-    fn load<'a>(
-        &'a self,
-        reader: &'a mut bevy::asset::io::Reader,
-        _: &'a (),
-        ctx: &'a mut bevy::asset::LoadContext,
+    fn load(
+        &self,
+        reader: &mut dyn bevy::asset::io::Reader,
+        _: &(),
+        ctx: &mut bevy::asset::LoadContext,
     ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         #[derive(Deserialize)]
         pub struct BodyJson {
@@ -283,11 +283,11 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
 
     type Error = EphemeridesSettingsLoaderError;
 
-    fn load<'a>(
-        &'a self,
-        reader: &'a mut bevy::asset::io::Reader,
-        _: &'a (),
-        _: &'a mut bevy::asset::LoadContext,
+    fn load(
+        &self,
+        reader: &mut dyn bevy::asset::io::Reader,
+        _: &(),
+        _: &mut bevy::asset::LoadContext,
     ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         #[derive(Deserialize)]
         struct EphemerisSettingsJson {
@@ -352,11 +352,11 @@ impl bevy::asset::AssetLoader for HierarchyTreeLoader {
 
     type Error = HierarchyTreeLoaderError;
 
-    fn load<'a>(
-        &'a self,
-        reader: &'a mut bevy::asset::io::Reader,
-        _: &'a (),
-        _: &'a mut bevy::asset::LoadContext,
+    fn load(
+        &self,
+        reader: &mut dyn bevy::asset::io::Reader,
+        _: &(),
+        _: &mut bevy::asset::LoadContext,
     ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         async move {
             let mut bytes = Vec::new();
@@ -392,11 +392,11 @@ impl bevy::asset::AssetLoader for ShipLoader {
 
     type Error = ShipLoaderError;
 
-    fn load<'a>(
-        &'a self,
-        reader: &'a mut bevy::asset::io::Reader,
-        _: &'a (),
-        _: &'a mut bevy::asset::LoadContext,
+    fn load(
+        &self,
+        reader: &mut dyn bevy::asset::io::Reader,
+        _: &(),
+        _: &mut bevy::asset::LoadContext,
     ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         async move {
             let mut bytes = Vec::new();

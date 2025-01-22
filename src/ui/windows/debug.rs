@@ -43,7 +43,7 @@ impl EphemeridesDebugWindow {
         sim_time: Res<SimulationTime>,
         query_builder: Query<&FixedSegmentsBuilder<Forward>>,
         query: Query<(Entity, &Name, &Trajectory)>,
-        mut errors: Local<Option<bevy::utils::EntityHashMap<Entity, f64>>>,
+        mut errors: Local<Option<bevy::ecs::entity::EntityHashMap<f64>>>,
     ) {
         let Some(ctx) = contexts.try_ctx_mut() else {
             return;
@@ -128,7 +128,7 @@ impl EphemeridesDebugWindow {
                                     .fold(0.0, f64::max),
                             )
                         })
-                        .collect::<bevy::utils::EntityHashMap<_, _>>()
+                        .collect::<bevy::ecs::entity::EntityHashMap<_>>()
                 };
 
                 let available_height = ui.available_height();

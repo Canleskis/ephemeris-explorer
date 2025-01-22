@@ -1,5 +1,5 @@
 use crate::{
-    floating_origin::{BigSpace, GridCell, Precision, ReferenceFrame},
+    floating_origin::{BigSpace, Grid, GridCell, Precision},
     MainState,
 };
 
@@ -9,13 +9,13 @@ use bevy::{
     prelude::*,
 };
 pub use big_space::camera::{
-    camera_controller, nearest_objects_in_frame, CameraController, CameraInput,
+    camera_controller, nearest_objects_in_grid, CameraController, CameraInput,
 };
 
 pub fn is_using_pointer(query: Query<&Window, With<bevy::window::PrimaryWindow>>) -> bool {
-    query
-        .get_single()
-        .is_ok_and(|window| window.cursor.grab_mode == bevy::window::CursorGrabMode::Confined)
+    query.get_single().is_ok_and(|window| {
+        window.cursor_options.grab_mode == bevy::window::CursorGrabMode::Confined
+    })
 }
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -141,10 +141,10 @@ impl Plugin for CameraPlugin {
                     zoom_camera,
                     follow_changed,
                     (
-                        orbit_controls.chain().run_if(in_state(CameraState::Orbit)),
+                        orbit_controls.run_if(in_state(CameraState::Orbit)),
                         (
                             sync_camera_distance,
-                            nearest_objects_in_frame::<Precision>,
+                            nearest_objects_in_grid::<Precision>,
                             camera_controller::<Precision>,
                         )
                             .chain()
@@ -186,7 +186,7 @@ fn follow_changed(mut commands: Commands, followed: Res<Followed>) {
     if !followed.is_changed() {
         return;
     }
-    commands.add(SetFollowed(**followed));
+    commands.queue(SetFollowed(**followed));
 }
 
 fn change_camera_state(world: &mut World) {
@@ -216,18 +216,18 @@ fn change_camera_state(world: &mut World) {
 fn hide_cursor(mut query: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
     let mut primary_window = query.single_mut();
 
-    if primary_window.cursor.visible {
-        primary_window.cursor.visible = false;
-        primary_window.cursor.grab_mode = bevy::window::CursorGrabMode::Confined;
+    if primary_window.cursor_options.visible {
+        primary_window.cursor_options.visible = false;
+        primary_window.cursor_options.grab_mode = bevy::window::CursorGrabMode::Confined;
     }
 }
 
 fn show_cursor(mut query: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
     let mut primary_window = query.single_mut();
 
-    if !primary_window.cursor.visible {
-        primary_window.cursor.visible = true;
-        primary_window.cursor.grab_mode = bevy::window::CursorGrabMode::None;
+    if !primary_window.cursor_options.visible {
+        primary_window.cursor_options.visible = true;
+        primary_window.cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
     }
 }
 
@@ -249,8 +249,8 @@ fn mouse_controls(
 
     if mouse.pressed(MouseButton::Left) || mouse.pressed(MouseButton::Right) {
         if let Some(motion) = mouse_move.read().map(|e| e.delta).reduce(|sum, i| sum + i) {
-            input.pitch -= motion.y as f64 * 0.2 / time.delta_seconds_f64();
-            input.yaw -= motion.x as f64 * 0.2 / time.delta_seconds_f64();
+            input.pitch -= motion.y as f64 * 0.2 / time.delta_secs_f64();
+            input.yaw -= motion.x as f64 * 0.2 / time.delta_secs_f64();
         }
     }
 }
@@ -304,7 +304,7 @@ fn zoom_camera(
 ) {
     for mut projection in camera.iter_mut() {
         if let Projection::Perspective(perspective) = &mut *projection {
-            perspective.fov *= 1.0 + input_2.zoom as f32 * time.delta_seconds();
+            perspective.fov *= 1.0 + input_2.zoom as f32 * time.delta_secs();
             perspective.fov = perspective
                 .fov
                 .clamp(0.001, 2.0 * std::f32::consts::FRAC_PI_3);
@@ -334,7 +334,7 @@ pub fn orbit_controls(
     input_2: Res<AdditionalCameraInput>,
     mut query: Query<(&mut Transform, &mut GridCell)>,
     mut query_camera: Query<(Entity, &CameraController, &mut OrbitCamera)>,
-    root: Query<&ReferenceFrame, With<BigSpace>>,
+    root: Query<&Grid, With<BigSpace>>,
     time: Res<Time>,
 ) {
     let root = root.single();
@@ -349,7 +349,7 @@ pub fn orbit_controls(
     let (mut camera_transform, mut camera_cell) = query.get_mut(camera_entity).unwrap();
     let mut rotation = camera_transform.rotation.as_dquat();
 
-    let dt = time.delta_seconds_f64();
+    let dt = time.delta_secs_f64();
     rotation *= DQuat::from_euler(
         EulerRot::XYZ,
         input.pitch * dt * controller.speed_pitch,

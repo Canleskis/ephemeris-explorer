@@ -16,7 +16,8 @@ use hifitime::Duration;
 
 #[derive(Component, Default)]
 pub struct Labelled {
-    pub style: TextStyle,
+    pub font: TextFont,
+    pub colour: TextColor,
     pub offset: Vec2,
     pub index: usize,
 }
@@ -32,7 +33,7 @@ impl Plugin for WorldUiPlugin {
                     show_separation
                         .after(crate::plot::compute_plot_points::<TrajectoryReferenceTranslated>),
                     show_intersections
-                        .before(bevy_egui::EguiSet::ProcessOutput)
+                        .before(bevy_egui::EguiPostUpdateSet::EndPass)
                         .after(crate::plot::trajectory_picking),
                     (update_labels_position, hide_overlapped_labels).chain(),
                     update_labels_color,
@@ -59,10 +60,9 @@ fn spawn_labels(
         let id = commands
             .spawn((
                 Name::new(format!("{} label", name)),
-                TextBundle {
-                    text: Text::from_section(name.to_string(), labelled.style.clone()),
-                    ..default()
-                },
+                Text::new(name.to_string()),
+                labelled.font.clone(),
+                labelled.colour,
                 Label,
             ))
             .id();
@@ -75,7 +75,7 @@ fn despawn_labels(
     mut commands: Commands,
     query: Query<(Entity, &LabelEntity), Added<LabelEntity>>,
     mut removed_labelled: RemovedComponents<LabelEntity>,
-    mut local: Local<bevy::utils::EntityHashMap<Entity, Entity>>,
+    mut local: Local<bevy::ecs::entity::EntityHashMap<Entity>>,
 ) {
     for (entity, label) in &query {
         local.insert(entity, **label);
@@ -92,14 +92,14 @@ fn despawn_labels(
 fn update_labels_position(
     query_camera: Query<(&Camera, &GlobalTransform), With<IsDefaultUiCamera>>,
     query_labelled: Query<(&LabelEntity, &Labelled, &GlobalTransform)>,
-    mut query_labels: Query<(&mut Style, &Node)>,
+    mut query_labels: Query<(&mut Node, &ComputedNode)>,
 ) {
     let Ok((camera, camera_transform)) = query_camera.get_single() else {
         return;
     };
 
     for (entity, label, transform) in &query_labelled {
-        let Ok((mut style, node)) = query_labels.get_mut(**entity) else {
+        let Ok((mut node, computed_node)) = query_labels.get_mut(**entity) else {
             continue;
         };
 
@@ -112,22 +112,22 @@ fn update_labels_position(
                         .matrix3
                         .mul_vec3(label.offset.extend(0.0)),
             )
-            .map(|position| position - node.size() / 2.0);
+            .map(|position| position - computed_node.size() / 2.0);
 
-        if let Some(viewport_position) = viewport_position {
-            style.position_type = PositionType::Absolute;
-            style.left = Val::Px(viewport_position.x);
-            style.top = Val::Px(viewport_position.y);
-            style.display = Display::Flex;
+        if let Ok(viewport_position) = viewport_position {
+            node.position_type = PositionType::Absolute;
+            node.left = Val::Px(viewport_position.x);
+            node.top = Val::Px(viewport_position.y);
+            node.display = Display::Flex;
         } else {
-            style.display = Display::None;
+            node.display = Display::None;
         }
     }
 }
 
 fn hide_overlapped_labels(
     query_camera: Query<&GlobalTransform, With<IsDefaultUiCamera>>,
-    query_labels: Query<(&GlobalTransform, &Node), With<Label>>,
+    query_labels: Query<(&GlobalTransform, &ComputedNode), With<Label>>,
     query_labelled: Query<(&GlobalTransform, &Labelled, &LabelEntity)>,
     mut query_visibility: Query<&mut Visibility, With<Label>>,
     kb: Res<ButtonInput<KeyCode>>,
@@ -147,7 +147,7 @@ fn hide_overlapped_labels(
         };
 
         let distance = pos.translation().distance(camera_transform.translation());
-        let rect = node.logical_rect(transform);
+        let rect = Rect::from_center_size(transform.translation().truncate(), node.size());
 
         let is_overlapped = query_labelled
             .iter()
@@ -166,7 +166,10 @@ fn hide_overlapped_labels(
                         .translation()
                         .distance(camera_transform.translation());
 
-                    let other_rect = other_node.logical_rect(other_transform);
+                    let other_rect = Rect::from_center_size(
+                        other_transform.translation().truncate(),
+                        other_node.size(),
+                    );
 
                     *other_vis != Visibility::Hidden
                         && !rect.intersect(other_rect).is_empty()
@@ -187,7 +190,7 @@ fn hide_overlapped_labels(
 }
 
 fn update_labels_color(
-    mut query_labels: Query<&mut Text>,
+    mut query_labels: Query<&mut TextColor>,
     query_labelled: Query<&LabelEntity>,
     selected: Res<Selected>,
     mut deselected: Local<Option<Entity>>,
@@ -197,11 +200,11 @@ fn update_labels_color(
     }
 
     let mut set_label_color = |entity, color| {
-        if let Ok(mut text) = query_labelled
+        if let Ok(mut colour) = query_labelled
             .get(entity)
             .and_then(|e| query_labels.get_mut(**e))
         {
-            text.sections[0].style.color = color;
+            *colour = color;
         }
     };
 
@@ -282,7 +285,7 @@ fn show_intersections(
             .filter_map(|hit| {
                 let real_sv = relative?.state_vector(hit.time)?;
                 let position = points.evaluate(hit.time)?;
-                let vp_position = camera.world_to_viewport(camera_transform, position)?;
+                let vp_position = camera.world_to_viewport(camera_transform, position).ok()?;
                 Some((vp_position, position, real_sv, hit.time))
             })
             .collect::<Vec<_>>();
@@ -343,7 +346,7 @@ fn show_intersections(
                                                 text = text.italics();
                                             }
                                             egui::CollapsingHeader::new(text)
-                                                .id_source(format!("{name}#{time}#{j}"))
+                                                .id_salt(format!("{name}#{time}#{j}"))
                                                 .show(ui, |ui| {
                                                     ui.label(nformat!(
                                                         "Distance: {:.2} km",
@@ -379,9 +382,11 @@ fn show_intersections(
 
                                 let direction = camera_transform.translation() - *position;
                                 let size = direction.length() * PICK_THRESHOLD * fov;
+
                                 gizmos.circle(
-                                    *position,
-                                    Dir3::new(direction).unwrap(),
+                                    Transform::from_translation(*position)
+                                        .looking_to(direction, Vec3::Y)
+                                        .to_isometry(),
                                     size,
                                     plot.color.with_alpha((hovered as usize as f32 + 1.0) / 2.0),
                                 );
@@ -454,12 +459,24 @@ fn show_separation(
             let position = points.evaluate(at)?;
             let direction = camera_transform.translation() - position;
             let size = direction.length() * 4e-3 * fov;
-            gizmos.circle(position, direction.try_into().unwrap(), size, color);
+            gizmos.circle(
+                Transform::from_translation(position)
+                    .looking_to(direction, Vec3::Y)
+                    .to_isometry(),
+                size,
+                color,
+            );
 
             let target_position = target_points.evaluate(at)?;
             let direction = camera_transform.translation() - target_position;
             let size = direction.length() * 4e-3 * fov;
-            gizmos.circle(target_position, direction.try_into().unwrap(), size, color);
+            gizmos.circle(
+                Transform::from_translation(target_position)
+                    .looking_to(direction, Vec3::Y)
+                    .to_isometry(),
+                size,
+                color,
+            );
 
             let separation_line = data.relative.reference == target_data.relative.reference;
             if separation_line {
@@ -470,7 +487,9 @@ fn show_separation(
                 true => (position + target_position) / 2.0,
                 false => position,
             };
-            let window_position = camera.world_to_viewport(camera_transform, window_position)?
+            let window_position = camera
+                .world_to_viewport(camera_transform, window_position)
+                .ok()?
                 + Vec2::new(10.0, -15.0);
 
             let distance = relative.position(at)?.length();
