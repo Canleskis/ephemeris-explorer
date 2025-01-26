@@ -12,13 +12,11 @@ pub fn solar_system_hierarchy(
     mut selected: ResMut<Selected>,
     mut query: Query<&mut TrajectoryPlot>,
     query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
-    root: Query<Entity, With<SystemRoot>>,
+    root: Single<Entity, With<SystemRoot>>,
 ) {
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
     };
-
-    let root = root.single();
 
     egui::SidePanel::left("Hierachy")
         .resizable(false)
@@ -29,7 +27,7 @@ pub fn solar_system_hierarchy(
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = [1.0, 3.0].into();
                     show_tree(
-                        root,
+                        *root,
                         &query_hierarchy,
                         |_| true,
                         ui,

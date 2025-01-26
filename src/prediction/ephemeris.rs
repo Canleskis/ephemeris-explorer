@@ -582,7 +582,6 @@ impl DiscreteStatesBuilder {
         Epoch::from_tai_seconds(self.integrator.time())
     }
 
-    #[expect(unused)]
     #[inline]
     pub fn state(&self) -> &StateVector<DVec3> {
         self.integrator.state()
@@ -651,11 +650,12 @@ impl TrajectoryBuilder for DiscreteStatesBuilder {
     }
 
     #[inline]
-    fn continued(&self, trajectory: &Self::Trajectory) -> Self::Trajectory {
-        let sv = trajectory
-            .get(self.time())
-            .expect("builder was invalid when extending the prediction");
-        DiscreteStates::new(self.time(), sv.velocity, sv.position)
+    fn continued(&self, _: &Self::Trajectory) -> Self::Trajectory {
+        // let sv = trajectory
+        //     .get(self.time())
+        //     .expect("builder was invalid when extending the prediction");
+        // DiscreteStates::new(self.time(), sv.velocity, sv.position)
+        DiscreteStates::new(self.time(), self.state().velocity, self.state().position)
     }
 
     /// Appends the new trajectory to the existing one, discarding any points that are after the

@@ -945,7 +945,7 @@ impl TrajectoryData for DiscreteStates {
     }
 
     fn position(&self, at: Epoch) -> Option<DVec3> {
-        match self.0.binary_search_by(|(t, _)| t.cmp(&at)) {
+        match self.binary_search(at) {
             Ok(i) => Some(self.0[i].1.position),
             Err(i) => {
                 let &(t1, sv1) = self.0.get(i.checked_sub(1)?)?;
@@ -962,7 +962,7 @@ impl TrajectoryData for DiscreteStates {
     }
 
     fn state_vector(&self, at: Epoch) -> Option<StateVector<DVec3>> {
-        match self.0.binary_search_by(|(t, _)| t.cmp(&at)) {
+        match self.binary_search(at) {
             Ok(i) => Some(self.0[i].1),
             Err(i) => {
                 let &(t1, sv1) = self.0.get(i.checked_sub(1)?)?;
@@ -987,26 +987,33 @@ impl DiscreteStates {
         Self(vec![(start, StateVector::new(position, velocity))])
     }
 
+    #[inline]
     pub fn push(&mut self, at: Epoch, velocity: DVec3, position: DVec3) {
         self.0.push((at, StateVector::new(position, velocity)));
     }
 
+    #[inline]
+    pub fn binary_search(&self, at: Epoch) -> Result<usize, usize> {
+        self.0.binary_search_by(|(t, _)| t.cmp(&at))
+    }
+
+    #[inline]
     pub fn clear_after(&mut self, at: Epoch) {
         self.0.retain(|(k, _)| &at >= k);
     }
 
+    #[inline]
     pub fn extend(&mut self, rhs: DiscreteStates) {
         self.0.extend(rhs.0);
     }
 
+    #[inline]
     pub fn get(&self, at: Epoch) -> Option<&StateVector<DVec3>> {
-        self.0
-            .binary_search_by(|(t, _)| t.cmp(&at))
-            .ok()
-            .map(|i| &self.0[i].1)
+        self.binary_search(at).ok().map(|i| &self.0[i].1)
     }
 
     #[expect(unused)]
+    #[inline]
     pub fn points(&self) -> &[(Epoch, StateVector<DVec3>)] {
         &self.0
     }

@@ -26,21 +26,24 @@ pub struct WorldUiPlugin;
 
 impl Plugin for WorldUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreUpdate, (spawn_labels, despawn_labels).chain())
-            .add_systems(
-                PostUpdate,
-                (
-                    show_separation
-                        .after(crate::plot::compute_plot_points::<TrajectoryReferenceTranslated>),
-                    show_intersections
-                        .before(bevy_egui::EguiPostUpdateSet::EndPass)
-                        .after(crate::plot::trajectory_picking),
-                    (update_labels_position, hide_overlapped_labels).chain(),
-                    update_labels_color,
-                )
-                    .run_if(in_state(MainState::Running))
-                    .after(bevy::transform::TransformSystem::TransformPropagate),
-            );
+        app.add_systems(
+            PreUpdate,
+            (spawn_labels, despawn_labels, update_labels).chain(),
+        )
+        .add_systems(
+            PostUpdate,
+            (
+                show_separation
+                    .after(crate::plot::compute_plot_points::<TrajectoryReferenceTranslated>),
+                show_intersections
+                    .before(bevy_egui::EguiPostUpdateSet::EndPass)
+                    .after(crate::plot::trajectory_picking),
+                (update_labels_position, hide_overlapped_labels).chain(),
+                update_labels_color,
+            )
+                .run_if(in_state(MainState::Running))
+                .after(bevy::transform::TransformSystem::TransformPropagate),
+        );
     }
 }
 
@@ -68,6 +71,17 @@ fn spawn_labels(
             .id();
 
         commands.entity(entity).insert(LabelEntity(id));
+    }
+}
+
+fn update_labels(
+    query_changed: Query<(&Name, &LabelEntity), Changed<Name>>,
+    mut query_labels: Query<&mut Text>,
+) {
+    for (name, label_entity) in &query_changed {
+        if let Ok(mut text) = query_labels.get_mut(**label_entity) {
+            **text = name.to_string();
+        }
     }
 }
 
@@ -130,16 +144,10 @@ fn hide_overlapped_labels(
     query_labels: Query<(&GlobalTransform, &ComputedNode), With<Label>>,
     query_labelled: Query<(&GlobalTransform, &Labelled, &LabelEntity)>,
     mut query_visibility: Query<&mut Visibility, With<Label>>,
-    kb: Res<ButtonInput<KeyCode>>,
-    mut hide_all: Local<bool>,
 ) {
     let Ok(camera_transform) = query_camera.get_single() else {
         return;
     };
-
-    if kb.just_pressed(KeyCode::KeyH) {
-        *hide_all = !*hide_all;
-    }
 
     for (pos, labelled, entity) in &query_labelled {
         let Ok((transform, node)) = query_labels.get(**entity) else {
@@ -182,7 +190,7 @@ fn hide_overlapped_labels(
             continue;
         };
 
-        match is_overlapped || *hide_all {
+        match is_overlapped {
             true => *vis = Visibility::Hidden,
             false => *vis = Visibility::Visible,
         }
@@ -236,7 +244,7 @@ fn show_intersections(
     query_trajectory: Query<&Trajectory>,
     query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
     mut persisted: Local<Vec<TrajectoryHitPoint>>,
-    root: Query<Entity, With<SystemRoot>>,
+    root: Single<Entity, With<SystemRoot>>,
 ) {
     let Ok((camera_transform, camera, proj)) = query_camera.get_single() else {
         return;
@@ -244,7 +252,6 @@ fn show_intersections(
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
     };
-    let root = root.single();
 
     let fov = match proj {
         Projection::Perspective(p) => p.fov,
@@ -366,7 +373,7 @@ fn show_intersections(
                                                                     time,
                                                                     data.relative
                                                                         .reference
-                                                                        .unwrap_or(root),
+                                                                        .unwrap_or(*root),
                                                                 ));
                                                                 commands.trigger_targets(
                                                                     FlightPlanChanged,

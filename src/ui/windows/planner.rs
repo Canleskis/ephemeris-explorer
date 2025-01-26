@@ -12,7 +12,7 @@ use crate::{
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use hifitime::{Duration, Epoch};
+use hifitime::Epoch;
 use std::str::FromStr;
 
 pub struct PredictionPlannerPlugin;
@@ -93,10 +93,7 @@ impl PredictionPlannerWindow {
                 ui.add_enabled_ui(backward_duration.is_some(), |ui| {
                     if ui.button("Start prediction").clicked() {
                         if let Some(duration) = backward_duration {
-                            let sync_count = (duration.total_nanoseconds()
-                                / Duration::from_days(25.0).total_nanoseconds())
-                                as usize;
-                            commands.trigger(ExtendPredictionEvent::<B>::all(duration, sync_count));
+                            commands.trigger(ExtendPredictionEvent::<B>::all(duration, 1440));
                         }
                     }
                 });

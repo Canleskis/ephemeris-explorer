@@ -9,42 +9,46 @@ pub use trajectory::*;
 use bevy::prelude::*;
 use hifitime::{Duration, Epoch};
 
+/// Computes the prediction for the given duration using the given synchronization count.
+///
+/// If `EXTEND` is `false`, the previous prediction will be discarded. Otherwise, the builder will
+/// only discard the part of the previous prediction that overlaps with the new prediction.
 #[derive(Event)]
-pub struct ExtendPredictionEvent<B> {
+pub struct ComputePredictionEvent<B, const EXTEND: bool = false> {
     pub entities: bevy::utils::HashSet<Entity>,
     pub duration: Duration,
-    pub sync_count: usize,
+    pub sync_frequency: usize,
     pub _marker: std::marker::PhantomData<fn(B)>,
 }
 
-impl<B> Clone for ExtendPredictionEvent<B> {
+impl<B, const EXTEND: bool> Clone for ComputePredictionEvent<B, EXTEND> {
     fn clone(&self) -> Self {
         Self {
             entities: self.entities.clone(),
-            duration: self.duration,
-            sync_count: self.sync_count,
-            _marker: std::marker::PhantomData,
+            ..*self
         }
     }
 }
 
-impl<B> ExtendPredictionEvent<B> {
-    pub fn all(duration: Duration, sync_count: usize) -> Self {
-        Self::with([], duration, sync_count)
+impl<B, const EXTEND: bool> ComputePredictionEvent<B, EXTEND> {
+    pub fn all(duration: Duration, sync_frequency: usize) -> Self {
+        Self::with([], duration, sync_frequency)
     }
 
-    pub fn with<I>(entities: I, duration: Duration, sync_count: usize) -> Self
+    pub fn with<I>(entities: I, duration: Duration, sync_frequency: usize) -> Self
     where
         I: IntoIterator<Item = Entity>,
     {
         Self {
             entities: entities.into_iter().collect(),
             duration,
-            sync_count,
+            sync_frequency,
             _marker: std::marker::PhantomData,
         }
     }
 }
+
+pub type ExtendPredictionEvent<B> = ComputePredictionEvent<B, true>;
 
 pub trait BuilderContext: Sized {
     /// Creates a new context from a reference to the world.
@@ -81,7 +85,8 @@ pub trait TrajectoryBuilder: Sized {
     /// trajectory starts or ends, as defined by the builder.
     fn boundary(trajectory: &Self::Trajectory) -> Epoch;
 
-    /// Returns a new empty trajectory that continues the given trajectory.
+    /// Returns a new empty trajectory that continues the given trajectory in the current context of
+    /// the builder.
     fn continued(&self, trajectory: &Self::Trajectory) -> Self::Trajectory;
 
     /// Joins the two trajectories.
@@ -146,10 +151,12 @@ impl<B: TrajectoryBuilder> PredictionInstance<B> {
         self.boundaries().min_by(B::cmp).unwrap()
     }
 
+    #[inline]
     pub fn step(&mut self, ctx: &B::Context) -> Result<(), StepError> {
         self.builder.step(&mut self.trajectories, ctx)
     }
 
+    #[inline]
     pub fn continued(&self) -> Self
     where
         B: Clone,
@@ -167,7 +174,7 @@ impl<B: TrajectoryBuilder> PredictionInstance<B> {
 
 pub struct PredictionPlugin<B>(std::marker::PhantomData<fn(B)>);
 
-impl<BuilBer> Default for PredictionPlugin<BuilBer> {
+impl<B> Default for PredictionPlugin<B> {
     fn default() -> Self {
         Self(std::marker::PhantomData)
     }
@@ -180,7 +187,8 @@ where
 {
     fn build(&self, app: &mut App) {
         app.add_event::<ExtendPredictionEvent<B>>()
-            .add_observer(dispatch_predictions::<B>)
+            .add_observer(dispatch_predictions::<B, true>)
+            .add_observer(dispatch_predictions::<B, false>)
             .add_systems(PreUpdate, process_prediction_data::<B>);
 
         let ctx = B::Context::from_world(app.world());
@@ -193,6 +201,7 @@ pub struct PredictionTracker<B: TrajectoryBuilder> {
     thread: bevy::tasks::Task<()>,
     recver: crossbeam_channel::Receiver<PredictionInstance<B>>,
     paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    extend: bool,
     current: Epoch,
     start: Epoch,
     target: Epoch,
@@ -225,8 +234,8 @@ impl<B: TrajectoryBuilder + Component> PredictionTracker<B> {
 #[derive(Resource, Deref, DerefMut)]
 pub struct PredictionCtx<B: TrajectoryBuilder>(pub std::sync::Arc<B::Context>);
 
-fn dispatch_predictions<B>(
-    trigger: Trigger<ExtendPredictionEvent<B>>,
+fn dispatch_predictions<B, const EXTEND: bool>(
+    trigger: Trigger<ComputePredictionEvent<B, EXTEND>>,
     world: &World,
     mut commands: Commands,
     query_builder: Query<Entity, With<B>>,
@@ -235,17 +244,17 @@ fn dispatch_predictions<B>(
     B: TrajectoryBuilder + Component + Clone,
     B::Context: BuilderContext + Send + Sync,
 {
-    let ExtendPredictionEvent {
+    let ComputePredictionEvent {
         entities,
         duration,
-        sync_count,
+        sync_frequency,
         ..
     } = trigger.event();
 
     let name = std::any::type_name::<B>();
 
     let duration = *duration;
-    let sync_count = *sync_count;
+    let sync_frequency = 1.max(*sync_frequency);
 
     if duration.is_negative() || duration == Duration::ZERO {
         bevy::log::error!("invalid duration: {}", duration);
@@ -283,9 +292,7 @@ fn dispatch_predictions<B>(
                 bevy::log::debug!("Computing {} prediction for {}", name, duration);
                 let t0 = std::time::Instant::now();
 
-                let sync_freq = duration / sync_count.max(1) as i64;
-                let mut next = B::add(current, sync_freq);
-
+                let mut remaining = sync_frequency;
                 let instance = &mut instance;
                 loop {
                     if let Some(paused) = paused.upgrade() {
@@ -296,24 +303,28 @@ fn dispatch_predictions<B>(
 
                     if let Err(step_error) = instance.step(&ctx) {
                         bevy::log::debug!("{name}: {step_error}");
-                        next = instance.time();
-                        end = next;
+                        end = instance.time();
+                    }
+                    remaining -= 1;
+
+                    if instance.boundaries().all(|t| B::cmp(&t, &end).is_ge()) {
+                        remaining = 0;
                     }
 
-                    if instance.boundaries().all(|t| B::cmp(&t, &next).is_ge()) {
+                    if remaining == 0 {
                         let current = instance.time();
 
                         let completed = std::mem::replace(instance, instance.continued());
                         if sender.send(completed).is_err() || B::cmp(&current, &end).is_ge() {
-                            bevy::log::debug!("Stopping {} prediction thread", name);
+                            bevy::log::info!("Stopping {} prediction thread", name);
                             break;
                         }
 
-                        next = std::cmp::min_by(B::add(current, sync_freq), end, B::cmp);
+                        remaining = sync_frequency;
                     }
                 }
 
-                bevy::log::debug!("Computing {} prediction took: {:?}", name, t0.elapsed());
+                bevy::log::info!("Computing {} prediction took: {:?}", name, t0.elapsed());
             }
         });
 
@@ -322,6 +333,7 @@ fn dispatch_predictions<B>(
             recver,
             paused,
             current,
+            extend: EXTEND,
             start: current,
             target: end,
             _marker: std::marker::PhantomData,
@@ -339,17 +351,24 @@ pub fn process_prediction_data<B>(
     for (entity, mut builder, mut tracker) in &mut query_builder {
         let is_finished = tracker.thread.is_finished();
 
+        let mut extend = tracker.extend;
         let mut current = tracker.current;
         for recv in tracker.recver.try_iter() {
             current = recv.time();
 
             for (entity, recv_trajectory) in builder.entities().iter().zip(recv.trajectories) {
                 if let Ok(mut trajectory) = query_trajectory.get_mut(*entity) {
-                    B::join(trajectory.downcast_mut(), recv_trajectory);
+                    if extend {
+                        B::join(trajectory.downcast_mut(), recv_trajectory);
+                    } else {
+                        *trajectory.downcast_mut() = recv_trajectory;
+                        extend = true;
+                    }
                 }
             }
             *builder = recv.builder;
         }
+        tracker.extend = extend;
         tracker.current = current;
 
         if is_finished {

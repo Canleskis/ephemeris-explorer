@@ -167,7 +167,7 @@ impl BodyInfoWindow {
             &mut TrajectoryPlot,
             &mut Self,
         )>,
-        root: Query<Entity, With<SystemRoot>>,
+        root: Single<Entity, With<SystemRoot>>,
         mut delete: Local<bevy::utils::HashSet<uuid::Uuid>>,
     ) {
         let mut open = selected.is_some();
@@ -175,8 +175,6 @@ impl BodyInfoWindow {
             let Some(ctx) = contexts.try_ctx_mut() else {
                 return;
             };
-
-            let root = root.single();
 
             let Ok((_, name, _)) = query_hierarchy.get(entity) else {
                 return;
@@ -286,7 +284,7 @@ impl BodyInfoWindow {
                                 .selected_text(plot_reference_name)
                                 .show_ui(ui, |ui| {
                                     show_tree(
-                                        root,
+                                        *root,
                                         &query_hierarchy,
                                         |_| true,
                                         ui,
@@ -471,7 +469,7 @@ impl BodyInfoWindow {
                                 .selected_text(target_name)
                                 .show_ui(ui, |ui| {
                                     show_tree(
-                                        root,
+                                        *root,
                                         &query_hierarchy,
                                         |_| true,
                                         ui,
@@ -547,7 +545,7 @@ impl BodyInfoWindow {
                             let start = last_burn.map(|b| b.end()).unwrap_or(min_time);
                             flight_plan
                                 .burns
-                                .push(Burn::new(start, data.relative.reference.unwrap_or(root)));
+                                .push(Burn::new(start, data.relative.reference.unwrap_or(*root)));
                             changed = true;
                         }
 
@@ -590,7 +588,7 @@ impl BodyInfoWindow {
                                             ui,
                                             burn,
                                             idx,
-                                            root,
+                                            *root,
                                             entity,
                                             &mut query_hierarchy,
                                             min_time,

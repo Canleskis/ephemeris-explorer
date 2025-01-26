@@ -101,7 +101,11 @@ impl Burn {
     }
 }
 
+#[derive(Clone, Default, Component, Deref, DerefMut)]
+struct LastFlightPlan(Option<FlightPlan>);
+
 #[derive(Component, Clone)]
+#[require(LastFlightPlan)]
 pub struct FlightPlan {
     pub end: Epoch,
     pub max_iterations: usize,
@@ -160,11 +164,15 @@ fn first_missing(b1: &[Burn], b2: &[Burn]) -> Option<Epoch> {
 fn compute_flight_plan(
     trigger: Trigger<FlightPlanChanged>,
     mut commands: Commands,
-    mut query: Query<(&mut FlightPlan, &mut DiscreteStatesBuilder, &Trajectory)>,
-    mut previous: Local<Option<FlightPlan>>,
+    mut query: Query<(
+        &mut FlightPlan,
+        &mut LastFlightPlan,
+        &mut DiscreteStatesBuilder,
+        &Trajectory,
+    )>,
 ) {
     let entity = trigger.entity();
-    let Ok((mut flight_plan, mut builder, trajectory)) = query.get_mut(entity) else {
+    let Ok((mut flight_plan, mut last, mut builder, trajectory)) = query.get_mut(entity) else {
         return;
     };
     let trajectory = trajectory.downcast_ref::<DiscreteStates>();
@@ -173,9 +181,9 @@ fn compute_flight_plan(
 
     flight_plan.compute_overlaps();
 
-    let previous = previous.replace(flight_plan.clone());
+    let last = last.replace(flight_plan.clone());
     // Restart from the last point which would result in the same integrator steps.
-    let last_valid = previous
+    let last_valid = last
         .map(|previous| {
             let end = (flight_plan.end != previous.end).then_some(flight_plan.end);
             let iterations = (flight_plan.max_iterations != previous.max_iterations).then_some(min);
@@ -221,6 +229,7 @@ fn compute_flight_plan(
         .map_or(Some(min), |last_valid| last_valid.min(Some(max)));
 
     let Some(last_valid) = last_valid else {
+        println!("no valid time");
         return;
     };
 
@@ -260,7 +269,7 @@ fn compute_flight_plan(
         commands.trigger(ExtendPredictionEvent::<DiscreteStatesBuilder>::with(
             [entity],
             Duration::EPSILON.max(flight_plan.end - restart),
-            usize::MAX,
+            100,
         ));
     }
 }

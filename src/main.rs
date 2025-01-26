@@ -54,6 +54,7 @@ fn main() {
                         canvas: Some("#app".to_owned()),
                         visible: false,
                         title: "Ephemeris Explorer".to_owned(),
+                        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
                         ..default()
                     }),
                     ..default()
@@ -62,7 +63,7 @@ fn main() {
             bevy::diagnostic::FrameTimeDiagnosticsPlugin,
             EguiPlugin,
             CameraPlugin,
-            SelectionPlugin, // TODO: refactor with bevy_picking with 0.15
+            SelectionPlugin,
             StarLightPlugin,
             FloatingOriginPlugin::default(),
             TrajectoryPlotPlugin,
@@ -86,7 +87,7 @@ fn main() {
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
         .add_systems(Startup, (set_window_icon, default_solar_system))
-        .add_systems(PreUpdate, enter_full_screen)
+        .add_systems(PreUpdate, toggle_full_screen)
         .run();
 }
 
@@ -111,7 +112,7 @@ fn set_window_icon(
     };
 }
 
-fn enter_full_screen(
+fn toggle_full_screen(
     kb: Res<ButtonInput<KeyCode>>,
     mut query_window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {

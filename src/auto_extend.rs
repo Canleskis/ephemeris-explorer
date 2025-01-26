@@ -82,6 +82,6 @@ fn auto_extend<B>(
             return;
         }
 
-        commands.trigger(ExtendPredictionEvent::<B>::all(duration, 100));
+        commands.trigger(ExtendPredictionEvent::<B>::all(duration, 1));
     }
 }

@@ -53,7 +53,7 @@ where
 fn sphere_of_influence_to_hierarchy(
     mut commands: Commands,
     sim_time: Res<SimulationTime>,
-    query: Query<(Entity, &Trajectory, Option<&hierarchy::Parent>), Without<SphereOfInfluence>>,
+    query: Query<(Entity, &Trajectory, &hierarchy::Parent), Without<SphereOfInfluence>>,
     query_soi: Query<(Entity, &Trajectory, &SphereOfInfluence)>,
 ) {
     for (entity, trajectory, parent) in query.iter() {
@@ -68,7 +68,7 @@ fn sphere_of_influence_to_hierarchy(
             position,
         );
         if let Some(new_parent) = new_parent {
-            if parent.is_some_and(|parent| **parent == new_parent) {
+            if **parent == new_parent {
                 continue;
             }
             commands.queue(hierarchy::AddChild {

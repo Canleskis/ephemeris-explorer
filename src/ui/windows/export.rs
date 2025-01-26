@@ -56,7 +56,7 @@ impl ExportWindow {
             (Entity, &Name, Option<&hierarchy::Children>),
             Or<(With<SystemRoot>, Without<FlightPlan>)>,
         >,
-        root: Query<Entity, With<SystemRoot>>,
+        root: Single<Entity, With<SystemRoot>>,
         mut bodies: Local<Option<bevy::ecs::entity::EntityHashSet>>,
         mut cached_exports: Local<Option<[ExportType; 1]>>,
         mut current: Local<usize>,
@@ -64,8 +64,6 @@ impl ExportWindow {
         let Some(ctx) = contexts.try_ctx_mut() else {
             return;
         };
-
-        let root = root.single();
 
         let mut open = window.is_some();
         egui::Window::new("Export").open(&mut open).show(ctx, |ui| {
@@ -112,7 +110,7 @@ impl ExportWindow {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = [1.0, 3.0].into();
                     show_tree(
-                        root,
+                        *root,
                         &query_hierarchy.transmute_lens().query(),
                         |i| i != 0,
                         ui,

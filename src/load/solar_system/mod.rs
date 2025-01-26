@@ -240,11 +240,29 @@ pub struct Burn {
 
 #[derive(Clone, Asset, TypePath, Debug, serde::Deserialize)]
 pub struct Ship {
-    pub name: String,
     pub start: Epoch,
+    pub name: String,
     pub position: DVec3,
     pub velocity: DVec3,
     pub burns: Vec<Burn>,
+}
+
+impl Ship {
+    pub fn new(
+        name: String,
+        start: Epoch,
+        position: DVec3,
+        velocity: DVec3,
+        burns: Vec<Burn>,
+    ) -> Self {
+        Ship {
+            name,
+            start: start.floor(Duration::from_seconds(1.0)),
+            position,
+            velocity,
+            burns,
+        }
+    }
 }
 
 /// All the bodies in a stellar system, planetary system or satellite system should be a child of a

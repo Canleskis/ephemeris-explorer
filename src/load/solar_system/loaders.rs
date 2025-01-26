@@ -401,8 +401,10 @@ impl bevy::asset::AssetLoader for ShipLoader {
         async move {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
+            let mut ship: Ship = serde_json::from_slice(&bytes)?;
+            ship.start = ship.start.floor(Duration::from_seconds(1.0));
 
-            Ok(serde_json::from_slice(&bytes)?)
+            Ok(ship)
         }
     }
 

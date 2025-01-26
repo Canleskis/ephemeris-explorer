@@ -355,16 +355,19 @@ fn spawn_loaded_bodies(
                 }
             });
 
-            let child = entity.id();
-            commands.entity(root).add_child(child);
-            commands.queue(hierarchy::AddChild { parent, child });
+            let entity = entity.id();
+            commands.entity(root).add_child(entity);
+            commands.queue(hierarchy::AddChild {
+                parent,
+                child: entity,
+            });
 
             spawn_from_hierarchy(
                 depth + 1,
                 root,
                 commands,
                 massive_states,
-                child,
+                entity,
                 tree,
                 eph_settings,
                 solar_system,
@@ -394,22 +397,23 @@ pub fn find_by_name(query: &Query<(Entity, &Name)>, reference: &str) -> Option<E
 fn spawn_ship(
     trigger: Trigger<LoadShipEvent>,
     mut commands: Commands,
+    sim_time: Res<SimulationTime>,
     query_names: Query<(Entity, &Name)>,
     query_soi: Query<(Entity, &Trajectory, &SphereOfInfluence)>,
-    root: Query<Entity, With<SystemRoot>>,
+    root: Single<Entity, With<SystemRoot>>,
 ) {
-    let root = root.single();
     let ship = &trigger.event().0;
 
     let radius = 0.01;
 
+    let min = sim_time.current().floor(Duration::from_seconds(1.0)) + Duration::from_days(1.0);
     let end = ship
         .burns
         .last()
         .map(|burn| burn.start + burn.duration)
         .map(|end| end + ((end - ship.start) / 5).round(Duration::from_hours(1.0)))
-        .filter(|end| *end > ship.start + Duration::from_days(1.0))
-        .unwrap_or(ship.start + Duration::from_days(1.0));
+        .map(|end| end.max(ship.start + Duration::from_days(1.0)))
+        .map_or(min, |end| end.max(min));
 
     let parent = under_soi(
         query_soi.iter().filter_map(|(entity, trajectory, soi)| {
@@ -420,10 +424,13 @@ fn spawn_ship(
 
     let mut rng = rand::thread_rng();
 
-    let mut entity = commands.spawn_empty();
+    let mut entity = match trigger.entity() {
+        entity if entity == Entity::PLACEHOLDER => commands.spawn_empty(),
+        entity => commands.entity(entity),
+    };
     entity.insert((
         // No state scope needed as it is always a child of the root.
-        Name::new(ship.name.clone()),
+        Name::new(ship.name.to_string()),
         BigGridBundle {
             transform: Transform::from_translation(ship.position.as_vec3()),
             ..default()
@@ -456,7 +463,7 @@ fn spawn_ship(
                         .as_ref()
                         .and_then(|reference| find_by_name(&query_names, reference))
                         .map(|entity| (entity, BurnFrame::Frenet))
-                        .unwrap_or((root, BurnFrame::Cartesian));
+                        .unwrap_or((*root, BurnFrame::Cartesian));
                     Burn::with(
                         burn.start,
                         burn.duration,
@@ -481,15 +488,19 @@ fn spawn_ship(
             threshold: 0.5,
             max_points: 10_000,
         },
+        PlotPoints::default(),
         TrajectoryReferenceTranslated::new(entity.id(), parent, ship.start),
         FlightTarget(None),
-        PlotPoints::default(),
     ));
 
-    let child = entity.id();
-    commands.entity(root).add_child(child);
+    let entity = entity.id();
+    commands.entity(*root).add_child(entity);
+    commands.queue(hierarchy::AddChild {
+        parent: parent.unwrap_or(*root),
+        child: entity,
+    });
 
-    commands.trigger_targets(FlightPlanChanged, child);
+    commands.trigger_targets(FlightPlanChanged, entity);
 }
 
 fn spawn_loaded_ships(
@@ -514,7 +525,7 @@ fn spawn_loaded_ships(
 fn setup_camera(
     mut commands: Commands,
     skybox: Res<SkyboxHandle>,
-    root: Query<Entity, With<SystemRoot>>,
+    root: Single<Entity, With<SystemRoot>>,
 ) {
     commands
         .spawn((
@@ -549,7 +560,7 @@ fn setup_camera(
                 .with_speed_roll(0.5),
             IsDefaultUiCamera,
         ))
-        .set_parent(root.single());
+        .set_parent(*root);
 }
 
 fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>) {
@@ -563,16 +574,16 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
 fn compute_ephemerides_bodies(mut commands: Commands, sim_time: Res<SimulationTime>) {
     let target_forward = Epoch::from_gregorian_tai_hms(1952, 1, 1, 0, 0, 0);
     let target_backward = Epoch::from_gregorian_tai_hms(1948, 1, 1, 0, 0, 0);
-    let sync_count = 100;
+    let sync_frequency = 1440;
 
     commands.trigger(ExtendPredictionEvent::<FixedSegmentsBuilder<Forward>>::all(
         target_forward - sim_time.current(),
-        sync_count,
+        sync_frequency,
     ));
     commands.trigger(
         ExtendPredictionEvent::<FixedSegmentsBuilder<Backward>>::all(
             sim_time.current() - target_backward,
-            sync_count,
+            sync_frequency,
         ),
     );
 }

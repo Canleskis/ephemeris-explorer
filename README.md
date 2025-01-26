@@ -22,7 +22,7 @@ It uses concepts from various research, notably [Numerical Representation of Pla
 
 On top of showing the bodies in the system and their trajectories, the user interface provides the following set of features:
 
-- **Camera Controls**: The camera can be moved using the WASD keys, A and D for roll, as well as Space and Left Control to move up and down. The up and down arrow keys allow to change the FOV. The mouse can be used for pitch and yaw when the left mouse button is held down. You can also use orbit controls around the followed body by holding the right mouse button.
+- **Camera Controls**: The camera can be moved using the WASD keys, Q and E for roll, as well as Space and Left Control to move up and down. The up and down arrow keys allow to change the FOV. The mouse can be used for pitch and yaw when the left mouse button is held down. You can also use orbit controls around the followed body by holding the right mouse button.
 
 - **Hierarchy**: The left panel provides a hierarchical view of the celestial bodies within the current system. Clicking the ⌖ allows setting the reference frame of the camera. You can toggle trajectory plotting using the ○ button, and toggle trajectory plotting of the children of a body using the A button. Clicking a body's name or a body in the viewport selects it and allows you to read information about the body and configure plotting.
 
