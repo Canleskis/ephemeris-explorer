@@ -316,7 +316,7 @@ fn dispatch_predictions<B, const EXTEND: bool>(
 
                         let completed = std::mem::replace(instance, instance.continued());
                         if sender.send(completed).is_err() || B::cmp(&current, &end).is_ge() {
-                            bevy::log::info!("Stopping {} prediction thread", name);
+                            bevy::log::debug!("Stopping {} prediction thread", name);
                             break;
                         }
 
@@ -324,7 +324,7 @@ fn dispatch_predictions<B, const EXTEND: bool>(
                     }
                 }
 
-                bevy::log::info!("Computing {} prediction took: {:?}", name, t0.elapsed());
+                bevy::log::debug!("Computing {} prediction took: {:?}", name, t0.elapsed());
             }
         });
 

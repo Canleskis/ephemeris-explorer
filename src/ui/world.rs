@@ -3,7 +3,9 @@ use crate::{
     flight_plan::{Burn, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
     plot::{PlotPoints, TrajectoryHitPoint, TrajectoryPlot, PICK_THRESHOLD},
-    prediction::{RelativeTrajectory, Trajectory, TrajectoryData},
+    prediction::{
+        DiscreteStatesBuilder, PredictionTracker, RelativeTrajectory, Trajectory, TrajectoryData,
+    },
     selection::Selected,
     time::SimulationTime,
     ui::nformat,
@@ -431,17 +433,22 @@ fn close_button(ui: &mut egui::Ui) -> egui::Response {
 #[derive(Clone, Copy, Component, Deref, DerefMut)]
 pub struct FlightTarget(pub Option<Entity>);
 
+#[expect(clippy::type_complexity)]
 fn show_separation(
     mut contexts: EguiContexts,
     mut gizmos: Gizmos,
     query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
-    query_data: Query<(
-        &Trajectory,
-        &PlotPoints,
-        &TrajectoryReferenceTranslated,
-        &Name,
-        Option<&FlightTarget>,
-    )>,
+    query_data: Query<
+        (
+            &Trajectory,
+            &PlotPoints,
+            &TrajectoryReferenceTranslated,
+            &Name,
+            Option<&FlightTarget>,
+        ),
+        // Don't display the separation if the prediction is still being computed.
+        Without<PredictionTracker<DiscreteStatesBuilder>>,
+    >,
 ) {
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;

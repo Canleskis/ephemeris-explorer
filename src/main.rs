@@ -118,7 +118,7 @@ fn toggle_full_screen(
 ) {
     if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
         let mode = &mut query_window.single_mut().mode;
-        bevy::log::info!("Toggling window mode");
+        bevy::log::debug!("Toggling window mode");
         match *mode {
             WindowMode::Windowed => {
                 *mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current)
