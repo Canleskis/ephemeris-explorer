@@ -127,7 +127,8 @@ fn setup_egui(mut contexts: EguiContexts) {
             use egui::{Color32, Rounding, Shadow, Stroke};
             style.visuals.window_fill = Color32::from_rgba_premultiplied(20, 20, 20, 240);
             style.visuals.window_shadow = Shadow::NONE;
-            style.visuals.window_rounding = Rounding::ZERO;
+            style.visuals.window_rounding = Rounding::same(8.0);
+            style.visuals.window_stroke = Stroke::new(1.0, Color32::from_gray(60));
             style.visuals.panel_fill = Color32::from_rgba_premultiplied(20, 20, 20, 240);
             style.visuals.widgets = egui::style::Widgets {
                 noninteractive: egui::style::WidgetVisuals {
@@ -135,7 +136,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(20),
                     bg_stroke: Stroke::new(1.5, Color32::from_gray(60)), // separators, indentation lines
                     fg_stroke: Stroke::new(1.0, Color32::from_gray(140)), // normal text color
-                    rounding: Rounding::ZERO,
+                    rounding: Rounding::same(4.0),
                     expansion: 0.0,
                 },
                 inactive: egui::style::WidgetVisuals {
@@ -143,7 +144,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(50),      // checkbox background
                     bg_stroke: Default::default(),
                     fg_stroke: Stroke::new(1.0, Color32::from_gray(140)), // button text
-                    rounding: Rounding::ZERO,
+                    rounding: Rounding::same(4.0),
                     expansion: 0.0,
                 },
                 hovered: egui::style::WidgetVisuals {
@@ -151,7 +152,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(60),
                     bg_stroke: Stroke::new(1.0, Color32::from_gray(150)), // e.g. hover over window edge or button
                     fg_stroke: Stroke::new(1.5, Color32::from_gray(180)),
-                    rounding: Rounding::ZERO,
+                    rounding: Rounding::same(4.0),
                     expansion: 1.0,
                 },
                 active: egui::style::WidgetVisuals {
@@ -159,7 +160,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(45),
                     bg_stroke: Stroke::new(1.0, Color32::WHITE),
                     fg_stroke: Stroke::new(2.0, Color32::WHITE),
-                    rounding: Rounding::ZERO,
+                    rounding: Rounding::same(4.0),
                     expansion: 1.0,
                 },
                 open: egui::style::WidgetVisuals {
@@ -167,7 +168,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(20),
                     bg_stroke: Stroke::new(1.0, Color32::from_gray(60)),
                     fg_stroke: Stroke::new(1.0, Color32::from_gray(150)),
-                    rounding: Rounding::ZERO,
+                    rounding: Rounding::same(4.0),
                     expansion: 0.0,
                 },
             }
@@ -210,17 +211,19 @@ fn top_menu(
         return;
     };
 
-    egui::TopBottomPanel::top("Menu").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            if ui.selectable_label(false, "Load").clicked() {
-                commands.dialog().pick_directory_path::<SolarSystemDir>();
-            }
-            menu_label(export, ui, &mut commands, "Export");
-            menu_label(planner, ui, &mut commands, "Prediction planner");
-            menu_label(debug, ui, &mut commands, "Ephemerides debug");
-            menu_label(spawner, ui, &mut commands, "Spawn ship");
+    egui::TopBottomPanel::top("Menu")
+        .exact_height(23.0)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.selectable_label(false, "Load").clicked() {
+                    commands.dialog().pick_directory_path::<SolarSystemDir>();
+                }
+                menu_label(export, ui, &mut commands, "Export");
+                menu_label(planner, ui, &mut commands, "Prediction planner");
+                menu_label(debug, ui, &mut commands, "Ephemerides debug");
+                menu_label(spawner, ui, &mut commands, "Spawn ship");
+            });
         });
-    });
 }
 
 fn menu_label<T>(menu: Option<Res<T>>, ui: &mut egui::Ui, commands: &mut Commands, label: &str)
