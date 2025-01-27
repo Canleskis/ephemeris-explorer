@@ -455,11 +455,11 @@ impl BuilderContext for DiscreteStatesContext {
 
     #[inline]
     fn is_valid(&self, world: &World) -> bool {
-        let world_range = DiscreteStatesContext::compute_range(
-            Self::iter_world_trajectories(world).map(|(_, (t, _))| t),
-        );
-
-        self.range == world_range
+        Self::iter_world_trajectories(world).all(|(e, _)| self.states.contains_key(&e))
+            && self.range
+                == DiscreteStatesContext::compute_range(
+                    Self::iter_world_trajectories(world).map(|(_, (t, _))| t),
+                )
     }
 }
 
@@ -499,7 +499,7 @@ impl ReferenceFrame {
                     .states
                     .get(reference)
                     .and_then(|(ref_traj, _)| ref_traj.state_vector(current_t))
-                    .unwrap_or_default();
+                    .expect("failed to find reference trajectory");
 
                 direction_from_states(current_sv, reference_sv)
             }
