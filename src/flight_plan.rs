@@ -177,7 +177,7 @@ fn compute_flight_plan(
     };
     let trajectory = trajectory.downcast_ref::<DiscreteStates>();
     let min = trajectory.start();
-    let max = flight_plan.end;
+    let max = trajectory.end();
 
     flight_plan.compute_overlaps();
 
@@ -229,7 +229,6 @@ fn compute_flight_plan(
         .map_or(Some(min), |last_valid| last_valid.min(Some(max)));
 
     let Some(last_valid) = last_valid else {
-        println!("no valid time");
         return;
     };
 
@@ -246,7 +245,7 @@ fn compute_flight_plan(
         .map_or(min, |(t, _)| *t);
 
     let Some(&restart_sv) = trajectory.get(restart) else {
-        bevy::log::error!("something went wrong when trying to compute the flight plan");
+        bevy::log::error!("something went wrong when trying to compute the flight plan from {}", restart);
         return;
     };
 

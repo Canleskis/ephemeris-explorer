@@ -54,7 +54,7 @@ fn main() {
                         canvas: Some("#app".to_owned()),
                         visible: false,
                         title: "Ephemeris Explorer".to_owned(),
-                        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+                        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
                         ..default()
                     }),
                     ..default()

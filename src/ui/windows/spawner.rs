@@ -27,7 +27,11 @@ impl Plugin for ShipSpawnerPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (ShipSpawnerWindow::show, load_solar_system_state)
+            (
+                ShipSpawnerWindow::show,
+                ShipSpawnerWindow::on_close.run_if(resource_removed::<ShipSpawnerWindow>),
+                load_solar_system_state,
+            )
                 .chain()
                 .after(FixedUiSet)
                 .run_if(in_state(MainState::Running)),
@@ -37,6 +41,7 @@ impl Plugin for ShipSpawnerPlugin {
 
 pub struct ShipFile;
 
+#[derive(Component, Clone)]
 pub struct ShipSpawnerData {
     pub start: Epoch,
     pub name: String,
@@ -59,35 +64,34 @@ impl ShipSpawnerData {
     }
 }
 
-#[derive(Component)]
-pub struct Preview;
-
 #[derive(Default, Resource)]
 pub struct ShipSpawnerWindow {
     pub valid_preview: bool,
 }
 
 impl ShipSpawnerWindow {
-    #[expect(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, clippy::type_complexity)]
     fn show(
         mut contexts: EguiContexts,
         mut commands: Commands,
         sim_time: Res<SimulationTime>,
         window: Option<ResMut<Self>>,
         root: Single<Entity, With<SystemRoot>>,
-        mut query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>), Without<Preview>>,
-        mut query_preview: Query<
-            (
-                Entity,
+        mut query_hierarchy: Query<
+            (Entity, &Name, Option<&hierarchy::Children>),
+            Without<ShipSpawnerData>,
+        >,
+        mut query_preview: Query<(
+            Entity,
+            &mut ShipSpawnerData,
+            Option<(
                 &mut Name,
                 &mut DiscreteStatesBuilder,
                 &mut TrajectoryReferenceTranslated,
-            ),
-            With<Preview>,
-        >,
-        mut query_trajectory: Query<&Trajectory, Without<Preview>>,
+            )>,
+        )>,
+        mut query_trajectory: Query<&Trajectory>,
         followed: Res<Followed>,
-        mut data: Local<Option<ShipSpawnerData>>,
     ) {
         let Some(ctx) = contexts.try_ctx_mut() else {
             return;
@@ -100,24 +104,30 @@ impl ShipSpawnerWindow {
             return;
         };
 
-        let data = data.get_or_insert_with(|| ShipSpawnerData {
-            name: "Ship".to_string(),
-            start: sim_time.current().floor(Duration::from_seconds(1.0)),
-            state_vector: StateVector::new(
-                DVec3::new(10_000.0, 0.0, 0.0),
-                DVec3::new(0.0, 8.8, 0.0),
-            ),
-            reference: **followed,
-            preview_duration: Duration::from_days(5.0),
-        });
+        let Ok((preview, mut data, Some((mut name, mut builder, mut trajectory)))) =
+            query_preview.get_single_mut()
+        else {
+            let (entity, data) = match query_preview.get_single() {
+                Ok((entity, data, _)) => (entity, data.clone()),
+                _ => {
+                    let data = ShipSpawnerData {
+                        name: "Ship".to_string(),
+                        start: sim_time.current().floor(Duration::from_seconds(1.0)),
+                        state_vector: StateVector::new(
+                            DVec3::new(10_000.0, 0.0, 0.0),
+                            DVec3::new(0.0, 6.5, 0.0),
+                        ),
+                        reference: **followed,
+                        preview_duration: Duration::from_days(5.0),
+                    };
+                    (commands.spawn(data.clone()).set_parent(*root).id(), data)
+                }
+            };
 
-        if window.is_added() {
             let radius = 0.01;
             let sv = data.global_state_vector(data.start, query_trajectory.reborrow());
 
-            let mut entity = commands.spawn_empty();
-            entity.insert((
-                Preview,
+            commands.entity(entity).insert((
                 Name::new(data.name.to_string()),
                 BigGridBundle {
                     transform: Transform::from_translation(sv.position.as_vec3()),
@@ -130,8 +140,8 @@ impl ShipSpawnerWindow {
                     index: 99,
                 },
                 Trajectory::new(DiscreteStates::new(data.start, sv.velocity, sv.position)),
-                DiscreteStatesBuilder::new(entity.id(), data.start, sv.velocity, sv.position),
-                TrajectoryReferenceTranslated::new(entity.id(), data.reference, data.start),
+                DiscreteStatesBuilder::new(entity, data.start, sv.velocity, sv.position),
+                TrajectoryReferenceTranslated::new(entity, data.reference, data.start),
                 TrajectoryPlot {
                     enabled: true,
                     color: bevy::color::palettes::css::FUCHSIA.into(),
@@ -143,16 +153,11 @@ impl ShipSpawnerWindow {
                 PlotPoints::default(),
             ));
 
-            let entity = entity.id();
-            commands.entity(*root).add_child(entity);
-        };
+            window.valid_preview = false;
 
-        let Ok((preview, mut name, mut builder, mut trajectory)) = query_preview.get_single_mut()
-        else {
             return;
         };
 
-        let mut request_close = false;
         let mut open = true;
         egui::Window::new("Ship spawner")
             .open(&mut open)
@@ -310,7 +315,7 @@ impl ShipSpawnerWindow {
                         Vec::new(),
                     )));
 
-                    request_close = true;
+                    commands.remove_resource::<Self>();
                 }
 
                 ui.horizontal(|ui| {
@@ -356,9 +361,16 @@ impl ShipSpawnerWindow {
             window.valid_preview = true;
         }
 
-        if !open || request_close {
+        if !open {
             commands.remove_resource::<Self>();
-            commands.entity(preview).despawn_recursive();
+        }
+    }
+
+    fn on_close(mut commands: Commands, preview: Query<Entity, With<ShipSpawnerData>>) {
+        for entity in preview.iter() {
+            commands
+                .entity(entity)
+                .retain::<(ShipSpawnerData, Parent)>();
         }
     }
 }
