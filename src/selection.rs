@@ -3,7 +3,7 @@ use bevy::picking::backend::ray::RayMap;
 use bevy::prelude::*;
 
 #[derive(Component, Default)]
-pub struct Clickable {
+pub struct Selectable {
     pub radius: f32,
     pub index: usize,
 }
@@ -38,7 +38,7 @@ fn entity_picker(
     mouse_input: Res<ButtonInput<MouseButton>>,
     mut mouse_move: EventReader<MouseMotion>,
     query_camera: Query<&Projection, With<Camera>>,
-    query_can_select: Query<(Entity, &GlobalTransform, &Clickable)>,
+    query_can_select: Query<(Entity, &GlobalTransform, &Selectable)>,
 ) {
     if !mouse_input.just_pressed(MouseButton::Left) || !mouse_move.is_empty() {
         mouse_move.clear();
@@ -86,7 +86,7 @@ fn select_clicked(mut click_events: EventReader<ClickEvent>, mut selected: ResMu
 fn _show_pickable_zone(
     mut gizmos: Gizmos,
     query_camera: Query<&GlobalTransform, With<Camera>>,
-    query_can_select: Query<(&GlobalTransform, &Clickable)>,
+    query_can_select: Query<(&GlobalTransform, &Selectable)>,
 ) {
     let Ok(camera_transform) = query_camera.get_single() else {
         return;

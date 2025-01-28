@@ -17,7 +17,7 @@ use crate::{
         FixedSegmentsBuilder, Forward, Mu, PredictionTracker, Trajectory, TrajectoryData, DIV,
     },
     rotation::Rotating,
-    selection::Clickable,
+    selection::Selectable,
     starlight::Star,
     time::{BoundsTime, SimulationTime},
     ui::{FlightTarget, Labelled},
@@ -289,7 +289,7 @@ fn spawn_loaded_bodies(
                     transform: Transform::from_translation(body.position.as_vec3()),
                     ..default()
                 },
-                Clickable {
+                Selectable {
                     radius,
                     index: depth + 1,
                 },
@@ -435,7 +435,7 @@ fn spawn_ship(
             transform: Transform::from_translation(ship.position.as_vec3()),
             ..default()
         },
-        Clickable { radius, index: 99 },
+        Selectable { radius, index: 99 },
         CanFollow {
             min_distance: radius as f64 * 1.05,
             max_distance: 5e10,

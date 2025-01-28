@@ -3,6 +3,9 @@ edition = "2021"
 name = "ephemeris_explorer"
 version = "0.0.1"
 
+[lints.clippy]
+too_many_arguments = "allow"
+
 [build-dependencies]
 embed-resource = "1"
 

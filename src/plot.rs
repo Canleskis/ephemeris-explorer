@@ -3,7 +3,7 @@ use crate::{
     flight_plan::FlightPlan,
     floating_origin::{BigSpace, Grid},
     prediction::{DiscreteStatesBuilder, PredictionCtx, StateVector, Trajectory, TrajectoryData},
-    selection::Clickable,
+    selection::Selectable,
     MainState,
 };
 
@@ -214,7 +214,7 @@ pub const PICK_THRESHOLD: f32 = 6e-3;
 
 pub fn trajectory_picking(
     ray_map: Res<RayMap>,
-    query_clickable: Query<(&GlobalTransform, &Clickable)>,
+    query_clickable: Query<(&GlobalTransform, &Selectable)>,
     query_camera: Query<&Projection, With<Camera>>,
     query_points: Query<(Entity, &PlotPoints)>,
     mut events: EventWriter<TrajectoryHitPoint>,

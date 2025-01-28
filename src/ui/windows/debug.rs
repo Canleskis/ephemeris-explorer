@@ -34,7 +34,6 @@ impl Plugin for EphemeridesDebugPlugin {
 pub struct EphemeridesDebugWindow;
 
 impl EphemeridesDebugWindow {
-    #[expect(clippy::too_many_arguments)]
     fn show(
         mut contexts: EguiContexts,
         mut commands: Commands,

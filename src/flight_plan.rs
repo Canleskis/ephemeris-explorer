@@ -245,7 +245,10 @@ fn compute_flight_plan(
         .map_or(min, |(t, _)| *t);
 
     let Some(&restart_sv) = trajectory.get(restart) else {
-        bevy::log::error!("something went wrong when trying to compute the flight plan from {}", restart);
+        bevy::log::error!(
+            "something went wrong when trying to compute the flight plan from {}",
+            restart
+        );
         return;
     };
 

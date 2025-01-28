@@ -18,9 +18,7 @@ It uses concepts from various research, notably [Numerical Representation of Pla
 
 [^1]: The accuracy of the current implementation is limited by the fact that the acceleration computation does not take into account general relativity and all bodies are considered to be spheres with an homogeneous mass distribution.
 
-## User interface and key bindings
-
-On top of showing the bodies in the system and their trajectories, the user interface provides the following set of features:
+## Main features
 
 - **Camera Controls**: The camera can be moved using the WASD keys, Q and E for roll, as well as Space and Left Control to move up and down. The up and down arrow keys allow to change the FOV. The mouse can be used for pitch and yaw when the left mouse button is held down. You can also use orbit controls around the followed body by holding the right mouse button.
 

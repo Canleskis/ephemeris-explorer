@@ -324,10 +324,7 @@ fn show_tree(
         ),
     ) {
         if let Ok((parent, name, children)) = query.get(parent) {
-            let id = name;
-            let text = egui::WidgetText::from(format!("{}#{:?}", id, ui.id()));
-            let id = egui::Id::new(text.text());
-
+            let id = ui.make_persistent_id(parent);
             let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
                 id,

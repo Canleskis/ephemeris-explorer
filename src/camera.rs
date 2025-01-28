@@ -334,11 +334,9 @@ pub fn orbit_controls(
     input_2: Res<AdditionalCameraInput>,
     mut query: Query<(&mut Transform, &mut GridCell)>,
     mut query_camera: Query<(Entity, &CameraController, &mut OrbitCamera)>,
-    root: Query<&Grid, With<BigSpace>>,
+    grid: Single<&Grid, With<BigSpace>>,
     time: Res<Time>,
 ) {
-    let root = root.single();
-
     let Ok((camera_entity, controller, mut orbit)) = query_camera.get_single_mut() else {
         return;
     };
@@ -358,7 +356,7 @@ pub fn orbit_controls(
     );
 
     let (new_cell, translation) =
-        root.translation_to_grid(rotation.mul_vec3(DVec3::new(0.0, 0.0, orbit.distance)));
+        grid.translation_to_grid(rotation.mul_vec3(DVec3::new(0.0, 0.0, orbit.distance)));
 
     *camera_cell = new_cell;
     camera_transform.translation = translation;

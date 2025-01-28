@@ -44,7 +44,7 @@ impl std::fmt::Display for ExportType {
 pub struct ExportWindow;
 
 impl ExportWindow {
-    #[expect(clippy::too_many_arguments, clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn show(
         mut contexts: EguiContexts,
         mut commands: Commands,

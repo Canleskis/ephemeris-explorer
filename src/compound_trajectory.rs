@@ -36,8 +36,8 @@ impl CompoundTrajectoryData for TrajectoryReference {
     #[inline]
     fn fetch<'w>(&self, data: &'w Query<Self::QueryData<'_>>) -> Option<Self::Trajectory<'w>> {
         Some(RelativeTrajectory {
-            reference: self.reference.and_then(|r| data.get(r).ok()),
             trajectory: data.get(self.entity).ok()?,
+            reference: self.reference.and_then(|r| data.get(r).ok()),
         })
     }
 }
@@ -68,11 +68,11 @@ impl CompoundTrajectoryData for TrajectoryReferenceTranslated {
         let trajectory = self.relative.fetch(data)?;
 
         Some(RelativeTrajectoryTranslated {
+            trajectory,
             translation: trajectory
                 .reference
                 .and_then(|r| r.position(self.translation_epoch))
                 .unwrap_or_default(),
-            trajectory,
         })
     }
 }

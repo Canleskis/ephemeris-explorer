@@ -288,11 +288,13 @@ fn show_intersections(
         let Ok((name, points, data, plot, mut flight_plan)) = query_points.get_mut(entity) else {
             continue;
         };
-        let relative = data.relative.fetch(&query_trajectory);
+        let Some(relative) = data.relative.fetch(&query_trajectory) else {
+            continue;
+        };
         let window_data = hits
             .iter()
             .filter_map(|hit| {
-                let real_sv = relative?.state_vector(hit.time)?;
+                let real_sv = relative.state_vector(hit.time)?;
                 let position = points.evaluate(hit.time)?;
                 let vp_position = camera.world_to_viewport(camera_transform, position).ok()?;
                 Some((vp_position, position, real_sv, hit.time))

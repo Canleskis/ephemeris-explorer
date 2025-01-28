@@ -82,6 +82,7 @@ fn auto_extend<B>(
             return;
         }
 
-        commands.trigger(ExtendPredictionEvent::<B>::all(duration, 1));
+        // Synchronisation every 100 step.
+        commands.trigger(ExtendPredictionEvent::<B>::all(duration, 100));
     }
 }

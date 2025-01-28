@@ -70,7 +70,7 @@ pub struct ShipSpawnerWindow {
 }
 
 impl ShipSpawnerWindow {
-    #[expect(clippy::too_many_arguments, clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn show(
         mut contexts: EguiContexts,
         mut commands: Commands,

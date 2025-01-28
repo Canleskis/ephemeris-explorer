@@ -32,7 +32,6 @@ impl Plugin for PredictionPlannerPlugin {
 pub struct PredictionPlannerWindow;
 
 impl PredictionPlannerWindow {
-    #[expect(clippy::too_many_arguments)]
     fn prediction_content<B: TrajectoryBuilder + Component>(
         ui: &mut egui::Ui,
         commands: &mut Commands,
@@ -115,7 +114,6 @@ impl PredictionPlannerWindow {
     }
 
     #[expect(clippy::type_complexity)]
-    #[expect(clippy::too_many_arguments)]
     fn show(
         mut contexts: EguiContexts,
         mut commands: Commands,

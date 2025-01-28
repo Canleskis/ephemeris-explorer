@@ -185,6 +185,13 @@ impl<T1: TrajectoryData, T2: TrajectoryData> RelativeTrajectory<T1, T2> {
     }
 }
 
+impl<T1: DeepSizeOf, T2: DeepSizeOf> DeepSizeOf for RelativeTrajectory<T1, T2> {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.trajectory.deep_size_of_children(context)
+            + self.reference.deep_size_of_children(context)
+    }
+}
+
 impl<T1: TrajectoryData, T2: TrajectoryData> TrajectoryData for RelativeTrajectory<T1, T2> {
     #[inline]
     fn start(&self) -> Epoch {
