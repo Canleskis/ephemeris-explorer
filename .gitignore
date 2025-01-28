@@ -10,7 +10,7 @@ target/
 
 .markdownlint.yml
 
-assets/skybox
+skybox/
 
 data/
 output/
