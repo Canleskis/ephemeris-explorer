@@ -4,7 +4,7 @@ use super::{
         DiscreteStates, FixedSegments, Segment, SegmentStorage, StateVector, Trajectory,
         TrajectoryData, DIV,
     },
-    BuilderContext, TrajectoryBuilder,
+    TrajectoryBuilder,
 };
 
 use bevy::math::DVec3;
@@ -68,7 +68,7 @@ impl<const LEN: usize> SegmentSamples<LEN, f64> {
     }
 
     #[inline]
-    fn interpolated(&self, ts: [f64; LEN], deg: usize) -> Segment {
+    fn as_segment(&self, ts: [f64; LEN], deg: usize) -> Segment {
         Segment {
             x: interpolate(deg, &ts, &self.xs),
             y: interpolate(deg, &ts, &self.ys),
@@ -247,8 +247,6 @@ impl Direction for Forward {
 impl TrajectoryBuilder for FixedSegmentsBuilder<Forward> {
     type Trajectory = FixedSegments;
 
-    type Context = ();
-
     #[inline]
     fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
         lhs.cmp(rhs)
@@ -286,12 +284,12 @@ impl TrajectoryBuilder for FixedSegmentsBuilder<Forward> {
     }
 
     #[inline]
-    fn step<'a, I>(&mut self, trajs: I, _: &Self::Context) -> Result<(), StepError>
+    fn step<'a, I>(&mut self, trajs: I) -> Result<(), StepError>
     where
         I: IntoIterator<Item = &'a mut Self::Trajectory>,
     {
         self.step_with(trajs, |trajectory, interp| {
-            trajectory.push_back(interp.samples.interpolated(
+            trajectory.push_back(interp.samples.as_segment(
                 std::array::from_fn(|i| i as f64 / DIV as f64),
                 interp.degree,
             ));
@@ -318,8 +316,6 @@ impl Direction for Backward {
 
 impl TrajectoryBuilder for FixedSegmentsBuilder<Backward> {
     type Trajectory = FixedSegments;
-
-    type Context = ();
 
     #[inline]
     fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
@@ -358,12 +354,12 @@ impl TrajectoryBuilder for FixedSegmentsBuilder<Backward> {
     }
 
     #[inline]
-    fn step<'a, I>(&mut self, trajs: I, _: &Self::Context) -> Result<(), StepError>
+    fn step<'a, I>(&mut self, trajs: I) -> Result<(), StepError>
     where
         I: IntoIterator<Item = &'a mut Self::Trajectory>,
     {
         self.step_with(trajs, |trajectory, interp| {
-            trajectory.push_front(interp.samples.interpolated(
+            trajectory.push_front(interp.samples.as_segment(
                 std::array::from_fn(|i| 1.0 - i as f64 / DIV as f64),
                 interp.degree,
             ));
@@ -373,95 +369,6 @@ impl TrajectoryBuilder for FixedSegmentsBuilder<Backward> {
 
 #[derive(Clone, Copy, Debug, Component, Deref, DerefMut)]
 pub struct Mu(pub f64);
-
-pub struct DiscreteStatesContext {
-    range: std::ops::RangeInclusive<Epoch>,
-    states: bevy::ecs::entity::EntityHashMap<(FixedSegments, Mu)>,
-}
-
-impl DiscreteStatesContext {
-    #[inline]
-    fn iter_world_trajectories(
-        world: &World,
-    ) -> impl Iterator<Item = (Entity, (&FixedSegments, &Mu))> {
-        world
-            .iter_entities()
-            .filter(|e| e.contains::<Trajectory>() && e.contains::<Mu>())
-            .filter_map(|e| {
-                Some((
-                    e.id(),
-                    (
-                        e.get::<Trajectory>()?.downcast_ref::<FixedSegments>(),
-                        e.get::<Mu>()?,
-                    ),
-                ))
-            })
-    }
-
-    #[inline]
-    fn compute_range<'a, I>(iter: I) -> std::ops::RangeInclusive<Epoch>
-    where
-        I: Iterator<Item = &'a FixedSegments>,
-    {
-        let (start, end) = iter.fold(
-            (
-                Epoch::from_tai_duration(Duration::MIN),
-                Epoch::from_tai_duration(Duration::MAX),
-            ),
-            |(start, end), traj| (start.max(traj.start()), end.min(traj.end())),
-        );
-
-        start..=end
-    }
-
-    #[inline]
-    fn from_ref_world(world: &World) -> Self {
-        let states: bevy::ecs::entity::EntityHashMap<_> = Self::iter_world_trajectories(world)
-            .map(|(e, (t, m))| (e, (t.clone(), *m)))
-            .collect();
-
-        Self {
-            range: Self::compute_range(states.values().map(|(t, _)| t)),
-            states,
-        }
-    }
-
-    #[inline]
-    fn gravitational_acceleration(
-        &self,
-        t: Epoch,
-        y: &StateVector<DVec3>,
-        dy: &mut StateVector<DVec3>,
-    ) {
-        dy.position = y.velocity;
-        dy.velocity = self.states.values().fold(DVec3::ZERO, |acc, (traj, mu)| {
-            acc + Acceleration::unchecked().compute(Between(
-                &y.position,
-                &(
-                    traj.position(t)
-                        .unwrap_or_else(|| panic!("failed to evaluate position at {}", t)),
-                    **mu,
-                ),
-            ))
-        });
-    }
-}
-
-impl BuilderContext for DiscreteStatesContext {
-    #[inline]
-    fn from_world(world: &World) -> Self {
-        DiscreteStatesContext::from_ref_world(world)
-    }
-
-    #[inline]
-    fn is_valid(&self, world: &World) -> bool {
-        Self::iter_world_trajectories(world).all(|(e, _)| self.states.contains_key(&e))
-            && self.range
-                == DiscreteStatesContext::compute_range(
-                    Self::iter_world_trajectories(world).map(|(_, (t, _))| t),
-                )
-    }
-}
 
 pub fn direction_from_states(
     current_sv: StateVector<DVec3>,
@@ -491,12 +398,11 @@ impl ReferenceFrame {
     pub fn direction(
         &self,
         (current_t, current_sv): (Epoch, StateVector<DVec3>),
-        ctx: &DiscreteStatesContext,
+        ctx: &bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
     ) -> (DVec3, DVec3, DVec3) {
         match self {
             Self::Frenet(reference) => {
                 let reference_sv = ctx
-                    .states
                     .get(reference)
                     .and_then(|(ref_traj, _)| ref_traj.state_vector(current_t))
                     .expect("failed to find reference trajectory");
@@ -540,7 +446,7 @@ impl ConstantAcceleration {
     fn acceleration(
         &self,
         (current_t, current_sv): (Epoch, StateVector<DVec3>),
-        ctx: &DiscreteStatesContext,
+        ctx: &bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
     ) -> DVec3 {
         let (x_dir, y_dir, z_dir) = self.frame.direction((current_t, current_sv), ctx);
         self.acceleration.x * x_dir + self.acceleration.y * y_dir + self.acceleration.z * z_dir
@@ -555,6 +461,7 @@ pub struct DiscreteStatesBuilder {
     entity: Entity,
     integrator: DormandPrince5<6, StateVector<DVec3>>,
     manoeuvres: std::collections::BTreeMap<Epoch, Option<Manoeuvre>>,
+    context: bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
 }
 
 impl DiscreteStatesBuilder {
@@ -563,6 +470,7 @@ impl DiscreteStatesBuilder {
         initial_time: Epoch,
         initial_velocity: DVec3,
         initial_position: DVec3,
+        context: bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
     ) -> Self {
         Self {
             entity,
@@ -574,6 +482,7 @@ impl DiscreteStatesBuilder {
                 100_000,
             ),
             manoeuvres: std::collections::BTreeMap::new(),
+            context,
         }
     }
 
@@ -590,6 +499,20 @@ impl DiscreteStatesBuilder {
     #[inline]
     pub fn manoeuvres(&self) -> &std::collections::BTreeMap<Epoch, Option<Manoeuvre>> {
         &self.manoeuvres
+    }
+
+    #[inline]
+    pub fn context(&self) -> &bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)> {
+        &self.context
+    }
+
+    #[inline]
+    pub fn max_time(&self) -> Epoch {
+        self.context
+            .values()
+            .fold(Epoch::from_tai_duration(Duration::MAX), |end, (traj, _)| {
+                end.min(traj.end())
+            })
     }
 
     #[inline]
@@ -627,12 +550,28 @@ impl DiscreteStatesBuilder {
     pub fn clear_manoeuvres(&mut self) {
         self.manoeuvres.clear();
     }
+
+    #[inline]
+    pub fn gravitational_acceleration(
+        t: Epoch,
+        y: &StateVector<DVec3>,
+        context: &bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
+    ) -> DVec3 {
+        context.values().fold(DVec3::ZERO, |acc, (traj, mu)| {
+            acc + Acceleration::unchecked().compute(Between(
+                &y.position,
+                &(
+                    traj.position(t)
+                        .unwrap_or_else(|| panic!("failed to evaluate position at {}", t)),
+                    **mu,
+                ),
+            ))
+        })
+    }
 }
 
 impl TrajectoryBuilder for DiscreteStatesBuilder {
     type Trajectory = DiscreteStates;
-
-    type Context = DiscreteStatesContext;
 
     #[inline]
     fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
@@ -651,10 +590,6 @@ impl TrajectoryBuilder for DiscreteStatesBuilder {
 
     #[inline]
     fn continued(&self, _: &Self::Trajectory) -> Self::Trajectory {
-        // let sv = trajectory
-        //     .get(self.time())
-        //     .expect("builder was invalid when extending the prediction");
-        // DiscreteStates::new(self.time(), sv.velocity, sv.position)
         DiscreteStates::new(self.time(), self.state().velocity, self.state().position)
     }
 
@@ -672,29 +607,30 @@ impl TrajectoryBuilder for DiscreteStatesBuilder {
     }
 
     #[inline]
-    fn step<'a, I>(&mut self, trajs: I, ctx: &Self::Context) -> Result<(), StepError>
+    fn step<'a, I>(&mut self, trajs: I) -> Result<(), StepError>
     where
         I: IntoIterator<Item = &'a mut Self::Trajectory>,
     {
-        let mut next_manoeuvre_time = self.manoeuvres.range(self.time()..);
-        let max_time = match next_manoeuvre_time.next().map(|(t, _)| t) {
+        let mut next_manoeuvre = self.manoeuvres.range(self.time()..);
+        let max_time = match next_manoeuvre.next().map(|(t, _)| t) {
             // If we are exactly at the start of a manoeuvre, we reset the integrator and get the end
             // time of the manoeuvre.
             Some(t) if *t == self.time() => {
                 self.integrator.reset();
-                next_manoeuvre_time.next().map(|(t, _)| t)
+                next_manoeuvre.next().map(|(t, _)| t)
             }
             // Otherwise we have started integrating the manoeuvre and this is its end time.
             t => t,
         }
-        .map_or(*ctx.range.end(), |max| max.min(*ctx.range.end()))
+        .map_or(self.max_time(), |max| max.min(self.max_time()))
         .to_tai_seconds();
 
         self.integrator.step(max_time, 1.0, |t, y, dy| {
             let t = Epoch::from_tai_seconds(t);
-            ctx.gravitational_acceleration(t, y, dy);
+            dy.position = y.velocity;
+            dy.velocity = Self::gravitational_acceleration(t, y, &self.context);
             if let Some((_, Some(manoeuvre))) = self.manoeuvres.range(..t).next_back() {
-                dy.velocity += manoeuvre.acceleration((t, *y), ctx);
+                dy.velocity += manoeuvre.acceleration((t, *y), &self.context);
             }
         })?;
 

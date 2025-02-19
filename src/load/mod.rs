@@ -7,11 +7,10 @@ pub use ui::*;
 use crate::{
     analysis::{under_soi, SphereOfInfluence},
     camera::{CameraController, CanFollow, Followed, OrbitCamera},
-    compound_trajectory::TrajectoryReferenceTranslated,
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
-    hierarchy,
-    plot::{PlotPoints, TrajectoryPlot},
+    hierarchy::AddOrbit,
+    plot::TrajectoryPlot,
     prediction::{
         Backward, DiscreteStates, DiscreteStatesBuilder, ExtendPredictionEvent, FixedSegments,
         FixedSegmentsBuilder, Forward, Mu, PredictionTracker, Trajectory, TrajectoryData, DIV,
@@ -20,7 +19,7 @@ use crate::{
     selection::Selectable,
     starlight::Star,
     time::{BoundsTime, SimulationTime},
-    ui::{FlightTarget, Labelled},
+    ui::Labelled,
     MainState,
 };
 
@@ -50,7 +49,6 @@ pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(First, delay_window_visiblity);
         app.add_plugins(LoadingScreenPlugin)
             .add_sub_state::<LoadingStage>()
             .add_sub_state::<EphemeridesLoadingStage>()
@@ -97,6 +95,7 @@ impl Plugin for LoadingPlugin {
                 Update,
                 ephemerides_ships_progress.run_if(in_state(EphemeridesLoadingStage::Ships)),
             );
+        #[cfg(debug_assertions)]
         app.add_systems(
             Update,
             bypass_ephemerides_loading.run_if(in_state(LoadingStage::Ephemerides)),
@@ -108,16 +107,6 @@ impl Plugin for LoadingPlugin {
             "../../assets/fonts/Montserrat-Regular.ttf",
             |bytes: &[u8], _: String| { Font::try_from_bytes(bytes.to_vec()).unwrap() }
         );
-    }
-}
-
-fn delay_window_visiblity(mut window: Query<&mut Window>, frames: Res<bevy::core::FrameCount>) {
-    // The delay may be different for your app or system.
-    if frames.0 == 3 {
-        // At this point the gpu is ready to show the app so we can make the window visible.
-        // Alternatively, you could toggle the visibility in Startup.
-        // It will work, but it will have one white frame before it starts rendering
-        window.single_mut().visible = true;
     }
 }
 
@@ -251,7 +240,6 @@ fn spawn_loaded_bodies(
         &visuals,
     );
 
-    #[expect(clippy::too_many_arguments)]
     fn spawn_from_hierarchy(
         depth: usize,
         root: Entity,
@@ -310,16 +298,6 @@ fn spawn_loaded_bodies(
                 )),
                 BoundsTime,
                 soi,
-                TrajectoryPlot {
-                    enabled: depth <= 1,
-                    color: visual.orbit.color,
-                    start: Epoch::from_tai_duration(-Duration::MAX),
-                    end: Epoch::from_tai_duration(Duration::MAX),
-                    threshold: 0.5,
-                    max_points: 10_000,
-                },
-                TrajectoryReferenceTranslated::new(entity.id(), Some(parent), solar_system.epoch),
-                PlotPoints::default(),
             ));
 
             massive_states.push((
@@ -330,8 +308,22 @@ fn spawn_loaded_bodies(
                 settings.degree,
             ));
 
-            entity.with_children(|parent| {
-                let mut child = parent.spawn((
+            entity.with_children(|cmds| {
+                cmds.spawn((
+                    Name::new(format!("{} Plot", name)),
+                    TrajectoryPlot {
+                        source: cmds.parent_entity(),
+                        enabled: depth <= 1,
+                        color: visual.orbit.color,
+                        start: solar_system.epoch - Duration::from_parts(10, 0),
+                        end: solar_system.epoch + Duration::from_parts(10, 0),
+                        threshold: 0.5,
+                        max_points: 10_000,
+                        reference: Some(parent),
+                    },
+                ));
+
+                let mut child = cmds.spawn((
                     Transform::from_scale(visual.radii.as_vec3() / radius),
                     Mesh3d(visual.mesh.clone()),
                     MeshMaterial3d(visual.material.clone()),
@@ -357,9 +349,9 @@ fn spawn_loaded_bodies(
 
             let entity = entity.id();
             commands.entity(root).add_child(entity);
-            commands.queue(hierarchy::AddChild {
-                parent,
-                child: entity,
+            commands.queue(AddOrbit {
+                orbiting: parent,
+                body: entity,
             });
 
             spawn_from_hierarchy(
@@ -387,7 +379,7 @@ fn spawn_loaded_bodies(
 #[derive(Event)]
 pub struct LoadShipEvent(pub Ship);
 
-pub fn find_by_name(query: &Query<(Entity, &Name)>, reference: &str) -> Option<Entity> {
+pub fn find_by_name(query: &Query<(Entity, &Name), With<Mu>>, reference: &str) -> Option<Entity> {
     query
         .iter()
         .find(|(_, name)| name.as_str() == reference)
@@ -398,8 +390,9 @@ fn spawn_ship(
     trigger: Trigger<LoadShipEvent>,
     mut commands: Commands,
     sim_time: Res<SimulationTime>,
-    query_names: Query<(Entity, &Name)>,
+    query_names: Query<(Entity, &Name), With<Mu>>,
     query_soi: Query<(Entity, &Trajectory, &SphereOfInfluence)>,
+    query_context: Query<(Entity, &Trajectory, &Mu)>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
     let ship = &trigger.event().0;
@@ -422,85 +415,93 @@ fn spawn_ship(
         ship.position,
     );
 
+    let context = query_context
+        .iter()
+        .map(|(e, traj, mu)| (e, (traj.clone(), *mu)))
+        .collect();
+
     let mut rng = rand::thread_rng();
 
     let mut entity = match trigger.entity() {
         entity if entity == Entity::PLACEHOLDER => commands.spawn_empty(),
         entity => commands.entity(entity),
     };
-    entity.insert((
-        // No state scope needed as it is always a child of the root.
-        Name::new(ship.name.to_string()),
-        BigGridBundle {
-            transform: Transform::from_translation(ship.position.as_vec3()),
-            ..default()
-        },
-        Selectable { radius, index: 99 },
-        CanFollow {
-            min_distance: radius as f64 * 1.05,
-            max_distance: 5e10,
-        },
-        Labelled {
-            font: TextFont::from_font_size(12.0),
-            colour: TextColor(Color::WHITE),
-            offset: Vec2::new(0.0, radius) * 1.1,
-            index: 99,
-        },
-        Trajectory::new(DiscreteStates::new(
-            ship.start,
-            ship.velocity,
-            ship.position,
-        )),
-        DiscreteStatesBuilder::new(entity.id(), ship.start, ship.velocity, ship.position),
-        FlightPlan::new(
-            end,
-            10_000,
-            ship.burns
-                .iter()
-                .map(|burn| {
-                    let (reference, frame) = burn
-                        .reference
-                        .as_ref()
-                        .and_then(|reference| find_by_name(&query_names, reference))
-                        .map(|entity| (entity, BurnFrame::Frenet))
-                        .unwrap_or((*root, BurnFrame::Cartesian));
-                    Burn::with(
-                        burn.start,
-                        burn.duration,
-                        burn.acceleration,
-                        reference,
-                        frame,
-                    )
-                })
-                .collect(),
-        ),
-        TrajectoryPlot {
-            enabled: true,
-            color: LinearRgba::new(
-                rand::Rng::gen_range(&mut rng, 0.0..1.0),
-                rand::Rng::gen_range(&mut rng, 0.0..1.0),
-                rand::Rng::gen_range(&mut rng, 0.0..1.0),
-                1.0,
-            )
-            .into(),
-            start: Epoch::from_tai_duration(-Duration::MAX),
-            end: Epoch::from_tai_duration(Duration::MAX),
-            threshold: 0.5,
-            max_points: 10_000,
-        },
-        PlotPoints::default(),
-        TrajectoryReferenceTranslated::new(entity.id(), parent, ship.start),
-        FlightTarget(None),
-    ));
+    let id = entity.id();
+    entity
+        .insert((
+            // No state scope needed as it is always a child of the root.
+            Name::new(ship.name.to_string()),
+            BigGridBundle {
+                transform: Transform::from_translation(ship.position.as_vec3()),
+                ..default()
+            },
+            Selectable { radius, index: 99 },
+            CanFollow {
+                min_distance: radius as f64 * 1.05,
+                max_distance: 5e10,
+            },
+            Labelled {
+                font: TextFont::from_font_size(12.0),
+                colour: TextColor(Color::WHITE),
+                offset: Vec2::new(0.0, radius) * 1.1,
+                index: 99,
+            },
+            Trajectory::new(DiscreteStates::new(
+                ship.start,
+                ship.velocity,
+                ship.position,
+            )),
+            DiscreteStatesBuilder::new(id, ship.start, ship.velocity, ship.position, context),
+            FlightPlan::new(
+                end,
+                10_000,
+                ship.burns
+                    .iter()
+                    .map(|burn| {
+                        let (reference, frame) = burn
+                            .reference
+                            .as_ref()
+                            .and_then(|reference| find_by_name(&query_names, reference))
+                            .map(|entity| (entity, BurnFrame::Frenet))
+                            .unwrap_or((*root, BurnFrame::Cartesian));
+                        Burn::with(
+                            burn.start,
+                            burn.duration,
+                            burn.acceleration,
+                            reference,
+                            frame,
+                        )
+                    })
+                    .collect(),
+            ),
+        ))
+        .with_child((
+            Name::new(format!("{} Plot", ship.name)),
+            TrajectoryPlot {
+                source: id,
+                enabled: true,
+                color: LinearRgba::new(
+                    rand::Rng::gen_range(&mut rng, 0.0..1.0),
+                    rand::Rng::gen_range(&mut rng, 0.0..1.0),
+                    rand::Rng::gen_range(&mut rng, 0.0..1.0),
+                    1.0,
+                )
+                .into(),
+                start: ship.start - Duration::from_parts(10, 0),
+                end: ship.start + Duration::from_parts(10, 0),
+                threshold: 0.5,
+                max_points: 10_000,
+                reference: parent,
+            },
+        ));
 
-    let entity = entity.id();
-    commands.entity(*root).add_child(entity);
-    commands.queue(hierarchy::AddChild {
-        parent: parent.unwrap_or(*root),
-        child: entity,
+    commands.entity(*root).add_child(id);
+    commands.queue(AddOrbit {
+        orbiting: parent.unwrap_or(*root),
+        body: id,
     });
 
-    commands.trigger_targets(FlightPlanChanged, entity);
+    commands.trigger_targets(FlightPlanChanged, id);
 }
 
 fn spawn_loaded_ships(
@@ -574,16 +575,16 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
 fn compute_ephemerides_bodies(mut commands: Commands, sim_time: Res<SimulationTime>) {
     let target_forward = Epoch::from_gregorian_tai_hms(1952, 1, 1, 0, 0, 0);
     let target_backward = Epoch::from_gregorian_tai_hms(1948, 1, 1, 0, 0, 0);
-    let sync_frequency = 1440;
+    let min_steps = 1000;
 
     commands.trigger(ExtendPredictionEvent::<FixedSegmentsBuilder<Forward>>::all(
         target_forward - sim_time.current(),
-        sync_frequency,
+        min_steps,
     ));
     commands.trigger(
         ExtendPredictionEvent::<FixedSegmentsBuilder<Backward>>::all(
             sim_time.current() - target_backward,
-            sync_frequency,
+            min_steps,
         ),
     );
 }
@@ -648,6 +649,7 @@ fn true_for_frames(frames: usize) -> impl Fn(Local<usize>) -> bool {
     }
 }
 
+#[allow(unused)]
 fn bypass_ephemerides_loading(
     kb: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<NextState<MainState>>,

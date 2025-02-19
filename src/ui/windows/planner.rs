@@ -92,7 +92,7 @@ impl PredictionPlannerWindow {
                 ui.add_enabled_ui(backward_duration.is_some(), |ui| {
                     if ui.button("Start prediction").clicked() {
                         if let Some(duration) = backward_duration {
-                            commands.trigger(ExtendPredictionEvent::<B>::all(duration, 1440));
+                            commands.trigger(ExtendPredictionEvent::<B>::all(duration, 1000));
                         }
                     }
                 });

@@ -1,12 +1,11 @@
 use crate::{
     camera::Followed,
-    compound_trajectory::TrajectoryReferenceTranslated,
     floating_origin::BigGridBundle,
-    hierarchy,
+    hierarchy::OrbitedBy,
     load::{LoadShipEvent, Ship, SystemRoot},
-    plot::{PlotPoints, TrajectoryPlot},
+    plot::TrajectoryPlot,
     prediction::{
-        ComputePredictionEvent, DiscreteStates, DiscreteStatesBuilder, StateVector, Trajectory,
+        ComputePredictionEvent, DiscreteStates, DiscreteStatesBuilder, Mu, StateVector, Trajectory,
         TrajectoryData,
     },
     time::SimulationTime,
@@ -54,7 +53,7 @@ impl ShipSpawnerData {
     pub fn global_state_vector(
         &self,
         at: Epoch,
-        query_trajectory: Query<&Trajectory>,
+        query_trajectory: &Query<&Trajectory>,
     ) -> StateVector<DVec3> {
         self.reference
             .and_then(|entity| query_trajectory.get(entity).ok())
@@ -77,34 +76,32 @@ impl ShipSpawnerWindow {
         sim_time: Res<SimulationTime>,
         window: Option<ResMut<Self>>,
         root: Single<Entity, With<SystemRoot>>,
-        mut query_hierarchy: Query<
-            (Entity, &Name, Option<&hierarchy::Children>),
-            Without<ShipSpawnerData>,
-        >,
+        mut query_hierarchy: Query<(Entity, &Name, Option<&OrbitedBy>), Without<ShipSpawnerData>>,
         mut query_preview: Query<(
             Entity,
             &mut ShipSpawnerData,
-            Option<(
-                &mut Name,
-                &mut DiscreteStatesBuilder,
-                &mut TrajectoryReferenceTranslated,
-            )>,
+            Option<(&mut Name, &mut DiscreteStatesBuilder, &mut TrajectoryPlot)>,
         )>,
-        mut query_trajectory: Query<&Trajectory>,
+        query_trajectory: Query<&Trajectory>,
+        query_context: Query<(Entity, &Trajectory, &Mu)>,
         followed: Res<Followed>,
     ) {
         let Some(ctx) = contexts.try_ctx_mut() else {
             return;
         };
 
-        let mut lens = query_trajectory.transmute_lens();
-        let mut query_trajectory = lens.query();
+        let new_context = || {
+            query_context
+                .iter()
+                .map(|(e, traj, mu)| (e, (traj.clone(), *mu)))
+                .collect()
+        };
 
         let Some(mut window) = window else {
             return;
         };
 
-        let Ok((preview, mut data, Some((mut name, mut builder, mut trajectory)))) =
+        let Ok((preview, mut data, Some((mut name, mut builder, mut plot)))) =
             query_preview.get_single_mut()
         else {
             let (entity, data) = match query_preview.get_single() {
@@ -125,7 +122,7 @@ impl ShipSpawnerWindow {
             };
 
             let radius = 0.01;
-            let sv = data.global_state_vector(data.start, query_trajectory.reborrow());
+            let sv = data.global_state_vector(data.start, &query_trajectory);
 
             commands.entity(entity).insert((
                 Name::new(data.name.to_string()),
@@ -140,17 +137,23 @@ impl ShipSpawnerWindow {
                     index: 99,
                 },
                 Trajectory::new(DiscreteStates::new(data.start, sv.velocity, sv.position)),
-                DiscreteStatesBuilder::new(entity, data.start, sv.velocity, sv.position),
-                TrajectoryReferenceTranslated::new(entity, data.reference, data.start),
+                DiscreteStatesBuilder::new(
+                    entity,
+                    data.start,
+                    sv.velocity,
+                    sv.position,
+                    new_context(),
+                ),
                 TrajectoryPlot {
                     enabled: true,
                     color: bevy::color::palettes::css::FUCHSIA.into(),
                     start: Epoch::from_tai_duration(-Duration::MAX),
                     end: Epoch::from_tai_duration(Duration::MAX),
                     threshold: 0.5,
-                    max_points: 10_000,
+                    max_points: usize::MAX,
+                    source: entity,
+                    reference: data.reference,
                 },
-                PlotPoints::default(),
             ));
 
             window.valid_preview = false;
@@ -196,18 +199,18 @@ impl ShipSpawnerWindow {
 
                 let name = data
                     .reference
-                    .map(|entity| get_name(entity, query_hierarchy.transmute_lens()))
+                    .map(|entity| get_name(entity, &query_hierarchy.transmute_lens().query()))
                     .unwrap_or_else(|| "None".to_string());
                 egui::ComboBox::from_id_salt("Reference")
                     .wrap_mode(egui::TextWrapMode::Extend)
                     .selected_text(name)
                     .show_ui(ui, |ui| {
                         show_tree(
-                            *root,
-                            &query_hierarchy.transmute_lens().query(),
-                            |_| true,
                             ui,
-                            |ui, _, (ref_entity, ref_name, _), _| {
+                            query_hierarchy.get(*root).unwrap(),
+                            |&(e, name, _)| (e, name.clone()),
+                            |i, _| i != 0,
+                            |ui, _, (ref_entity, ref_name, children), _| {
                                 ui.horizontal(|ui| {
                                     if ui
                                         .selectable_value(
@@ -218,11 +221,11 @@ impl ShipSpawnerWindow {
                                         .changed()
                                     {
                                         window.valid_preview = false;
-                                        trajectory.relative.reference = data.reference;
+                                        plot.reference = data.reference;
                                     }
-
-                                    ui.add_space(10.0);
                                 });
+
+                                children.map(|c| query_hierarchy.iter_many(c))
                             },
                         );
                     });
@@ -305,7 +308,7 @@ impl ShipSpawnerWindow {
                     .on_disabled_hover_text("Name required")
                     .clicked()
                 {
-                    let sv = data.global_state_vector(data.start, query_trajectory.reborrow());
+                    let sv = data.global_state_vector(data.start, &query_trajectory);
 
                     commands.trigger(LoadShipEvent(Ship::new(
                         data.name.to_string(),
@@ -349,8 +352,14 @@ impl ShipSpawnerWindow {
             });
 
         if !window.valid_preview {
-            let sv = data.global_state_vector(data.start, query_trajectory.reborrow());
-            *builder = DiscreteStatesBuilder::new(preview, data.start, sv.velocity, sv.position);
+            let sv = data.global_state_vector(data.start, &query_trajectory);
+            *builder = DiscreteStatesBuilder::new(
+                preview,
+                data.start,
+                sv.velocity,
+                sv.position,
+                new_context(),
+            );
 
             commands.trigger(ComputePredictionEvent::<DiscreteStatesBuilder>::with(
                 [preview],

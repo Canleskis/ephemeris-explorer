@@ -1,5 +1,4 @@
 use crate::{
-    compound_trajectory::TrajectoryReferenceTranslated,
     floating_origin::{BigSpace, Grid, GridCell},
     prediction::{Trajectory, TrajectoryData},
     rotation::Rotating,
@@ -34,22 +33,27 @@ impl SimulationTime {
         }
     }
 
+    #[inline]
     pub fn start(&self) -> Epoch {
         self.start
     }
 
+    #[inline]
     pub fn end(&self) -> Epoch {
         self.end
     }
 
+    #[inline]
     pub fn current(&self) -> Epoch {
         self.current
     }
 
+    #[inline]
     pub fn set_current_clamped(&mut self, epoch: Epoch) {
         self.current = epoch.clamp(self.start, self.end);
     }
 
+    #[inline]
     pub fn real_time_scale(&self) -> f64 {
         self.real_time_scale
     }
@@ -61,7 +65,7 @@ impl Plugin for SimulationTimePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             First,
-            (sync_bounds, flow_time, sync_translation_epoch)
+            (sync_bounds, flow_time)
                 .chain()
                 .after(bevy::time::TimeSystem)
                 .run_if(in_state(MainState::Running)),
@@ -91,25 +95,15 @@ fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {
         (sim_time.current - previous).total_nanoseconds() as f64 / delta.total_nanoseconds() as f64;
 }
 
-fn sync_translation_epoch(
-    time: Res<SimulationTime>,
-    mut query: Query<&mut TrajectoryReferenceTranslated>,
-) {
-    for mut relative in query.iter_mut() {
-        relative.translation_epoch = time.current();
-    }
-}
-
 fn sync_position_to_time(
     sim_time: Res<SimulationTime>,
     mut query: Query<(&mut Transform, &mut GridCell, &Trajectory)>,
-    root: Query<&Grid, With<BigSpace>>,
+    root: Single<&Grid, With<BigSpace>>,
 ) {
     if sim_time.start() >= sim_time.end() {
         return;
     }
 
-    let root = root.single();
     for (mut transform, mut cell, trajectory) in query.iter_mut() {
         let time = sim_time
             .current()

@@ -3,7 +3,6 @@
 mod analysis;
 mod auto_extend;
 mod camera;
-mod compound_trajectory;
 mod flight_plan;
 mod floating_origin;
 mod hierarchy;
@@ -87,6 +86,7 @@ fn main() {
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
         .add_systems(Startup, (set_window_icon, default_solar_system))
+        .add_systems(First, delay_window_visiblity)
         .add_systems(PreUpdate, toggle_full_screen)
         .run();
 }
@@ -112,22 +112,6 @@ fn set_window_icon(
     };
 }
 
-fn toggle_full_screen(
-    kb: Res<ButtonInput<KeyCode>>,
-    mut query_window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
-) {
-    if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
-        let mode = &mut query_window.single_mut().mode;
-        bevy::log::debug!("Toggling window mode");
-        match *mode {
-            WindowMode::Windowed => {
-                *mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-            }
-            _ => *mode = WindowMode::Windowed,
-        }
-    }
-}
-
 const DEFAULT_SOLAR_SYSTEM_PATH: &str = "systems/full_solar_system_2433282.500372499";
 
 fn default_solar_system(
@@ -143,6 +127,32 @@ fn default_solar_system(
         }
         Err(err) => {
             panic!("Failed to load default solar system: {}", err);
+        }
+    }
+}
+
+fn delay_window_visiblity(mut window: Query<&mut Window>, frames: Res<bevy::core::FrameCount>) {
+    // The delay may be different for your app or system.
+    if frames.0 == 3 {
+        // At this point the gpu is ready to show the app so we can make the window visible.
+        // Alternatively, you could toggle the visibility in Startup.
+        // It will work, but it will have one white frame before it starts rendering
+        window.single_mut().visible = true;
+    }
+}
+
+fn toggle_full_screen(
+    kb: Res<ButtonInput<KeyCode>>,
+    mut query_window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
+        let mode = &mut query_window.single_mut().mode;
+        bevy::log::debug!("Toggling window mode");
+        match *mode {
+            WindowMode::Windowed => {
+                *mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+            }
+            _ => *mode = WindowMode::Windowed,
         }
     }
 }

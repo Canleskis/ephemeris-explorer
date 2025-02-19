@@ -1,10 +1,9 @@
 use crate::{
-    compound_trajectory::{CompoundTrajectoryData, TrajectoryReferenceTranslated},
     flight_plan::{Burn, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
-    plot::{PlotPoints, TrajectoryHitPoint, TrajectoryPlot, PICK_THRESHOLD},
+    plot::{PlotPoints, SourceOf, TrajectoryHitPoint, TrajectoryPlot, PICK_THRESHOLD},
     prediction::{
-        DiscreteStatesBuilder, PredictionTracker, RelativeTrajectory, Trajectory, TrajectoryData,
+        DiscreteStatesBuilder, Predicting, RelativeTrajectory, Trajectory, TrajectoryData,
     },
     selection::Selected,
     time::SimulationTime,
@@ -14,7 +13,7 @@ use crate::{
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use hifitime::Duration;
+use hifitime::{Duration, Epoch};
 
 #[derive(Component, Default)]
 pub struct Labelled {
@@ -35,8 +34,7 @@ impl Plugin for WorldUiPlugin {
         .add_systems(
             PostUpdate,
             (
-                show_separation
-                    .after(crate::plot::compute_plot_points::<TrajectoryReferenceTranslated>),
+                show_separation.after(crate::plot::compute_plot_points_parallel),
                 show_intersections
                     .before(bevy_egui::EguiPostUpdateSet::EndPass)
                     .after(crate::plot::trajectory_picking),
@@ -228,7 +226,6 @@ fn update_labels_color(
     *deselected = **selected;
 }
 
-#[expect(clippy::too_many_arguments)]
 fn show_intersections(
     mut contexts: EguiContexts,
     mut gizmos: Gizmos,
@@ -236,14 +233,9 @@ fn show_intersections(
     input: Res<ButtonInput<MouseButton>>,
     mut sim_time: ResMut<SimulationTime>,
     mut events: EventReader<TrajectoryHitPoint>,
-    mut query_points: Query<(
-        &Name,
-        &PlotPoints,
-        &TrajectoryReferenceTranslated,
-        &TrajectoryPlot,
-        Option<&mut FlightPlan>,
-    )>,
     query_trajectory: Query<&Trajectory>,
+    query_points: Query<(&Name, &PlotPoints, &TrajectoryPlot)>,
+    mut query_flight_plan: Query<&mut FlightPlan>,
     query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
     mut persisted: Local<Vec<TrajectoryHitPoint>>,
     root: Single<Entity, With<SystemRoot>>,
@@ -285,19 +277,20 @@ fn show_intersections(
         let is_persisted = i == 1;
         // All hits are on the same entity.
         let entity = hits[0].entity;
-        let Ok((name, points, data, plot, mut flight_plan)) = query_points.get_mut(entity) else {
+        let Ok((name, points, plot)) = query_points.get(entity) else {
             continue;
         };
-        let Some(relative) = data.relative.fetch(&query_trajectory) else {
+
+        let Some(relative) = plot.relative_trajectory(&query_trajectory) else {
             continue;
         };
+
         let window_data = hits
             .iter()
             .filter_map(|hit| {
-                let real_sv = relative.state_vector(hit.time)?;
                 let position = points.evaluate(hit.time)?;
                 let vp_position = camera.world_to_viewport(camera_transform, position).ok()?;
-                Some((vp_position, position, real_sv, hit.time))
+                Some((vp_position, position, hit.time))
             })
             .collect::<Vec<_>>();
         if window_data.is_empty() {
@@ -345,51 +338,51 @@ fn show_intersections(
                         ui.text_style_height(&egui::TextStyle::Body),
                         window_data.len(),
                         |ui, range| {
-                            for (j, (_, position, sv, time)) in window_data.iter().enumerate() {
-                                let time = time.round(Duration::from_seconds(1.0));
-                                let hovered = range
-                                    .contains(&j)
-                                    .then(|| {
-                                        ui.scope(|ui| {
-                                            let is_current = time == sim_time.current();
-                                            let mut text = egui::RichText::new(time.to_string());
-                                            if is_current {
-                                                text = text.italics();
-                                            }
-                                            egui::CollapsingHeader::new(text)
-                                                .id_salt(format!("{name}#{time}#{j}"))
-                                                .show(ui, |ui| {
+                            for (j, (_, position, time)) in window_data.iter().enumerate() {
+                                let hovered = if range.contains(&j) {
+                                    let time = time.round(Duration::from_seconds(1.0));
+                                    ui.scope(|ui| {
+                                        let is_current = time == sim_time.current();
+                                        let mut text = egui::RichText::new(time.to_string());
+                                        if is_current {
+                                            text = text.italics();
+                                        }
+                                        egui::CollapsingHeader::new(text)
+                                            .id_salt(format!("{name}#{time}#{j}"))
+                                            .show(ui, |ui| {
+                                                if let Some(position) = relative.position(time) {
                                                     ui.label(nformat!(
                                                         "Distance: {:.2} km",
-                                                        sv.position.length()
+                                                        position.length()
                                                     ));
-                                                    ui.horizontal(|ui| {
-                                                        if ui.button("Go to").clicked() {
-                                                            sim_time.set_current_clamped(time);
-                                                        }
+                                                }
+                                                ui.horizontal(|ui| {
+                                                    if ui.button("Go to").clicked() {
+                                                        sim_time.set_current_clamped(time);
+                                                    }
 
-                                                        if let Some(flight_plan) =
-                                                            flight_plan.as_mut()
-                                                        {
-                                                            if ui.button("Add manoeuvre").clicked()
-                                                            {
-                                                                flight_plan.burns.push(Burn::new(
-                                                                    time,
-                                                                    data.relative
-                                                                        .reference
-                                                                        .unwrap_or(*root),
-                                                                ));
-                                                                commands.trigger_targets(
-                                                                    FlightPlanChanged,
-                                                                    entity,
-                                                                );
-                                                            }
+                                                    if let Ok(mut flight_plan) =
+                                                        query_flight_plan.get_mut(plot.source)
+                                                    {
+                                                        if ui.button("Add manoeuvre").clicked() {
+                                                            flight_plan.burns.push(Burn::new(
+                                                                time,
+                                                                plot.reference.unwrap_or(*root),
+                                                            ));
+                                                            commands.trigger_targets(
+                                                                FlightPlanChanged,
+                                                                entity,
+                                                            );
                                                         }
-                                                    })
-                                                });
-                                        })
+                                                    }
+                                                })
+                                            });
                                     })
-                                    .is_some_and(|r| r.response.contains_pointer());
+                                    .response
+                                    .contains_pointer()
+                                } else {
+                                    false
+                                };
 
                                 let direction = camera_transform.translation() - *position;
                                 let size = direction.length() * PICK_THRESHOLD * fov;
@@ -432,25 +425,30 @@ fn close_button(ui: &mut egui::Ui) -> egui::Response {
     response
 }
 
-#[derive(Clone, Copy, Component, Deref, DerefMut)]
-pub struct FlightTarget(pub Option<Entity>);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Component, Hash)]
+pub enum SeparationPlot {
+    Trajectory(Entity),
+    #[expect(unused)]
+    Plot(Entity),
+}
 
-#[expect(clippy::type_complexity)]
+impl SeparationPlot {
+    pub fn entity(&self) -> Entity {
+        match self {
+            SeparationPlot::Trajectory(entity) => *entity,
+            SeparationPlot::Plot(entity) => *entity,
+        }
+    }
+}
+
 fn show_separation(
     mut contexts: EguiContexts,
     mut gizmos: Gizmos,
     query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
-    query_data: Query<
-        (
-            &Trajectory,
-            &PlotPoints,
-            &TrajectoryReferenceTranslated,
-            &Name,
-            Option<&FlightTarget>,
-        ),
-        // Don't display the separation if the prediction is still being computed.
-        Without<PredictionTracker<DiscreteStatesBuilder>>,
-    >,
+    query_data: Query<(&Name, &PlotPoints, &TrajectoryPlot, Option<&SeparationPlot>)>,
+    // Don't display the separation if the prediction is still being computed.
+    query_trajectory: Query<&Trajectory, Without<Predicting<DiscreteStatesBuilder>>>,
+    query_source_of: Query<&SourceOf>,
 ) {
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
@@ -464,13 +462,31 @@ fn show_separation(
 
     let color = LinearRgba::gray(0.4);
 
-    for (trajectory, points, data, name, target) in query_data.iter() {
+    for (name, points, plot, target) in query_data.iter() {
         (|| {
-            let target = (**target?)?;
-            let (target_trajectory, target_points, target_data, ..) =
-                query_data.get(target).ok()?;
+            let target = target?;
+            let (target_trajectory, target_data) = match target {
+                SeparationPlot::Trajectory(entity) => (query_trajectory.get(*entity).ok()?, None),
+                SeparationPlot::Plot(entity) => {
+                    let (_, target_points, target_plot, _) = query_data.get(*entity).ok()?;
+                    let target_trajectory = query_trajectory.get(target_plot.source).ok()?;
+
+                    (target_trajectory, Some((target_points, target_plot)))
+                }
+            };
+            const EPOCH_MIN: Epoch = Epoch::from_tai_duration(Duration::MIN);
+            let target_start = target_data.map_or(EPOCH_MIN, |(_, plot)| plot.start);
+            const EPOCH_MAX: Epoch = Epoch::from_tai_duration(Duration::MAX);
+            let target_end = target_data.map_or(EPOCH_MAX, |(_, plot)| plot.end);
+
+            let trajectory = query_trajectory.get(plot.source).ok()?;
             let relative = RelativeTrajectory::new(trajectory, Some(target_trajectory));
-            let at = relative.closest_separation(1e-3, 100)?;
+            let at = relative.closest_separation_between(
+                plot.start.max(target_start),
+                plot.end.min(target_end),
+                0.001,
+                1000,
+            )?;
 
             let position = points.evaluate(at)?;
             let direction = camera_transform.translation() - position;
@@ -483,25 +499,44 @@ fn show_separation(
                 color,
             );
 
-            let target_position = target_points.evaluate(at)?;
-            let direction = camera_transform.translation() - target_position;
-            let size = direction.length() * 4e-3 * fov;
-            gizmos.circle(
-                Transform::from_translation(target_position)
-                    .looking_to(direction, Vec3::Y)
-                    .to_isometry(),
-                size,
-                color,
-            );
+            // If there is no target data, that means the target is a trajectory.
+            // Find the first plotted trajectory that contains the time of closest separation.
+            let target_data = target_data.or_else(|| {
+                let source_of = query_source_of.get(target.entity()).ok()?;
+                source_of.iter().find_map(|plot_entity| {
+                    query_data
+                        .get(*plot_entity)
+                        .ok()
+                        .map(|(_, points, plot, _)| (points, plot))
+                        .filter(|(_, plot)| plot.start <= at && plot.end >= at)
+                })
+            });
 
-            let separation_line = data.relative.reference == target_data.relative.reference;
-            if separation_line {
-                gizmos.line(position, target_position, color);
+            let target_position = target_data.and_then(|(points, _)| points.evaluate(at));
+            if let Some(target_position) = target_position {
+                let direction = camera_transform.translation() - target_position;
+                let size = direction.length() * 4e-3 * fov;
+                gizmos.circle(
+                    Transform::from_translation(target_position)
+                        .looking_to(direction, Vec3::Y)
+                        .to_isometry(),
+                    size,
+                    color,
+                );
             }
 
-            let window_position = match separation_line {
-                true => (position + target_position) / 2.0,
-                false => position,
+            let window_position = match target_position {
+                // Only show the separation line if the two plots have the same reference.
+                // In that case, we also offset the window position to the middle of that line.
+                Some(target_position)
+                    if target_data.is_some_and(|(_, target_plot)| {
+                        target_plot.reference == plot.reference
+                    }) =>
+                {
+                    gizmos.line(position, target_position, color);
+                    (position + target_position) / 2.0
+                }
+                _ => position,
             };
             let window_position = camera
                 .world_to_viewport(camera_transform, window_position)
@@ -509,7 +544,6 @@ fn show_separation(
                 + Vec2::new(10.0, -15.0);
 
             let distance = relative.position(at)?.length();
-
             egui::Window::new(name.as_str())
                 .id(egui::Id::new(name.to_string() + "#separation"))
                 .fixed_pos(window_position.to_array())

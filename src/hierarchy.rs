@@ -1,16 +1,17 @@
 //! Similar to `bevy_hierarchy` but simply for an informative relationship.
 
+use bevy::ecs::query::{QueryData, QueryFilter, WorldQuery};
 use bevy::ecs::world::Command;
 use bevy::prelude::*;
 use smallvec::SmallVec;
 
 #[derive(Component, Debug, Eq, PartialEq, Deref)]
-pub struct Parent(Entity);
+pub struct Orbiting(Entity);
 
 #[derive(Component, Debug, Default)]
-pub struct Children(SmallVec<[Entity; 8]>);
+pub struct OrbitedBy(SmallVec<[Entity; 8]>);
 
-impl std::ops::Deref for Children {
+impl std::ops::Deref for OrbitedBy {
     type Target = [Entity];
 
     #[inline(always)]
@@ -19,7 +20,7 @@ impl std::ops::Deref for Children {
     }
 }
 
-impl<'a> IntoIterator for &'a Children {
+impl<'a> IntoIterator for &'a OrbitedBy {
     type Item = <Self::IntoIter as Iterator>::Item;
 
     type IntoIter = std::slice::Iter<'a, Entity>;
@@ -30,67 +31,124 @@ impl<'a> IntoIterator for &'a Children {
     }
 }
 
-/// Command that adds a child to an entity.
 #[derive(Debug)]
-pub struct AddChild {
-    /// Parent entity to add the child to.
-    pub parent: Entity,
-    /// Child entity to add.
-    pub child: Entity,
+pub struct AddOrbit {
+    pub orbiting: Entity,
+    pub body: Entity,
 }
 
 // Rough implementation for the needs of the project.
 
-impl Command for AddChild {
+impl Command for AddOrbit {
     fn apply(self, world: &mut World) {
-        if self.child == self.parent {
+        if self.body == self.orbiting {
             panic!("Cannot add entity as a child of itself.");
         }
 
-        update_old_parent(world, self.child, self.parent);
+        update_old_orbiting(world, self.body, self.orbiting);
 
-        let mut parent = world.entity_mut(self.parent);
-        if let Some(mut children_component) = parent.get_mut::<Children>() {
-            children_component.0.retain(|value| self.child != *value);
-            children_component.0.push(self.child);
+        let mut orbiting = world.entity_mut(self.orbiting);
+        if let Some(mut orbited_by_component) = orbiting.get_mut::<OrbitedBy>() {
+            orbited_by_component.0.retain(|value| self.body != *value);
+            orbited_by_component.0.push(self.body);
         } else {
-            parent.insert(Children(SmallVec::from_slice(&[self.child])));
+            orbiting.insert(OrbitedBy(SmallVec::from_slice(&[self.body])));
         }
     }
 }
 
-fn update_parent(world: &mut World, child: Entity, new_parent: Entity) -> Option<Entity> {
-    let mut child = world.entity_mut(child);
-    if let Some(mut parent) = child.get_mut::<Parent>() {
-        let previous = parent.0;
-        *parent = Parent(new_parent);
+fn update_orbiting(world: &mut World, child: Entity, new_orbiting: Entity) -> Option<Entity> {
+    let mut body = world.entity_mut(child);
+    if let Some(mut orbiting) = body.get_mut::<Orbiting>() {
+        let previous = orbiting.0;
+        *orbiting = Orbiting(new_orbiting);
         Some(previous)
     } else {
-        child.insert(Parent(new_parent));
+        body.insert(Orbiting(new_orbiting));
         None
     }
 }
 
-fn remove_from_children(world: &mut World, parent: Entity, child: Entity) {
-    let Ok(mut parent) = world.get_entity_mut(parent) else {
+fn remove_from_orbited_by(world: &mut World, orbiting: Entity, body: Entity) {
+    let Ok(mut orbiting) = world.get_entity_mut(orbiting) else {
         return;
     };
-    let Some(mut children) = parent.get_mut::<Children>() else {
+    let Some(mut orbited) = orbiting.get_mut::<OrbitedBy>() else {
         return;
     };
-    children.0.retain(|x| *x != child);
-    if children.is_empty() {
-        parent.remove::<Children>();
+    orbited.0.retain(|x| *x != body);
+    if orbited.is_empty() {
+        orbiting.remove::<OrbitedBy>();
     }
 }
 
-fn update_old_parent(world: &mut World, child: Entity, parent: Entity) {
-    let previous = update_parent(world, child, parent);
-    if let Some(previous_parent) = previous {
-        // Do nothing if the child was already parented to this entity.
-        if previous_parent == parent {
+fn update_old_orbiting(world: &mut World, body: Entity, orbiting: Entity) {
+    let previous = update_orbiting(world, body, orbiting);
+    if let Some(previous_orbiting) = previous {
+        if previous_orbiting == orbiting {
             return;
         }
-        remove_from_children(world, previous_parent, child);
+        remove_from_orbited_by(world, previous_orbiting, body);
+    }
+}
+
+/// An [`Iterator`] of [`Entity`]s over the descendants of an [`Entity`].
+///
+/// Traverses the hierarchy breadth-first.
+pub struct OrbitingDescendantIter<'w, 's, D: QueryData, F: QueryFilter>
+where
+    D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>,
+{
+    orbited_by_query: &'w Query<'w, 's, D, F>,
+    vecdeque: std::collections::VecDeque<Entity>,
+}
+
+impl<'w, 's, D: QueryData, F: QueryFilter> OrbitingDescendantIter<'w, 's, D, F>
+where
+    D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>,
+{
+    /// Returns a new [`DescendantIter`].
+    pub fn new(orbited_by_query: &'w Query<'w, 's, D, F>, entity: Entity) -> Self {
+        OrbitingDescendantIter {
+            orbited_by_query,
+            vecdeque: orbited_by_query
+                .get(entity)
+                .into_iter()
+                .flatten()
+                .copied()
+                .collect(),
+        }
+    }
+}
+
+impl<'w, D: QueryData, F: QueryFilter> Iterator for OrbitingDescendantIter<'w, '_, D, F>
+where
+    D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>,
+{
+    type Item = Entity;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entity = self.vecdeque.pop_front()?;
+
+        if let Ok(orbited_by) = self.orbited_by_query.get(entity) {
+            self.vecdeque.extend(orbited_by);
+        }
+
+        Some(entity)
+    }
+}
+
+pub trait HierarchyQueryExt<'w, 's, D: QueryData, F: QueryFilter> {
+    fn iter_orbiting_descendants(&'w self, entity: Entity) -> OrbitingDescendantIter<'w, 's, D, F>
+    where
+        D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>;
+}
+
+impl<'w, 's, D: QueryData, F: QueryFilter> HierarchyQueryExt<'w, 's, D, F> for Query<'w, 's, D, F> {
+    fn iter_orbiting_descendants(&'w self, entity: Entity) -> OrbitingDescendantIter<'w, 's, D, F>
+    where
+        D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>,
+    {
+        OrbitingDescendantIter::new(self, entity)
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    hierarchy,
+    hierarchy::{AddOrbit, Orbiting},
     prediction::{Trajectory, TrajectoryData},
     time::SimulationTime,
     MainState,
@@ -53,27 +53,27 @@ where
 fn sphere_of_influence_to_hierarchy(
     mut commands: Commands,
     sim_time: Res<SimulationTime>,
-    query: Query<(Entity, &Trajectory, &hierarchy::Parent), Without<SphereOfInfluence>>,
+    query: Query<(Entity, &Trajectory, &Orbiting), Without<SphereOfInfluence>>,
     query_soi: Query<(Entity, &Trajectory, &SphereOfInfluence)>,
 ) {
-    for (entity, trajectory, parent) in query.iter() {
+    for (entity, trajectory, orbiting) in query.iter() {
         let Some(position) = trajectory.position(sim_time.current()) else {
             continue;
         };
 
-        let new_parent = under_soi(
+        let new_orbiting = under_soi(
             query_soi.iter().filter_map(|(entity, trajectory, soi)| {
                 Some((entity, trajectory.position(sim_time.current())?, soi))
             }),
             position,
         );
-        if let Some(new_parent) = new_parent {
-            if **parent == new_parent {
+        if let Some(new_orbiting) = new_orbiting {
+            if **orbiting == new_orbiting {
                 continue;
             }
-            commands.queue(hierarchy::AddChild {
-                parent: new_parent,
-                child: entity,
+            commands.queue(AddOrbit {
+                orbiting: new_orbiting,
+                body: entity,
             });
         }
     }

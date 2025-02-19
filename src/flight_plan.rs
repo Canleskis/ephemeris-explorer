@@ -175,7 +175,8 @@ fn compute_flight_plan(
     let Ok((mut flight_plan, mut last, mut builder, trajectory)) = query.get_mut(entity) else {
         return;
     };
-    let trajectory = trajectory.downcast_ref::<DiscreteStates>();
+    let binding = trajectory.read();
+    let trajectory = binding.as_any().downcast_ref::<DiscreteStates>().unwrap();
     let min = trajectory.start();
     let max = trajectory.end();
 
@@ -232,10 +233,10 @@ fn compute_flight_plan(
         return;
     };
 
-    // TODO: We could theoretically restart from the point before the new start time in some
-    // cases, but the integrator needs the previous error of that point to calculate the new
-    // step size, which we don't store. So for now we just restart from the previous integrator
-    // reset, which is the end of the previous burn.
+    // We could theoretically restart from the point before the new start time in some cases, but
+    // the integrator needs the previous error of that point to calculate the new step size, which
+    // we don't store. So for now we just restart from the previous integrator reset, which is the
+    // end of the previous burn.
     // We could fix this by changing how the integrator computes the error.
     // Note: Each key in the manoeuvres map is an integrator reset.
     let restart = builder

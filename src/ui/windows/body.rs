@@ -1,14 +1,13 @@
 use crate::{
     camera::{Followed, SetFollowed},
-    compound_trajectory::{CompoundTrajectoryData, TrajectoryReferenceTranslated},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
-    hierarchy,
+    hierarchy::{HierarchyQueryExt, OrbitedBy, Orbiting},
     load::SystemRoot,
-    plot::TrajectoryPlot,
-    prediction::{Trajectory, TrajectoryData},
+    plot::{SourceOf, TrajectoryPlot},
+    prediction::{DiscreteStatesBuilder, Mu, Trajectory, TrajectoryData},
     selection::Selected,
     time::SimulationTime,
-    ui::{get_name, nformat, show_tree, FixedUiSet, FlightTarget, IdentedInfo, ParsedTextEdit},
+    ui::{get_name, nformat, show_tree, FixedUiSet, IdentedInfo, ParsedTextEdit, SeparationPlot},
     MainState,
 };
 
@@ -42,15 +41,15 @@ fn ui_coordinate(frame: BurnFrame, ui: &mut egui::Ui, coord: &str) {
     match frame {
         BurnFrame::Frenet => match coord {
             "x" => {
-                ui.label("prograde:");
+                ui.label("Prograde:");
             }
             "y" => {
-                ui.label("radial:");
-                ui.add_space(24.0);
+                ui.label("Radial:");
+                ui.add_space(20.0);
             }
             "z" => {
-                ui.label("normal:");
-                ui.add_space(14.0);
+                ui.label("Normal:");
+                ui.add_space(12.0);
             }
             _ => {}
         },
@@ -106,9 +105,13 @@ fn precision() -> Duration {
 impl BodyInfoWindow {
     fn init(
         mut commands: Commands,
-        query: Query<(Entity, &TrajectoryPlot, Option<&FlightPlan>), Without<Self>>,
+        query: Query<(Entity, &SourceOf, Option<&FlightPlan>), Without<Self>>,
+        query_plot: Query<&TrajectoryPlot>,
     ) {
-        for (entity, plot, flight_plan) in &query {
+        for (entity, source_of, flight_plan) in &query {
+            let Some(plot) = source_of.iter().find_map(|e| query_plot.get(*e).ok()) else {
+                continue;
+            };
             commands.entity(entity).insert(Self {
                 auto_plot_reference: true,
                 plot_start_overwrite: Some(PlotOverwrite {
@@ -124,17 +127,17 @@ impl BodyInfoWindow {
     fn persisting(
         sim_time: Res<SimulationTime>,
         selected: Res<Selected>,
-        mut query: Query<(
-            Entity,
-            &hierarchy::Parent,
-            &mut TrajectoryReferenceTranslated,
-            &mut TrajectoryPlot,
-            &mut Self,
-        )>,
+        mut query: Query<(Entity, &Orbiting, &SourceOf, &mut Self)>,
+        mut query_plot: Query<&mut TrajectoryPlot>,
     ) {
-        for (entity, parent, mut data, mut plot, mut info) in &mut query {
+        for (entity, parent, source_of, mut info) in &mut query {
+            let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(**e)) else {
+                continue;
+            };
+            let mut plot = query_plot.get_mut(*plot_entity).unwrap();
+
             if info.auto_plot_reference {
-                data.relative.reference = Some(**parent);
+                plot.reference = Some(**parent);
             }
 
             if let Some(overwrite) = &info.plot_start_overwrite {
@@ -150,23 +153,25 @@ impl BodyInfoWindow {
         }
     }
 
-    #[expect(clippy::too_many_arguments, clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn show(
         mut commands: Commands,
         mut contexts: EguiContexts,
         mut selected: ResMut<Selected>,
         followed: Res<Followed>,
         sim_time: Res<SimulationTime>,
-        mut query_hierarchy: Query<(Entity, &Name, Option<&hierarchy::Children>)>,
+        mut query_hierarchy: Query<(Entity, &Name, Option<&OrbitedBy>)>,
+        query_orbited_by: Query<&OrbitedBy>,
         query_trajectory: Query<&Trajectory>,
         mut query: Query<(
-            Option<&hierarchy::Parent>,
-            Option<&mut FlightPlan>,
-            Option<&mut FlightTarget>,
-            &mut TrajectoryReferenceTranslated,
-            &mut TrajectoryPlot,
+            Option<&Orbiting>,
+            &SourceOf,
+            Option<(&mut FlightPlan, &DiscreteStatesBuilder)>,
             &mut Self,
         )>,
+        mut query_plot: Query<&mut TrajectoryPlot>,
+        mut query_separation: Query<&mut SeparationPlot>,
+        #[expect(unused)] query_source_of: Query<&SourceOf>,
         root: Single<Entity, With<SystemRoot>>,
         mut delete: Local<bevy::utils::HashSet<uuid::Uuid>>,
     ) {
@@ -188,18 +193,22 @@ impl BodyInfoWindow {
                 .default_pos([ctx.screen_rect().size().x - 11.0, 33.0])
                 .resizable([false, true])
                 .show(ctx, |ui| {
-                    let Ok((parent, mut flight_plan, mut target, mut data, mut plot, mut info)) =
-                        query.get_mut(entity)
+                    let Ok((parent, source_of, mut data, mut info)) = query.get_mut(entity) else {
+                        return;
+                    };
+
+                    let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(**e))
                     else {
                         return;
                     };
+                    let mut plot = query_plot.get_mut(*plot_entity).unwrap();
 
-                    let Some(relative) = data.relative.fetch(&query_trajectory) else {
+                    let Some(relative) = plot.relative_trajectory(&query_trajectory) else {
                         return;
                     };
 
-                    if let Some((flight_plan, delete)) =
-                        flight_plan.as_mut().zip(info.delete_body.as_mut())
+                    if let Some(((flight_plan, _), delete)) =
+                        data.as_mut().zip(info.delete_body.as_mut())
                     {
                         ui.horizontal(|ui| {
                             if ui.button("Export").clicked() {
@@ -269,10 +278,9 @@ impl BodyInfoWindow {
                         ui.separator();
                     }
 
-                    let plot_reference_name = &data
-                        .relative
+                    let plot_reference_name = &plot
                         .reference
-                        .map(|entity| get_name(entity, query_hierarchy.transmute_lens()))
+                        .map(|entity| get_name(entity, &query_hierarchy.transmute_lens().query()))
                         .unwrap_or_else(|| "None".to_string());
 
                     ui.horizontal(|ui| {
@@ -284,15 +292,15 @@ impl BodyInfoWindow {
                                 .selected_text(plot_reference_name)
                                 .show_ui(ui, |ui| {
                                     show_tree(
-                                        *root,
-                                        &query_hierarchy,
-                                        |_| true,
                                         ui,
-                                        |ui, _, (ref_entity, ref_name, _), _| {
+                                        query_hierarchy.get(*root).unwrap(),
+                                        |&(e, name, _)| (e, name),
+                                        |_, _| true,
+                                        |ui, _, (ref_entity, ref_name, children), _| {
                                             ui.horizontal(|ui| {
                                                 ui.add_enabled_ui(entity != ref_entity, |ui| {
                                                     ui.selectable_value(
-                                                        &mut data.relative.reference,
+                                                        &mut plot.reference,
                                                         Some(ref_entity),
                                                         ref_name.as_str(),
                                                     )
@@ -302,6 +310,8 @@ impl BodyInfoWindow {
                                                 });
                                                 ui.add_space(10.0);
                                             });
+
+                                            children.map(|c| query_hierarchy.iter_many(c))
                                         },
                                     );
                                 });
@@ -377,8 +387,6 @@ impl BodyInfoWindow {
                         ui.add(egui::Slider::new(&mut plot.max_points, 1..=100_000));
                     });
 
-                    ui.add_space(5.0);
-
                     ui.horizontal(|ui| {
                         let label = ui
                             .selectable_label(info.plot_start_overwrite.is_some(), "Start:")
@@ -402,10 +410,12 @@ impl BodyInfoWindow {
                                 &mut plot.start,
                                 |buf| Epoch::from_str(buf).ok(),
                                 Epoch::to_string,
-                            ),
+                            )
+                            .id("Start"),
                         )
                         .on_disabled_hover_text("Overwritten with current time");
                     });
+                    ui.add_space(5.0);
                     ui.horizontal(|ui| {
                         let label = ui
                             .selectable_label(info.plot_end_overwrite.is_some(), "End:  ")
@@ -429,7 +439,8 @@ impl BodyInfoWindow {
                                 &mut plot.end,
                                 |buf| Epoch::from_str(buf).ok(),
                                 Epoch::to_string,
-                            ),
+                            )
+                            .id("End"),
                         )
                         .on_disabled_hover_text("Overwritten with current time");
                     });
@@ -448,7 +459,115 @@ impl BodyInfoWindow {
                         plot.color = Color::LinearRgba(LinearRgba::from_f32_array(color));
                     });
 
-                    let Some(flight_plan) = flight_plan.as_mut() else {
+                    ui.add_space(5.0);
+
+                    // Reborrow to drop previous mutable borrow of the query.
+                    let plot = query_plot.get(*plot_entity).unwrap();
+
+                    if let Ok(target) = query_separation.get_mut(*plot_entity).as_deref_mut() {
+                        let unknown = Name::new("Unknown");
+                        let name = |e| {
+                            query_hierarchy
+                                .get(e)
+                                .map(|(_, name, _)| name)
+                                .unwrap_or(&unknown)
+                        };
+
+                        ui.horizontal(|ui| {
+                            ui.label("Separation marker:");
+                            egui::ComboBox::from_id_salt("Separation")
+                                .wrap_mode(egui::TextWrapMode::Extend)
+                                .selected_text(name(target.entity()).as_str())
+                                .show_ui(ui, |ui| {
+                                    show_tree(
+                                        ui,
+                                        SeparationPlot::Trajectory(*root),
+                                        |&item| item,
+                                        |_, separation| {
+                                            matches!(separation, SeparationPlot::Trajectory(_))
+                                        },
+                                        |ui, _, separation, _| {
+                                            let ref_entity = separation.entity();
+                                            let color = query_plot
+                                                .get(ref_entity)
+                                                .ok()
+                                                .map(|plot| {
+                                                    let [r, g, b, a] =
+                                                        plot.color.to_srgba().to_u8_array();
+                                                    egui::Rgba::from_srgba_premultiplied(r, g, b, a)
+                                                        .into()
+                                                })
+                                                .unwrap_or(
+                                                    ui.visuals()
+                                                        .widgets
+                                                        .noninteractive
+                                                        .fg_stroke
+                                                        .color,
+                                                );
+
+                                            let name = name(ref_entity);
+                                            let name = name
+                                                .find("Plot")
+                                                .map(|i| {
+                                                    ui.spacing_mut().interact_size.y = 5.0;
+                                                    egui::RichText::new(&name[i..])
+                                                        .size(10.5)
+                                                        .color(color)
+                                                })
+                                                .unwrap_or_else(|| egui::RichText::new(name));
+
+                                            let enabled = entity != ref_entity
+                                                && !source_of.contains(&ref_entity);
+                                            ui.add_enabled_ui(enabled, |ui| {
+                                                ui.vertical(|ui| {
+                                                    ui.selectable_value(target, separation, name);
+                                                });
+
+                                                ui.add_space(20.0);
+                                            })
+                                            .response
+                                            .on_disabled_hover_text(
+                                                "Cannot use itself as a target",
+                                            );
+
+                                            // Eventually, when we can have multiple plotted trajectories for a body
+
+                                            // let plots =
+                                            //     query_source_of.get(ref_entity).ok().map(|c| {
+                                            //         c.iter()
+                                            //             .filter(|e| query_plot.contains(**e))
+                                            //             .map(|e| SeparationPlot::Plot(*e))
+                                            //     });
+
+                                            // let children = query_children.get(ref_entity).ok().map(|c| {
+                                            //     c.iter().map(|e| SeparationPlot::Trajectory(*e))
+                                            // });
+
+                                            // Some(
+                                            //     plots
+                                            //         .into_iter()
+                                            //         .flatten()
+                                            //         .chain(children.into_iter().flatten()),
+                                            // )
+
+                                            query_orbited_by.get(ref_entity).ok().map(|c| {
+                                                c.iter().map(|e| SeparationPlot::Trajectory(*e))
+                                            })
+                                        },
+                                    );
+                                });
+
+                            if ui.button("❌").clicked() {
+                                commands.entity(*plot_entity).remove::<SeparationPlot>();
+                            }
+                        });
+                    } else if ui.button("Set separation marker").clicked() {
+                        commands
+                            .entity(*plot_entity)
+                            .insert(SeparationPlot::Trajectory(plot.reference.unwrap_or(*root)));
+                    }
+
+                    let Some((flight_plan, builder)) = data.as_mut() else {
                         return;
                     };
 
@@ -458,46 +577,14 @@ impl BodyInfoWindow {
                     ui.add_space(2.0);
                     ui.spacing_mut().text_edit_width = 240.0;
 
-                    if let Some(target) = target.as_deref_mut() {
-                        let target_name = target
-                            .map(|entity| get_name(entity, query_hierarchy.transmute_lens()))
-                            .unwrap_or_else(|| "None".to_string());
-                        ui.horizontal(|ui| {
-                            ui.label("Target:");
-                            egui::ComboBox::from_id_salt("Target")
-                                .wrap_mode(egui::TextWrapMode::Extend)
-                                .selected_text(target_name)
-                                .show_ui(ui, |ui| {
-                                    show_tree(
-                                        *root,
-                                        &query_hierarchy,
-                                        |_| true,
-                                        ui,
-                                        |ui, _, (ref_entity, ref_name, _), _| {
-                                            ui.horizontal(|ui| {
-                                                ui.add_enabled_ui(entity != ref_entity, |ui| {
-                                                    ui.selectable_value(
-                                                        &mut **target,
-                                                        Some(ref_entity),
-                                                        ref_name.as_str(),
-                                                    )
-                                                    .on_disabled_hover_text(
-                                                        "Cannot use itself as a target",
-                                                    );
-                                                });
-                                                ui.add_space(10.0);
-                                            });
-                                        },
-                                    );
-                                });
-                        });
-                    }
-
                     ui.add_space(2.0);
 
                     let mut changed = false;
 
-                    let min_time = relative.trajectory.start();
+                    let Ok(trajectory) = query_trajectory.get(entity) else {
+                        return;
+                    };
+                    let min_time = trajectory.start();
                     let max_time = Epoch::from_tai_duration(Duration::MAX);
 
                     ui.horizontal(|ui| {
@@ -545,7 +632,7 @@ impl BodyInfoWindow {
                             let start = last_burn.map(|b| b.end()).unwrap_or(min_time);
                             flight_plan
                                 .burns
-                                .push(Burn::new(start, data.relative.reference.unwrap_or(*root)));
+                                .push(Burn::new(start, plot.reference.unwrap_or(*root)));
                             changed = true;
                         }
 
@@ -590,7 +677,9 @@ impl BodyInfoWindow {
                                             idx,
                                             *root,
                                             entity,
+                                            builder.context(),
                                             &mut query_hierarchy,
+                                            &query_orbited_by,
                                             min_time,
                                             || delete.insert(id),
                                         );
@@ -613,14 +702,15 @@ impl BodyInfoWindow {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn show_burn_ui(
         ui: &mut egui::Ui,
         burn: &mut Burn,
         idx: usize,
         root: Entity,
         selected: Entity,
-        query_hierarchy: &mut Query<(Entity, &Name, Option<&hierarchy::Children>)>,
+        context: &bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
+        query_hierarchy: &mut Query<(Entity, &Name, Option<&OrbitedBy>)>,
+        query_orbited_by: &Query<&OrbitedBy>,
         min_time: Epoch,
         mut delete_cb: impl FnMut() -> bool,
     ) -> bool {
@@ -711,8 +801,9 @@ impl BodyInfoWindow {
                 });
 
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
                     ui.label("Frame:");
-                    ui.add_space(27.0);
+                    ui.add_space(32.0);
 
                     egui::ComboBox::from_id_salt("Frame")
                         .selected_text(burn.frame.to_string())
@@ -732,15 +823,23 @@ impl BodyInfoWindow {
                             .wrap_mode(egui::TextWrapMode::Extend)
                             .selected_text(get_name(
                                 burn.reference,
-                                query_hierarchy.transmute_lens(),
+                                &query_hierarchy.transmute_lens().query(),
                             ))
                             .show_ui(ui, |ui| {
+                                let first_in_context = query_orbited_by
+                                    .iter_orbiting_descendants(root)
+                                    .find(|e| context.contains_key(e));
+
+                                let Some(first_in_context) = first_in_context else {
+                                    return;
+                                };
+
                                 show_tree(
-                                    root,
-                                    query_hierarchy,
-                                    |_| true,
                                     ui,
-                                    |ui, _, (ref_entity, ref_name, _), _| {
+                                    query_hierarchy.get(first_in_context).unwrap(),
+                                    |&(e, name, _)| (e, name),
+                                    |_, _| true,
+                                    |ui, _, (ref_entity, ref_name, children), _| {
                                         ui.horizontal(|ui| {
                                             ui.add_enabled_ui(selected != ref_entity, |ui| {
                                                 if ui
@@ -759,6 +858,12 @@ impl BodyInfoWindow {
                                             });
                                             ui.add_space(10.0);
                                         });
+
+                                        children.map(|c| {
+                                            query_hierarchy
+                                                .iter_many(c)
+                                                .filter(|(e, ..)| context.contains_key(e))
+                                        })
                                     },
                                 );
                             });

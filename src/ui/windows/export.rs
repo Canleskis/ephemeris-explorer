@@ -1,6 +1,6 @@
 use crate::{
     flight_plan::FlightPlan,
-    hierarchy,
+    hierarchy::OrbitedBy,
     load::SystemRoot,
     prediction::{Mu, Trajectory, TrajectoryData},
     time::SimulationTime,
@@ -52,8 +52,8 @@ impl ExportWindow {
         window: Option<Res<Self>>,
         sim_time: Res<SimulationTime>,
         query_trajectory: Query<Entity, With<Trajectory>>,
-        mut query_hierarchy: Query<
-            (Entity, &Name, Option<&hierarchy::Children>),
+        query_hierarchy: Query<
+            (Entity, &Name, Option<&OrbitedBy>),
             Or<(With<SystemRoot>, Without<FlightPlan>)>,
         >,
         root: Single<Entity, With<SystemRoot>>,
@@ -110,10 +110,10 @@ impl ExportWindow {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = [1.0, 3.0].into();
                     show_tree(
-                        *root,
-                        &query_hierarchy.transmute_lens().query(),
-                        |i| i != 0,
                         ui,
+                        query_hierarchy.get(*root).unwrap(),
+                        |&(e, name, _)| (e, name.clone()),
+                        |i, _| i != 0,
                         |ui, state, (entity, name, children), depth| {
                             let has_children = children.is_some_and(|c| !c.is_empty());
                             let has_trajectory = query_trajectory.contains(entity);
@@ -167,6 +167,8 @@ impl ExportWindow {
                             }
 
                             ui.add_space(10.0);
+
+                            children.map(|c| query_hierarchy.iter_many(c))
                         },
                     );
                 });

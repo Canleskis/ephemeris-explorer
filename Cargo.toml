@@ -10,9 +10,9 @@ too_many_arguments = "allow"
 embed-resource = "1"
 
 [dependencies]
-bevy = { version = "0.15.1", features = ["jpeg", "bevy_remote"] }
-bevy_egui = { version = "0.32.0", features = ["immutable_ctx"] }
-egui_extras = { version = "0.30.0" }
+bevy = { version = "0.15.2", features = ["jpeg", "bevy_remote"] }
+bevy_egui = { version = "0.33.0", features = ["immutable_ctx"] }
+egui_extras = { version = "0.31.0" }
 big_space = { version = "0.9.1", features = ["camera"] }
 bevy_file_dialog = { git = "https://github.com/richardhozak/bevy_file_dialog.git" }
 image = { version = "0.25", default-features = false }
@@ -21,7 +21,7 @@ winit = { version = "0.30", default-features = false }
 particular = { git = "https://github.com/Canleskis/particular.git", features = [
     "glam",
 ] }
-crossbeam-channel = "0.5"
+async-channel = "2.3.0"
 hifitime = "4.0.2"
 poly_it = { version = "0.2.4", features = ["smallvec", "serde"] }
 smallvec = { version = "1.13.2", features = ["serde"] }

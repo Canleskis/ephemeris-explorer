@@ -1,9 +1,11 @@
 use crate::{
-    compound_trajectory::{CompoundTrajectoryData, TrajectoryReferenceTranslated},
     flight_plan::FlightPlan,
     floating_origin::{BigSpace, Grid},
-    prediction::{DiscreteStatesBuilder, PredictionCtx, StateVector, Trajectory, TrajectoryData},
+    prediction::{
+        DiscreteStatesBuilder, RelativeTrajectory, StateVector, Trajectory, TrajectoryData,
+    },
     selection::Selectable,
+    time::SimulationTime,
     MainState,
 };
 
@@ -11,19 +13,100 @@ use bevy::prelude::*;
 use bevy::{math::DVec3, picking::backend::ray::RayMap};
 use hifitime::Epoch;
 
-#[derive(Component, Default)]
+#[derive(Component)]
+#[require(PlotPoints)]
 pub struct TrajectoryPlot {
+    /// For now this should always refers to the parent of the plot, but eventually when we have
+    /// entity-entity relationships we can have a `SourceOf` component on entities that are
+    /// referenced by a `TrajectoryPlot`.
+    pub source: Entity,
     pub enabled: bool,
-    pub color: Color,
     pub start: Epoch,
     pub end: Epoch,
+    pub color: Color,
     pub threshold: f32,
     pub max_points: usize,
+    pub reference: Option<Entity>,
+}
+
+pub type SourceOf = Children;
+
+impl TrajectoryPlot {
+    #[inline]
+    pub fn relative_trajectory<'w>(
+        &self,
+        query_trajectory: &'w Query<&Trajectory>,
+    ) -> Option<RelativeTrajectory<&'w Trajectory>> {
+        Some(RelativeTrajectory::new(
+            query_trajectory.get(self.source).ok()?,
+            self.reference.and_then(|e| query_trajectory.get(e).ok()),
+        ))
+    }
 }
 
 /// Global space position of the points of a trajectory.
 #[derive(Default, Debug, Component, Deref, DerefMut)]
 pub struct PlotPoints(pub Vec<(Epoch, Vec3)>);
+
+#[derive(Clone, Event)]
+pub struct TrajectoryHitPoint {
+    pub entity: Entity,
+    pub time: Epoch,
+    pub separation: f32,
+    pub distance: f32,
+}
+
+#[derive(Default)]
+pub struct TrajectoryPlotPlugin;
+
+impl Plugin for TrajectoryPlotPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_event::<TrajectoryHitPoint>()
+            .add_systems(Startup, setup_gizmos)
+            .add_systems(
+                PostUpdate,
+                (
+                    compute_plot_points_parallel,
+                    (
+                        plot_trajectories,
+                        plot_burns,
+                        trajectory_picking.run_if(not(
+                            crate::ui::is_using_pointer.or(crate::camera::is_using_pointer)
+                        )),
+                    ),
+                )
+                    .chain()
+                    .run_if(in_state(MainState::Running))
+                    .after(bevy::transform::TransformSystem::TransformPropagate),
+            );
+    }
+}
+
+fn setup_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+    for (_, config, _) in config_store.iter_mut() {
+        config.line_width = 1.0;
+    }
+}
+
+pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
+    root.local_floating_origin()
+        .grid_transform()
+        .transform_vector3(v)
+        .as_vec3()
+}
+
+pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
+    let (cell, translation) = root.translation_to_grid(pos);
+    root.global_transform(&cell, &Transform::from_translation(translation))
+        .translation()
+}
+
+pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
+    StateVector {
+        velocity: transform_vector3(sv.velocity, root).as_dvec3(),
+        position: to_global_pos(sv.position, root).as_dvec3(),
+    }
+}
 
 impl PlotPoints {
     // Adapted from Principia's PlotMethod3.
@@ -106,87 +189,31 @@ impl PlotPoints {
     }
 }
 
-#[derive(Clone, Event)]
-pub struct TrajectoryHitPoint {
-    pub entity: Entity,
-    pub time: Epoch,
-    pub separation: f32,
-    pub distance: f32,
-}
-
-#[derive(Default)]
-pub struct TrajectoryPlotPlugin;
-
-impl Plugin for TrajectoryPlotPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_event::<TrajectoryHitPoint>()
-            .add_systems(Startup, setup_gizmos)
-            .add_systems(
-                PostUpdate,
-                (
-                    compute_plot_points::<TrajectoryReferenceTranslated>,
-                    (
-                        plot_trajectories,
-                        plot_burns,
-                        trajectory_picking.run_if(not(
-                            crate::ui::is_using_pointer.or(crate::camera::is_using_pointer)
-                        )),
-                    ),
-                )
-                    .chain()
-                    .run_if(in_state(MainState::Running))
-                    .after(bevy::transform::TransformSystem::TransformPropagate),
-            );
-    }
-}
-
-fn setup_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
-    for (_, config, _) in config_store.iter_mut() {
-        config.line_width = 1.0;
-    }
-}
-
-pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
-    root.local_floating_origin()
-        .grid_transform()
-        .transform_vector3(v)
-        .as_vec3()
-}
-
-pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
-    let (cell, translation) = root.translation_to_grid(pos);
-    root.global_transform(&cell, &Transform::from_translation(translation))
-        .translation()
-}
-
-pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
-    StateVector {
-        velocity: transform_vector3(sv.velocity, root).as_dvec3(),
-        position: to_global_pos(sv.position, root).as_dvec3(),
-    }
-}
-
-pub fn compute_plot_points<C>(
-    query_trajectory: Query<C::QueryData<'_>>,
-    mut query: Query<(&mut PlotPoints, &C, &TrajectoryPlot)>,
-    root: Query<&Grid, With<BigSpace>>,
+#[expect(unused)]
+pub fn compute_plot_points(
+    mut commands: Commands,
+    sim_time: Res<SimulationTime>,
+    mut query_plot: Query<(Entity, &TrajectoryPlot)>,
+    query_trajectory: Query<&Trajectory>,
+    root: Single<&Grid, With<BigSpace>>,
     camera: Query<(&GlobalTransform, &Projection)>,
-) where
-    C: CompoundTrajectoryData,
-{
+) {
     let Ok((camera_transform, proj)) = camera.get_single() else {
         return;
     };
-    let root = root.single();
 
-    for (mut points, data, plot) in query.iter_mut() {
-        points.clear();
+    for (entity, plot) in query_plot.iter_mut() {
+        commands.queue(move |world: &mut World| {
+            if let Some(mut points) = world.get_mut::<PlotPoints>(entity) {
+                points.clear();
+            }
+        });
 
-        let Some(trajectory) = data.fetch(&query_trajectory) else {
+        let Some(relative) = plot.relative_trajectory(&query_trajectory) else {
             continue;
         };
 
-        if !plot.enabled || trajectory.is_empty() || plot.start >= plot.end {
+        if !plot.enabled || relative.is_empty() || plot.start >= plot.end {
             continue;
         }
 
@@ -198,16 +225,97 @@ pub fn compute_plot_points<C>(
             _ => unreachable!(),
         } as f64;
 
-        let start = trajectory.start();
-        let end = trajectory.end();
+        let start = relative.start();
+        let end = relative.end();
 
         let min = plot.start.clamp(start, end);
         let max = plot.end.clamp(start, end);
 
-        let eval = |at| to_global_sv(trajectory.state_vector(at).unwrap(), root);
+        let current = sim_time.current().clamp(relative.start(), relative.end());
+        let translation = StateVector::from_position(
+            relative
+                .reference
+                .map(|r| r.position(current).unwrap())
+                .unwrap_or_default(),
+        );
 
-        *points = PlotPoints::new(eval, min, max, camera_transform, threshold, plot.max_points)
+        let eval = |at| to_global_sv(relative.state_vector(at).unwrap() + translation, *root);
+
+        let new_points =
+            PlotPoints::new(eval, min, max, camera_transform, threshold, plot.max_points);
+
+        commands.queue(move |world: &mut World| {
+            if let Some(mut points) = world.get_mut::<PlotPoints>(entity) {
+                *points = new_points;
+            }
+        });
     }
+}
+
+pub fn compute_plot_points_parallel(
+    commands: ParallelCommands,
+    sim_time: Res<SimulationTime>,
+    mut query_plot: Query<(Entity, &TrajectoryPlot)>,
+    query_trajectory: Query<&Trajectory>,
+    root: Single<&Grid, With<BigSpace>>,
+    camera: Query<(&GlobalTransform, &Projection)>,
+) {
+    let Ok((camera_transform, proj)) = camera.get_single() else {
+        return;
+    };
+
+    query_plot.par_iter_mut().for_each(|(entity, plot)| {
+        commands.command_scope(move |mut commands| {
+            commands.queue(move |world: &mut World| {
+                if let Some(mut points) = world.get_mut::<PlotPoints>(entity) {
+                    points.clear();
+                }
+            });
+        });
+
+        if let Some(relative) = plot.relative_trajectory(&query_trajectory) {
+            if plot.enabled && !relative.is_empty() && plot.start < plot.end {
+                let tan2_angular_resolution = match proj {
+                    Projection::Perspective(p) => {
+                        const ARC_MINUTE: f32 = 0.000290888;
+                        plot.threshold * ARC_MINUTE * p.fov
+                    }
+                    _ => unreachable!(),
+                } as f64;
+
+                let start = relative.start();
+                let end = relative.end();
+
+                let min = plot.start.clamp(start, end);
+                let max = plot.end.clamp(start, end);
+
+                let current = sim_time.current().clamp(relative.start(), relative.end());
+                let translation = StateVector::from_position(
+                    relative
+                        .reference
+                        .map(|r| r.position(current).unwrap())
+                        .unwrap_or_default(),
+                );
+
+                let new_points = PlotPoints::new(
+                    |at| to_global_sv(relative.state_vector(at).unwrap() + translation, *root),
+                    min,
+                    max,
+                    camera_transform,
+                    tan2_angular_resolution,
+                    plot.max_points,
+                );
+
+                commands.command_scope(move |mut commands| {
+                    commands.queue(move |world: &mut World| {
+                        if let Some(mut points) = world.get_mut::<PlotPoints>(entity) {
+                            *points = new_points;
+                        }
+                    });
+                });
+            }
+        };
+    });
 }
 
 pub const PICK_THRESHOLD: f32 = 6e-3;
@@ -307,41 +415,101 @@ fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &TrajectoryP
 
 fn plot_burns(
     mut gizmos: Gizmos,
-    query: Query<(&Trajectory, &TrajectoryPlot, &PlotPoints, &FlightPlan)>,
-    root: Query<&Grid, With<BigSpace>>,
+    query: Query<(&Trajectory, &FlightPlan, &SourceOf, &DiscreteStatesBuilder)>,
+    query_plot: Query<(&PlotPoints, &TrajectoryPlot)>,
+    root: Single<&Grid, With<BigSpace>>,
     camera: Query<&GlobalTransform, With<Camera>>,
-    ctx: Res<PredictionCtx<DiscreteStatesBuilder>>,
+    // ctx: Res<PredictionCtx<DiscreteStatesBuilder>>,
 ) {
     let camera_transform = camera.single();
-    let root = root.single();
 
-    for (trajectory, plot, points, flight_plan) in query.iter() {
-        if !plot.enabled || trajectory.is_empty() {
-            continue;
-        }
-
-        for burn in flight_plan.burns.iter() {
-            if !burn.enabled || burn.overlaps {
+    for (trajectory, flight_plan, source_of, builder) in query.iter() {
+        for (points, plot) in query_plot.iter_many(source_of) {
+            if !plot.enabled || trajectory.is_empty() {
                 continue;
             }
-            let Some(pos) = points.evaluate(burn.start) else {
+
+            for burn in flight_plan.burns.iter() {
+                if !burn.enabled || burn.overlaps {
+                    continue;
+                }
+
+                let Some(sv) = trajectory.state_vector(burn.start) else {
+                    continue;
+                };
+                let (prograde, radial, normal) = burn
+                    .reference_frame()
+                    .direction((burn.start, sv), builder.context());
+                let prograde = transform_vector3(prograde, *root);
+                let radial = transform_vector3(radial, *root);
+                let normal = transform_vector3(normal, *root);
+
+                let Some(world_pos) = points.evaluate(burn.start) else {
+                    continue;
+                };
+                let direction = camera_transform.translation() - world_pos;
+                let size = direction.length() * 0.02;
+                gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
+                gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
+                gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);
+            }
+        }
+    }
+}
+
+#[expect(unused)]
+fn plot_debug_points_discrete(
+    mut gizmos: Gizmos,
+    sim_time: Res<SimulationTime>,
+    query_plot: Query<&TrajectoryPlot>,
+    query_trajectory: Query<&Trajectory>,
+    root: Single<&Grid, With<BigSpace>>,
+    query_camera: Query<(&GlobalTransform, &Projection)>,
+) {
+    let (camera_transform, proj) = query_camera.single();
+    let fov = match proj {
+        Projection::Perspective(p) => p.fov,
+        _ => return,
+    };
+
+    for plot in query_plot.iter() {
+        let Ok(trajectory) = query_trajectory.get(plot.source) else {
+            continue;
+        };
+        let locked_trajectory = trajectory.read();
+        let Some(states) = locked_trajectory
+            .as_any()
+            .downcast_ref::<crate::prediction::DiscreteStates>()
+        else {
+            continue;
+        };
+        let reference_trajectory = plot.reference.and_then(|e| query_trajectory.get(e).ok());
+        let relative = RelativeTrajectory::new(trajectory, reference_trajectory);
+
+        let current = sim_time.current().clamp(relative.start(), relative.end());
+        let translation = relative
+            .reference
+            .map(|r| r.position(current).unwrap())
+            .unwrap_or_default();
+
+        for (t, _) in states.points() {
+            if t < &plot.start || t > &plot.end {
+                continue;
+            }
+
+            let Some(position) = relative.position(*t) else {
                 continue;
             };
-            let Some(sv) = trajectory.state_vector(burn.start) else {
-                continue;
-            };
-
-            let (prograde, radial, normal) =
-                burn.reference_frame().direction((burn.start, sv), &ctx);
-            let prograde = transform_vector3(prograde, root);
-            let radial = transform_vector3(radial, root);
-            let normal = transform_vector3(normal, root);
-
-            let direction = camera_transform.translation() - pos;
-            let size = direction.length() * 0.02;
-            gizmos.arrow(pos, pos + prograde * size, LinearRgba::GREEN);
-            gizmos.arrow(pos, pos + normal * size, LinearRgba::BLUE);
-            gizmos.arrow(pos, pos + radial * size, LinearRgba::RED);
+            let position = to_global_pos(position + translation, *root);
+            let direction = camera_transform.translation() - position;
+            let size = direction.length() * 4e-3 * fov;
+            gizmos.circle(
+                Transform::from_translation(position)
+                    .looking_to(direction, Vec3::Y)
+                    .to_isometry(),
+                size,
+                LinearRgba::WHITE,
+            );
         }
     }
 }

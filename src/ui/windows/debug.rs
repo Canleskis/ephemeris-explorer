@@ -80,14 +80,11 @@ impl EphemeridesDebugWindow {
                     let ((query, state), mut discrete): ((Vec<_>, Vec<_>), Vec<_>) = query
                         .iter()
                         .sort::<Entity>()
-                        .filter_map(|(entity, name, trajectory)| {
-                            Some((
+                        .filter(|(.., trajectory)| trajectory.read().as_any().is::<FixedSegments>())
+                        .map(|(entity, name, trajectory)| {
+                            (
                                 (
-                                    (
-                                        entity,
-                                        name,
-                                        trajectory.try_downcast_ref::<FixedSegments>()?,
-                                    ),
+                                    (entity, name, trajectory),
                                     DiscreteData {
                                         velocity: system.bodies[&**name].velocity,
                                         position: system.bodies[&**name].position,
@@ -95,7 +92,7 @@ impl EphemeridesDebugWindow {
                                     },
                                 ),
                                 vec![system.bodies[&**name].position],
-                            ))
+                            )
                         })
                         .unzip();
                     let mut integrator = PEFRL::new(start.to_tai_seconds(), dt, state);

@@ -6,7 +6,7 @@ pub use fixed::*;
 pub use windows::*;
 pub use world::*;
 
-use crate::{hierarchy, load::LoadSolarSystemEvent, MainState};
+use crate::{load::LoadSolarSystemEvent, MainState};
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContext, EguiContexts};
@@ -124,10 +124,11 @@ fn setup_egui(mut contexts: EguiContexts) {
         ctx.set_fonts(font_definitions);
 
         ctx.style_mut(|style| {
-            use egui::{Color32, Rounding, Shadow, Stroke};
+            use egui::{Color32, CornerRadius, Shadow, Stroke};
+            style.visuals.selection.bg_fill = Color32::from_rgb(0, 65, 165);
             style.visuals.window_fill = Color32::from_rgba_premultiplied(20, 20, 20, 240);
             style.visuals.window_shadow = Shadow::NONE;
-            style.visuals.window_rounding = Rounding::same(8.0);
+            style.visuals.window_corner_radius = CornerRadius::same(8);
             style.visuals.window_stroke = Stroke::new(1.0, Color32::from_gray(60));
             style.visuals.panel_fill = Color32::from_rgba_premultiplied(20, 20, 20, 240);
             style.visuals.widgets = egui::style::Widgets {
@@ -136,7 +137,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(20),
                     bg_stroke: Stroke::new(1.5, Color32::from_gray(60)), // separators, indentation lines
                     fg_stroke: Stroke::new(1.0, Color32::from_gray(140)), // normal text color
-                    rounding: Rounding::same(4.0),
+                    corner_radius: CornerRadius::same(4),
                     expansion: 0.0,
                 },
                 inactive: egui::style::WidgetVisuals {
@@ -144,7 +145,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(50),      // checkbox background
                     bg_stroke: Default::default(),
                     fg_stroke: Stroke::new(1.0, Color32::from_gray(140)), // button text
-                    rounding: Rounding::same(4.0),
+                    corner_radius: CornerRadius::same(4),
                     expansion: 0.0,
                 },
                 hovered: egui::style::WidgetVisuals {
@@ -152,7 +153,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(60),
                     bg_stroke: Stroke::new(1.0, Color32::from_gray(150)), // e.g. hover over window edge or button
                     fg_stroke: Stroke::new(1.5, Color32::from_gray(180)),
-                    rounding: Rounding::same(4.0),
+                    corner_radius: CornerRadius::same(4),
                     expansion: 1.0,
                 },
                 active: egui::style::WidgetVisuals {
@@ -160,7 +161,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(45),
                     bg_stroke: Stroke::new(1.0, Color32::WHITE),
                     fg_stroke: Stroke::new(2.0, Color32::WHITE),
-                    rounding: Rounding::same(4.0),
+                    corner_radius: CornerRadius::same(4),
                     expansion: 1.0,
                 },
                 open: egui::style::WidgetVisuals {
@@ -168,7 +169,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                     bg_fill: Color32::from_gray(20),
                     bg_stroke: Stroke::new(1.0, Color32::from_gray(60)),
                     fg_stroke: Stroke::new(1.0, Color32::from_gray(150)),
-                    rounding: Rounding::same(4.0),
+                    corner_radius: CornerRadius::same(4),
                     expansion: 0.0,
                 },
             }
@@ -240,14 +241,13 @@ where
 
 #[expect(clippy::type_complexity)]
 struct ParsedTextEdit<'t, T> {
-    parsed: &'t mut T,
-    parse: Box<dyn 't + Fn(&str) -> Option<T>>,
-    format: Box<dyn 't + Fn(&T) -> String>,
-    id: Option<egui::Id>,
+    pub parsed: &'t mut T,
+    pub parse: Box<dyn 't + Fn(&str) -> Option<T>>,
+    pub format: Box<dyn 't + Fn(&T) -> String>,
+    pub id: Option<egui::Id>,
 }
 
 impl<'t, T> ParsedTextEdit<'t, T> {
-    #[expect(unused)]
     pub fn id(mut self, id: impl Into<egui::Id>) -> Self {
         self.id = Some(id.into());
         self
@@ -289,63 +289,65 @@ impl<T: Clone> egui::Widget for ParsedTextEdit<'_, T> {
 }
 
 #[inline]
-fn get_name(entity: Entity, mut query: bevy::ecs::system::QueryLens<&Name>) -> String {
-    query
-        .query()
+fn get_name(entity: Entity, query_name: &Query<&Name>) -> String {
+    query_name
         .get(entity)
         .ok()
         .map(|name| name.to_string())
         .unwrap_or_else(|| "Unknown".to_string())
 }
 
-fn show_tree(
-    root: Entity,
-    query: &Query<(Entity, &Name, Option<&hierarchy::Children>)>,
-    default_open: impl Fn(usize) -> bool + Copy,
+fn show_tree<T, I, IdSource>(
     ui: &mut egui::Ui,
+    root: T,
+    id_fn: impl Fn(&T) -> IdSource + Copy,
+    default_open: impl Fn(usize, &T) -> bool + Copy,
     mut add_header: impl FnMut(
         &mut egui::Ui,
         &mut egui::collapsing_header::CollapsingState,
-        (Entity, &Name, Option<&hierarchy::Children>),
+        T,
         usize,
-    ),
-) {
-    fn show_tree_inner(
-        parent: Entity,
-        query: &Query<(Entity, &Name, Option<&hierarchy::Children>)>,
+    ) -> Option<I>,
+) where
+    I: Iterator<Item = T>,
+    IdSource: std::hash::Hash,
+{
+    fn show_tree_inner<T, I, IdSource>(
         ui: &mut egui::Ui,
+        parent: T,
         depth: usize,
-        default_open: impl Fn(usize) -> bool + Copy,
+        id_fn: impl Fn(&T) -> IdSource + Copy,
+        default_open: impl Fn(usize, &T) -> bool + Copy,
         add_contents: &mut impl FnMut(
             &mut egui::Ui,
             &mut egui::collapsing_header::CollapsingState,
-            (Entity, &Name, Option<&hierarchy::Children>),
+            T,
             usize,
-        ),
-    ) {
-        if let Ok((parent, name, children)) = query.get(parent) {
-            let id = ui.make_persistent_id(parent);
-            let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                id,
-                default_open(depth),
-            );
+        ) -> Option<I>,
+    ) where
+        I: Iterator<Item = T>,
+        IdSource: std::hash::Hash,
+    {
+        let id = ui.make_persistent_id(id_fn(&parent));
+        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            id,
+            default_open(depth, &parent),
+        );
 
-            let header_res = ui.horizontal(|ui| {
-                add_contents(ui, &mut state, (parent, name, children), depth);
+        let header_res = ui.horizontal(|ui| add_contents(ui, &mut state, parent, depth));
+        let children = header_res.inner;
+
+        if children.is_some() {
+            state.show_body_indented(&header_res.response, ui, |ui| {
+                for child in children.into_iter().flatten() {
+                    show_tree_inner(ui, child, depth + 1, id_fn, default_open, add_contents);
+                }
             });
-
-            if children.is_some_and(|c| !c.is_empty()) {
-                state.show_body_indented(&header_res.response, ui, |ui| {
-                    for child in children.into_iter().flatten() {
-                        show_tree_inner(*child, query, ui, depth + 1, default_open, add_contents);
-                    }
-                });
-            }
         }
     }
 
-    show_tree_inner(root, query, ui, 0, default_open, &mut add_header);
+    show_tree_inner(ui, root, 0, id_fn, default_open, &mut add_header);
 }
 
 struct IdentedInfo<T> {

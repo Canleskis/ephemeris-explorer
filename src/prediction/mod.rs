@@ -17,7 +17,8 @@ use hifitime::{Duration, Epoch};
 pub struct ComputePredictionEvent<B, const EXTEND: bool = false> {
     pub entities: bevy::utils::HashSet<Entity>,
     pub duration: Duration,
-    pub sync_frequency: usize,
+    /// Minimum number of steps needed between synchronisations.
+    pub min_steps: usize,
     pub _marker: std::marker::PhantomData<fn(B)>,
 }
 
@@ -31,18 +32,18 @@ impl<B, const EXTEND: bool> Clone for ComputePredictionEvent<B, EXTEND> {
 }
 
 impl<B, const EXTEND: bool> ComputePredictionEvent<B, EXTEND> {
-    pub fn all(duration: Duration, sync_frequency: usize) -> Self {
-        Self::with([], duration, sync_frequency)
+    pub fn all(duration: Duration, min_steps: usize) -> Self {
+        Self::with([], duration, min_steps)
     }
 
-    pub fn with<I>(entities: I, duration: Duration, sync_frequency: usize) -> Self
+    pub fn with<I>(entities: I, duration: Duration, min_steps: usize) -> Self
     where
         I: IntoIterator<Item = Entity>,
     {
         Self {
             entities: entities.into_iter().collect(),
             duration,
-            sync_frequency,
+            min_steps,
             _marker: std::marker::PhantomData,
         }
     }
@@ -50,30 +51,12 @@ impl<B, const EXTEND: bool> ComputePredictionEvent<B, EXTEND> {
 
 pub type ExtendPredictionEvent<B> = ComputePredictionEvent<B, true>;
 
-pub trait BuilderContext: Sized {
-    /// Creates a new context from a reference to the world.
-    fn from_world(world: &World) -> Self;
-
-    /// Returns whether the current context is valid.
-    fn is_valid(&self, world: &World) -> bool;
-}
-
-impl<C: Default + 'static> BuilderContext for C {
-    fn from_world(_: &World) -> Self {
-        Default::default()
-    }
-
-    fn is_valid(&self, _: &World) -> bool {
-        true
-    }
-}
+#[derive(Clone, Copy, Component)]
+pub struct Predicting<B>(std::marker::PhantomData<fn(B)>);
 
 pub trait TrajectoryBuilder: Sized {
     /// The trajectory data type this builder operates on.
     type Trajectory: TrajectoryInner + 'static;
-
-    /// The context in which the builder operates.
-    type Context;
 
     /// Returns the ordering of the two epochs as defined by the builder.
     fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering;
@@ -96,7 +79,7 @@ pub trait TrajectoryBuilder: Sized {
     fn entities(&self) -> &[Entity];
 
     /// Steps the builder and updates the given trajectories using the given context.
-    fn step<'a, I>(&mut self, trajs: I, ctx: &Self::Context) -> Result<(), StepError>
+    fn step<'a, I>(&mut self, trajs: I) -> Result<(), StepError>
     where
         I: IntoIterator<Item = &'a mut Self::Trajectory>;
 }
@@ -127,7 +110,7 @@ impl<B: TrajectoryBuilder + Component + Clone> PredictionInstance<B> {
                         panic!("Missing trajectory component for entity {:?}", entity)
                     })
             })
-            .map(|trajectory| builder.continued(trajectory.downcast_ref()))
+            .map(|trajectory| builder.continued(trajectory.read().as_any().downcast_ref().unwrap()))
             .collect()
     }
 
@@ -152,8 +135,8 @@ impl<B: TrajectoryBuilder> PredictionInstance<B> {
     }
 
     #[inline]
-    pub fn step(&mut self, ctx: &B::Context) -> Result<(), StepError> {
-        self.builder.step(&mut self.trajectories, ctx)
+    pub fn step(&mut self) -> Result<(), StepError> {
+        self.builder.step(&mut self.trajectories)
     }
 
     #[inline]
@@ -183,23 +166,21 @@ impl<B> Default for PredictionPlugin<B> {
 impl<B> Plugin for PredictionPlugin<B>
 where
     B: TrajectoryBuilder + Component + Clone,
-    B::Context: BuilderContext + Send + Sync,
 {
     fn build(&self, app: &mut App) {
         app.add_event::<ExtendPredictionEvent<B>>()
             .add_observer(dispatch_predictions::<B, true>)
             .add_observer(dispatch_predictions::<B, false>)
+            .add_observer(add_predicting_marker::<B>)
+            .add_observer(remove_predicting_marker::<B>)
             .add_systems(PreUpdate, process_prediction_data::<B>);
-
-        let ctx = B::Context::from_world(app.world());
-        app.insert_resource(PredictionCtx::<B>(std::sync::Arc::new(ctx)));
     }
 }
 
 #[derive(Component, Debug)]
 pub struct PredictionTracker<B: TrajectoryBuilder> {
     thread: bevy::tasks::Task<()>,
-    recver: crossbeam_channel::Receiver<PredictionInstance<B>>,
+    recver: async_channel::Receiver<PredictionInstance<B>>,
     paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
     extend: bool,
     current: Epoch,
@@ -231,30 +212,25 @@ impl<B: TrajectoryBuilder + Component> PredictionTracker<B> {
     }
 }
 
-#[derive(Resource, Deref, DerefMut)]
-pub struct PredictionCtx<B: TrajectoryBuilder>(pub std::sync::Arc<B::Context>);
-
 fn dispatch_predictions<B, const EXTEND: bool>(
     trigger: Trigger<ComputePredictionEvent<B, EXTEND>>,
     world: &World,
     mut commands: Commands,
     query_builder: Query<Entity, With<B>>,
-    shared_ctx: Res<PredictionCtx<B>>,
 ) where
     B: TrajectoryBuilder + Component + Clone,
-    B::Context: BuilderContext + Send + Sync,
 {
     let ComputePredictionEvent {
         entities,
         duration,
-        sync_frequency,
+        min_steps,
         ..
     } = trigger.event();
 
     let name = std::any::type_name::<B>();
 
     let duration = *duration;
-    let sync_frequency = 1.max(*sync_frequency);
+    let min_steps = 1.max(*min_steps);
 
     if duration.is_negative() || duration == Duration::ZERO {
         bevy::log::error!("invalid duration: {}", duration);
@@ -266,64 +242,50 @@ fn dispatch_predictions<B, const EXTEND: bool>(
         _ => entities,
     };
 
-    let ctx = {
-        if !shared_ctx.is_valid(world) {
-            let new_ctx = std::sync::Arc::new(B::Context::from_world(world));
-            commands.insert_resource(PredictionCtx::<B>(std::sync::Arc::clone(&new_ctx)));
-            new_ctx
-        } else {
-            std::sync::Arc::clone(&shared_ctx)
-        }
-    };
-
     for &entity in entities.iter() {
         let mut instance = PredictionInstance::<B>::from_world(entity, world);
+
         let current = instance.time();
         let mut end = B::add(current, duration);
 
-        let (sender, recver) = crossbeam_channel::unbounded();
+        let (sender, recver) = async_channel::bounded(1);
 
         let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let thread = bevy::tasks::AsyncComputeTaskPool::get().spawn({
             let paused = std::sync::Arc::downgrade(&paused);
-            let ctx = std::sync::Arc::clone(&ctx);
 
             async move {
                 bevy::log::debug!("Computing {} prediction for {}", name, duration);
                 let t0 = std::time::Instant::now();
 
-                let mut remaining = sync_frequency;
+                let mut remaining = min_steps;
                 let instance = &mut instance;
                 loop {
                     if let Some(paused) = paused.upgrade() {
                         while paused.load(std::sync::atomic::Ordering::Relaxed) {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            std::thread::sleep(std::time::Duration::from_millis(50));
                         }
                     }
 
-                    if let Err(step_error) = instance.step(&ctx) {
+                    if let Err(step_error) = instance.step() {
                         bevy::log::debug!("{name}: {step_error}");
                         end = instance.time();
                     }
-                    remaining -= 1;
+                    remaining = remaining.saturating_sub(1);
 
-                    if instance.boundaries().all(|t| B::cmp(&t, &end).is_ge()) {
-                        remaining = 0;
+                    let reached_end = instance.boundaries().all(|t| B::cmp(&t, &end).is_ge());
+                    if (remaining > 0 || sender.is_full()) && !reached_end && !sender.is_closed() {
+                        continue;
                     }
 
-                    if remaining == 0 {
-                        let current = instance.time();
-
-                        let completed = std::mem::replace(instance, instance.continued());
-                        if sender.send(completed).is_err() || B::cmp(&current, &end).is_ge() {
-                            bevy::log::debug!("Stopping {} prediction thread", name);
-                            break;
-                        }
-
-                        remaining = sync_frequency;
+                    let completed = std::mem::replace(instance, instance.continued());
+                    if sender.send(completed).await.is_err() || reached_end {
+                        break;
                     }
+                    remaining = min_steps;
                 }
 
+                bevy::log::debug!("Stopping {} prediction thread", name);
                 bevy::log::debug!("Computing {} prediction took: {:?}", name, t0.elapsed());
             }
         });
@@ -351,28 +313,59 @@ pub fn process_prediction_data<B>(
     for (entity, mut builder, mut tracker) in &mut query_builder {
         let is_finished = tracker.thread.is_finished();
 
-        let mut extend = tracker.extend;
-        let mut current = tracker.current;
-        for recv in tracker.recver.try_iter() {
-            current = recv.time();
+        if let Ok(recv) = tracker.recver.try_recv() {
+            tracker.current = recv.time();
+            *builder = recv.builder;
 
             for (entity, recv_trajectory) in builder.entities().iter().zip(recv.trajectories) {
                 if let Ok(mut trajectory) = query_trajectory.get_mut(*entity) {
-                    if extend {
-                        B::join(trajectory.downcast_mut(), recv_trajectory);
-                    } else {
-                        *trajectory.downcast_mut() = recv_trajectory;
-                        extend = true;
-                    }
+                    trajectory.write(|trajectory| {
+                        if tracker.extend {
+                            B::join(
+                                trajectory.as_any_mut().downcast_mut().unwrap(),
+                                recv_trajectory,
+                            )
+                        } else {
+                            *trajectory.as_any_mut().downcast_mut().unwrap() = recv_trajectory;
+                            tracker.extend = true;
+                        }
+                    });
                 }
             }
-            *builder = recv.builder;
         }
-        tracker.extend = extend;
-        tracker.current = current;
 
         if is_finished {
             commands.entity(entity).remove::<PredictionTracker<B>>();
         }
     }
+}
+
+fn add_predicting_marker<B>(
+    trigger: Trigger<OnInsert, PredictionTracker<B>>,
+    mut commands: Commands,
+    query_builder: Query<&B>,
+) where
+    B: TrajectoryBuilder + Component,
+{
+    if let Ok(builder) = query_builder.get(trigger.entity()) {
+        for entity in builder.entities() {
+            commands
+                .entity(*entity)
+                .insert(Predicting::<B>(std::marker::PhantomData));
+        }
+    };
+}
+
+fn remove_predicting_marker<B>(
+    trigger: Trigger<OnRemove, PredictionTracker<B>>,
+    mut commands: Commands,
+    query_builder: Query<&B>,
+) where
+    B: TrajectoryBuilder + Component,
+{
+    if let Ok(builder) = query_builder.get(trigger.entity()) {
+        for entity in builder.entities() {
+            commands.entity(*entity).remove::<Predicting<B>>();
+        }
+    };
 }
