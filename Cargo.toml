@@ -15,6 +15,7 @@ bevy_egui = { version = "0.33.0", features = ["immutable_ctx"] }
 egui_extras = { version = "0.31.0" }
 big_space = { version = "0.9.1", features = ["camera"] }
 bevy_file_dialog = { git = "https://github.com/richardhozak/bevy_file_dialog.git" }
+futures-util = { version = "0.3.31", features = ["io"] }
 image = { version = "0.25", default-features = false }
 winit = { version = "0.30", default-features = false }
 
