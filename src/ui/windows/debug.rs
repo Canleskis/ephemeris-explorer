@@ -5,7 +5,7 @@ use crate::{
         FixedSegments, FixedSegmentsBuilder, Forward, Trajectory, TrajectoryData,
     },
     time::SimulationTime,
-    ui::FixedUiSet,
+    ui::WindowsUiSet,
     MainState,
 };
 
@@ -24,7 +24,7 @@ impl Plugin for EphemeridesDebugPlugin {
         app.add_systems(
             Update,
             EphemeridesDebugWindow::show
-                .after(FixedUiSet)
+                .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
         );
     }

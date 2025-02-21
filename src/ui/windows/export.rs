@@ -4,7 +4,7 @@ use crate::{
     load::SystemRoot,
     prediction::{Mu, Trajectory, TrajectoryData},
     time::SimulationTime,
-    ui::{epoch_clamped_parser, show_tree, FixedUiSet, ParsedTextEdit},
+    ui::{epoch_clamped_parser, precision, show_tree, WindowsUiSet},
     MainState,
 };
 
@@ -19,7 +19,8 @@ impl Plugin for ExportPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<ExportSolarSystemEvent>().add_systems(
             Update,
-            (ExportWindow::show.after(FixedUiSet), export_solar_system)
+            (ExportWindow::show, export_solar_system)
+                .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
         );
     }
@@ -69,7 +70,7 @@ impl ExportWindow {
         egui::Window::new("Export").open(&mut open).show(ctx, |ui| {
             let export = cached_exports.get_or_insert_with(|| {
                 [ExportType::State {
-                    epoch: sim_time.current(),
+                    epoch: sim_time.current().round(precision()),
                 }]
             });
             let bodies = bodies.get_or_insert_with(|| query_trajectory.iter().collect());
@@ -91,16 +92,28 @@ impl ExportWindow {
 
             ui.add_space(5.0);
 
-            ui.spacing_mut().text_edit_width = 300.0;
+            ui.spacing_mut().interact_size.x = 300.0;
             match &mut export[*current] {
                 ExportType::State { epoch } => {
                     ui.horizontal(|ui| {
                         ui.label("Epoch:");
-                        ui.add(ParsedTextEdit::singleline(
-                            epoch,
-                            epoch_clamped_parser(sim_time.start(), sim_time.end()),
-                            Epoch::to_string,
-                        ));
+                        let mut epoch_s = epoch.to_tai_seconds();
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut epoch_s)
+                                    .custom_formatter(|value, _| {
+                                        Epoch::from_tai_seconds(value).to_string()
+                                    })
+                                    .custom_parser(|text| {
+                                        epoch_clamped_parser(sim_time.start(), sim_time.end())(text)
+                                            .map(|t| t.to_tai_seconds())
+                                    })
+                                    .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
+                            )
+                            .changed()
+                        {
+                            *epoch = Epoch::from_tai_seconds(epoch_s).round(precision());
+                        }
                     });
                 }
             }

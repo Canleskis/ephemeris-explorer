@@ -7,7 +7,7 @@ use crate::{
     prediction::{DiscreteStatesBuilder, Mu, Trajectory, TrajectoryData},
     selection::Selected,
     time::SimulationTime,
-    ui::{get_name, nformat, show_tree, FixedUiSet, IdentedInfo, ParsedTextEdit, SeparationPlot},
+    ui::{get_name, nformat, precision, show_tree, IdentedInfo, SeparationPlot, WindowsUiSet},
     MainState,
 };
 
@@ -23,15 +23,15 @@ impl Plugin for BodyInfoPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PreUpdate,
-            BodyInfoWindow::init.run_if(in_state(MainState::Running)),
+            BodyInfoWindow::init
+                .in_set(WindowsUiSet)
+                .run_if(in_state(MainState::Running)),
         )
         .add_systems(
             Update,
-            (
-                BodyInfoWindow::show.after(FixedUiSet),
-                BodyInfoWindow::persisting,
-            )
+            (BodyInfoWindow::show, BodyInfoWindow::persisting)
                 .chain()
+                .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
         );
     }
@@ -95,11 +95,6 @@ struct BodyInfoWindow {
     plot_start_overwrite: Option<PlotOverwrite>,
     plot_end_overwrite: Option<PlotOverwrite>,
     delete_body: Option<bool>,
-}
-
-#[inline]
-fn precision() -> Duration {
-    Duration::from_milliseconds(100.0)
 }
 
 impl BodyInfoWindow {
@@ -404,15 +399,26 @@ impl BodyInfoWindow {
                                 }
                             }
                         }
-                        ui.add_enabled(
-                            info.plot_start_overwrite.is_none(),
-                            ParsedTextEdit::singleline(
-                                &mut plot.start,
-                                |buf| Epoch::from_str(buf).ok(),
-                                Epoch::to_string,
-                            )
-                            .id("Start"),
-                        )
+
+                        ui.add_enabled_ui(info.plot_start_overwrite.is_none(), |ui| {
+                            let mut plot_start = plot.start.to_tai_seconds();
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut plot_start)
+                                        .custom_formatter(|value, _| {
+                                            Epoch::from_tai_seconds(value).to_string()
+                                        })
+                                        .custom_parser(|text| {
+                                            Epoch::from_str(text).ok().map(|t| t.to_tai_seconds())
+                                        })
+                                        .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
+                                )
+                                .changed()
+                            {
+                                plot.start = Epoch::from_tai_seconds(plot_start).round(precision());
+                            }
+                        })
+                        .response
                         .on_disabled_hover_text("Overwritten with current time");
                     });
                     ui.add_space(5.0);
@@ -433,15 +439,25 @@ impl BodyInfoWindow {
                                 }
                             }
                         }
-                        ui.add_enabled(
-                            info.plot_end_overwrite.is_none(),
-                            ParsedTextEdit::singleline(
-                                &mut plot.end,
-                                |buf| Epoch::from_str(buf).ok(),
-                                Epoch::to_string,
-                            )
-                            .id("End"),
-                        )
+                        ui.add_enabled_ui(info.plot_start_overwrite.is_none(), |ui| {
+                            let mut plot_end = plot.end.to_tai_seconds();
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut plot_end)
+                                        .custom_formatter(|value, _| {
+                                            Epoch::from_tai_seconds(value).to_string()
+                                        })
+                                        .custom_parser(|text| {
+                                            Epoch::from_str(text).ok().map(|t| t.to_tai_seconds())
+                                        })
+                                        .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
+                                )
+                                .changed()
+                            {
+                                plot.end = Epoch::from_tai_seconds(plot_end).round(precision());
+                            }
+                        })
+                        .response
                         .on_disabled_hover_text("Overwritten with current time");
                     });
 
@@ -575,7 +591,6 @@ impl BodyInfoWindow {
                     ui.separator();
                     ui.heading("Flight planning");
                     ui.add_space(2.0);
-                    ui.spacing_mut().text_edit_width = 240.0;
 
                     ui.add_space(2.0);
 
@@ -605,19 +620,28 @@ impl BodyInfoWindow {
                     ui.add_space(2.0);
 
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().interact_size.x = 240.0;
                         ui.label("End:").changed();
+
+                        let mut end = flight_plan.end.to_tai_seconds();
                         if ui
-                            .add(ParsedTextEdit::singleline(
-                                &mut flight_plan.end,
-                                |buf| {
-                                    Epoch::from_str(buf)
-                                        .ok()
-                                        .map(|t| t.clamp(min_time, max_time).round(precision()))
-                                },
-                                Epoch::to_string,
-                            ))
+                            .add(
+                                egui::DragValue::new(&mut end)
+                                    .custom_formatter(|value, _| {
+                                        Epoch::from_tai_seconds(value).to_string()
+                                    })
+                                    .custom_parser(|text| {
+                                        Epoch::from_str(text).ok().map(|t| {
+                                            t.clamp(min_time, max_time)
+                                                .round(precision())
+                                                .to_tai_seconds()
+                                        })
+                                    })
+                                    .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
+                            )
                             .changed()
                         {
+                            flight_plan.end = Epoch::from_tai_seconds(end).round(precision());
                             changed = true;
                         }
                     });
@@ -641,7 +665,6 @@ impl BodyInfoWindow {
                             ui.add_enabled(any_to_delete, egui::Button::new("Delete selected"));
                         if delete_button.clicked() {
                             flight_plan.burns.retain(|burn| !delete.remove(&burn.id));
-                            // Clear in case a burn was deleted through another way
                             delete.clear();
                             changed = true;
                         }
@@ -745,7 +768,7 @@ impl BodyInfoWindow {
             })
             .body(|ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().interact_size = [240.0, 18.0].into();
+                    ui.spacing_mut().interact_size.x = 240.0;
                     ui.label("Start time:");
                     ui.add_space(5.0);
 
@@ -773,7 +796,7 @@ impl BodyInfoWindow {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().interact_size = [150.0, 18.0].into();
+                    ui.spacing_mut().interact_size.x = 150.0;
 
                     let speed =
                         (burn.duration.max(precision()) / 100).min(Duration::from_seconds(60.0));
@@ -873,7 +896,7 @@ impl BodyInfoWindow {
                 ui.add_space(2.0);
 
                 IdentedInfo::new("Acceleration:", &mut burn.acceleration).show(ui, |ui, acc| {
-                    ui.spacing_mut().interact_size = [60.0, 18.0].into();
+                    ui.spacing_mut().interact_size.x = 60.0;
 
                     ui.horizontal(|ui| {
                         ui_coordinate(burn.frame, ui, "x");

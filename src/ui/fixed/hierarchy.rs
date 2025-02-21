@@ -99,57 +99,6 @@ pub fn solar_system_hierarchy(
 
                             children
                                 .map(|c| c.into_iter().flat_map(|e| query_hierarchy.get(*e).ok()))
-
-                            // if let Ok(mut plot) = query_plot.get_mut(entity) {
-                            //     // Plot toggle
-                            //     ui.scope(|ui| {
-                            //         let [r, g, b, _a] = plot.color.to_srgba().to_u8_array();
-                            //         ui.visuals_mut().selection.bg_fill =
-                            //             egui::Color32::from_gray(80);
-                            //         ui.visuals_mut().selection.stroke =
-                            //             egui::Stroke::new(1.0, egui::Color32::from_rgb(r, g, b));
-
-                            //         ui.toggle_value(&mut plot.enabled, "○");
-                            //     });
-
-                            //     let mut ui_builder = egui::UiBuilder::new();
-                            //     if !has_children {
-                            //         ui_builder = ui_builder.invisible();
-                            //     }
-                            //     // Children plot toggle
-                            //     ui.scope_builder(ui_builder, |ui| {
-                            //         ui.visuals_mut().selection.bg_fill =
-                            //             egui::Color32::from_gray(80);
-
-                            //         let plotted_count = h_children
-                            //             .into_iter()
-                            //             .flatten()
-                            //             .filter_map(|entity| query_plot.get(*entity).ok())
-                            //             .filter(|p| p.enabled)
-                            //             .count();
-
-                            //         if h_children.is_some_and(|c| c.len() != plotted_count) {
-                            //             let color = &mut ui.visuals_mut().selection.bg_fill;
-                            //             *color = color.linear_multiply(0.4);
-                            //         }
-
-                            //         let any_plotted = plotted_count > 0;
-                            //         if ui.selectable_label(any_plotted, "A").clicked() {
-                            //             for child in h_children.into_iter().flatten() {
-                            //                 if let Ok(mut plot) = query_plot.get_mut(*child) {
-                            //                     plot.enabled = !any_plotted;
-                            //                 }
-                            //             }
-                            //         }
-                            //     });
-
-                            //     let checked = **selected == Some(entity);
-                            //     if ui.selectable_label(checked, name.as_str()).clicked() {
-                            //         **selected = Some(entity);
-                            //     }
-                            // } else {
-                            //     ui.label(name.as_str());
-                            // }
                         },
                     );
                 })

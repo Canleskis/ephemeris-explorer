@@ -9,7 +9,7 @@ use crate::{
         TrajectoryData,
     },
     time::SimulationTime,
-    ui::{get_name, show_tree, FixedUiSet, IdentedInfo, Labelled, ParsedTextEdit},
+    ui::{get_name, precision, show_tree, IdentedInfo, Labelled, WindowsUiSet},
     MainState,
 };
 
@@ -32,7 +32,7 @@ impl Plugin for ShipSpawnerPlugin {
                 load_solar_system_state,
             )
                 .chain()
-                .after(FixedUiSet)
+                .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
         );
     }
@@ -173,17 +173,25 @@ impl ShipSpawnerWindow {
 
                 ui.horizontal(|ui| {
                     ui.label("At:");
-                    let edit = ui.add(ParsedTextEdit::singleline(
-                        &mut data.start,
-                        |buf| {
-                            Epoch::from_str(buf).ok().map(|t| {
-                                t.clamp(sim_time.start(), sim_time.end())
-                                    .floor(Duration::from_seconds(1.0))
-                            })
-                        },
-                        Epoch::to_string,
-                    ));
-                    if edit.changed() {
+                    let mut start = data.start.to_tai_seconds();
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut start)
+                                .custom_formatter(|value, _| {
+                                    Epoch::from_tai_seconds(value).to_string()
+                                })
+                                .custom_parser(|text| {
+                                    Epoch::from_str(text).ok().map(|t| {
+                                        t.clamp(sim_time.start(), sim_time.end())
+                                            .floor(Duration::from_seconds(1.0))
+                                            .to_tai_seconds()
+                                    })
+                                })
+                                .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
+                        )
+                        .changed()
+                    {
+                        data.start = Epoch::from_tai_seconds(start).round(precision());
                         window.valid_preview = false;
                     }
                 });
@@ -322,7 +330,7 @@ impl ShipSpawnerWindow {
                 }
 
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().interact_size = [150.0, 18.0].into();
+                    ui.spacing_mut().interact_size.x = 150.0;
 
                     let precision = Duration::from_seconds(1.0);
                     let mut duration = data.preview_duration.to_seconds();

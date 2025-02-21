@@ -23,13 +23,18 @@ pub struct Labelled {
     pub index: usize,
 }
 
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
+pub struct WorldUiSet;
+
 pub struct WorldUiPlugin;
 
 impl Plugin for WorldUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PreUpdate,
-            (spawn_labels, despawn_labels, update_labels).chain(),
+            (spawn_labels, despawn_labels, update_labels)
+                .chain()
+                .in_set(WorldUiSet),
         )
         .add_systems(
             PostUpdate,
@@ -41,6 +46,7 @@ impl Plugin for WorldUiPlugin {
                 (update_labels_position, hide_overlapped_labels).chain(),
                 update_labels_color,
             )
+                .in_set(WorldUiSet)
                 .run_if(in_state(MainState::Running))
                 .after(bevy::transform::TransformSystem::TransformPropagate),
         );

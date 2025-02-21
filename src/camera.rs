@@ -1,5 +1,6 @@
 use crate::{
     floating_origin::{BigSpace, Grid, GridCell, Precision},
+    ui::WindowsUiSet,
     MainState,
 };
 
@@ -117,7 +118,8 @@ impl Plugin for CameraPlugin {
                     (
                         crate::ui::is_using_pointer.pipe(disable_mouse_controls),
                         crate::ui::is_using_keyboard.pipe(disable_keyboard_controls),
-                    ),
+                    )
+                        .after(WindowsUiSet),
                     (
                         mouse_controls.run_if(|disabled: Res<DisabledControls>| !disabled.mouse),
                         keyboard_controls

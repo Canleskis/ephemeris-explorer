@@ -85,10 +85,8 @@ fn setup_egui(mut contexts: EguiContexts) {
                         "../../assets/fonts/emoji-icon-font.ttf"
                     ))
                     .tweak(egui::FontTweak {
-                        scale: 0.88, // make it smaller
+                        scale: 0.90, // make it smaller
                         // probably not correct, but this does make texts look better (#2724 for details)
-                        y_offset_factor: 0.11, // move glyphs down to better align with common fonts
-                        baseline_offset_factor: -0.11, // ...now the entire row is a bit down so shift it back
                         ..Default::default()
                     })
                     .into(),
@@ -239,55 +237,6 @@ where
     }
 }
 
-#[expect(clippy::type_complexity)]
-struct ParsedTextEdit<'t, T> {
-    pub parsed: &'t mut T,
-    pub parse: Box<dyn 't + Fn(&str) -> Option<T>>,
-    pub format: Box<dyn 't + Fn(&T) -> String>,
-    pub id: Option<egui::Id>,
-}
-
-impl<'t, T> ParsedTextEdit<'t, T> {
-    pub fn id(mut self, id: impl Into<egui::Id>) -> Self {
-        self.id = Some(id.into());
-        self
-    }
-
-    pub fn singleline(
-        parsed: &'t mut T,
-        parse: impl 't + Fn(&str) -> Option<T>,
-        format: impl 't + Fn(&T) -> String,
-    ) -> Self {
-        Self {
-            parsed,
-            parse: Box::new(parse),
-            format: Box::new(format),
-            id: None,
-        }
-    }
-}
-
-impl<T: Clone> egui::Widget for ParsedTextEdit<'_, T> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let id = self.id.unwrap_or_else(|| ui.next_auto_id());
-
-        let mut value_text = ui
-            .data_mut(|data| data.remove_temp::<String>(id))
-            .unwrap_or_else(|| (self.format)(self.parsed));
-
-        let edit = egui::TextEdit::singleline(&mut value_text).id(id).ui(ui);
-
-        if !edit.has_focus() {
-            value_text = (self.format)(self.parsed);
-        } else if let Some(val) = (self.parse)(&value_text) {
-            *self.parsed = val;
-        }
-        ui.data_mut(|data| data.insert_temp(id, value_text));
-
-        edit
-    }
-}
-
 #[inline]
 fn get_name(entity: Entity, query_name: &Query<&Name>) -> String {
     query_name
@@ -389,6 +338,11 @@ impl<T> IdentedInfo<T> {
 #[inline]
 fn epoch_clamped_parser(min: Epoch, max: Epoch) -> impl Fn(&str) -> Option<Epoch> {
     move |buf| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
+}
+
+#[inline]
+fn precision() -> hifitime::Duration {
+    hifitime::Duration::from_milliseconds(100.0)
 }
 
 macro_rules! nformat {

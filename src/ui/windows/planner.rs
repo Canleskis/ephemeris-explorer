@@ -6,7 +6,7 @@ use crate::{
         TrajectoryBuilder,
     },
     time::SimulationTime,
-    ui::FixedUiSet,
+    ui::WindowsUiSet,
     MainState,
 };
 
@@ -22,7 +22,7 @@ impl Plugin for PredictionPlannerPlugin {
         app.add_systems(
             Update,
             PredictionPlannerWindow::show
-                .after(FixedUiSet)
+                .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
         );
     }
@@ -147,7 +147,7 @@ impl PredictionPlannerWindow {
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.spacing_mut().text_edit_width = 300.0;
+                ui.spacing_mut().interact_size.x = 300.0;
 
                 ui.heading("Backward prediction");
 
