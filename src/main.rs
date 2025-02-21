@@ -7,7 +7,6 @@ mod flight_plan;
 mod floating_origin;
 mod hierarchy;
 mod load;
-mod plot;
 mod prediction;
 mod rotation;
 mod selection;
@@ -22,7 +21,6 @@ use crate::{
     flight_plan::FlightPlanPlugin,
     floating_origin::FloatingOriginPlugin,
     load::{LoadSolarSystemEvent, LoadingPlugin},
-    plot::TrajectoryPlotPlugin,
     prediction::{
         Backward, DiscreteStatesBuilder, FixedSegmentsBuilder, Forward, PredictionPlugin,
     },
@@ -65,7 +63,6 @@ fn main() {
             SelectionPlugin,
             StarLightPlugin,
             FloatingOriginPlugin::default(),
-            TrajectoryPlotPlugin,
             SimulationTimePlugin,
             OrbitalAnalysisPlugin,
             UiPlugin,

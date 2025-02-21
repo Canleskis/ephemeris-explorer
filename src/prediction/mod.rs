@@ -51,6 +51,7 @@ impl<B, const EXTEND: bool> ComputePredictionEvent<B, EXTEND> {
 
 pub type ExtendPredictionEvent<B> = ComputePredictionEvent<B, true>;
 
+/// Marker component to indicate that an entity's trajectory prediction is being computed.
 #[derive(Clone, Copy, Component)]
 pub struct Predicting<B>(std::marker::PhantomData<fn(B)>);
 

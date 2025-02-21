@@ -39,7 +39,7 @@ impl Plugin for UiPlugin {
                 .with_save_file::<ExportSolarSystemFile>()
                 .with_save_file::<ExportShipFile>(),
         )
-        .add_plugins((WorldUiPlugin, FixedUiPlugin, WindowsUiPlugin))
+        .add_plugins((TooltipPlugin, FixedUiPlugin, WindowsUiPlugin))
         .add_systems(Startup, setup_egui)
         .add_systems(
             Update,

@@ -10,7 +10,6 @@ use crate::{
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
     hierarchy::AddOrbit,
-    plot::TrajectoryPlot,
     prediction::{
         Backward, DiscreteStates, DiscreteStatesBuilder, ExtendPredictionEvent, FixedSegments,
         FixedSegmentsBuilder, Forward, Mu, PredictionTracker, Trajectory, TrajectoryData, DIV,
@@ -19,7 +18,7 @@ use crate::{
     selection::Selectable,
     starlight::Star,
     time::{BoundsTime, SimulationTime},
-    ui::Labelled,
+    ui::{Labelled, TrajectoryPlot},
     MainState,
 };
 

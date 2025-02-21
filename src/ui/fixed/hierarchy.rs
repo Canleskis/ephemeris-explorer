@@ -2,9 +2,8 @@ use crate::{
     camera::Followed,
     hierarchy::OrbitedBy,
     load::SystemRoot,
-    plot::{SourceOf, TrajectoryPlot},
     selection::{Selectable, Selected},
-    ui::show_tree,
+    ui::{show_tree, SourceOf, TrajectoryPlot},
 };
 
 use bevy::prelude::*;

@@ -1,13 +1,15 @@
 use crate::{
     flight_plan::{Burn, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
-    plot::{PlotPoints, SourceOf, TrajectoryHitPoint, TrajectoryPlot, PICK_THRESHOLD},
     prediction::{
         DiscreteStatesBuilder, Predicting, RelativeTrajectory, Trajectory, TrajectoryData,
     },
     selection::Selected,
     time::SimulationTime,
-    ui::nformat,
+    ui::{
+        nformat, PlotPoints, SourceOf, TrajectoryHitPoint, TrajectoryPlot, WorldUiSet,
+        PICK_THRESHOLD,
+    },
     MainState,
 };
 
@@ -23,12 +25,9 @@ pub struct Labelled {
     pub index: usize,
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
-pub struct WorldUiSet;
+pub struct TooltipPlugin;
 
-pub struct WorldUiPlugin;
-
-impl Plugin for WorldUiPlugin {
+impl Plugin for TooltipPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PreUpdate,
@@ -39,10 +38,10 @@ impl Plugin for WorldUiPlugin {
         .add_systems(
             PostUpdate,
             (
-                show_separation.after(crate::plot::compute_plot_points_parallel),
+                show_separation.after(crate::ui::compute_plot_points_parallel),
                 show_intersections
                     .before(bevy_egui::EguiPostUpdateSet::EndPass)
-                    .after(crate::plot::trajectory_picking),
+                    .after(crate::ui::trajectory_picking),
                 (update_labels_position, hide_overlapped_labels).chain(),
                 update_labels_color,
             )
@@ -496,12 +495,12 @@ fn show_separation(
 
             let position = points.evaluate(at)?;
             let direction = camera_transform.translation() - position;
-            let size = direction.length() * 4e-3 * fov;
-            gizmos.circle(
+            let size = direction.length() * 6e-3 * fov;
+            gizmos.rect(
                 Transform::from_translation(position)
-                    .looking_to(direction, Vec3::Y)
+                    .looking_to(direction, camera_transform.up())
                     .to_isometry(),
-                size,
+                Vec2::splat(size),
                 color,
             );
 
@@ -521,12 +520,12 @@ fn show_separation(
             let target_position = target_data.and_then(|(points, _)| points.evaluate(at));
             if let Some(target_position) = target_position {
                 let direction = camera_transform.translation() - target_position;
-                let size = direction.length() * 4e-3 * fov;
-                gizmos.circle(
+                let size = direction.length() * 6e-3 * fov;
+                gizmos.rect(
                     Transform::from_translation(target_position)
-                        .looking_to(direction, Vec3::Y)
+                        .looking_to(direction, camera_transform.up())
                         .to_isometry(),
-                    size,
+                    Vec2::splat(size),
                     color,
                 );
             }

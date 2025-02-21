@@ -3,11 +3,13 @@ use crate::{
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     hierarchy::{HierarchyQueryExt, OrbitedBy, Orbiting},
     load::SystemRoot,
-    plot::{SourceOf, TrajectoryPlot},
     prediction::{DiscreteStatesBuilder, Mu, Trajectory, TrajectoryData},
     selection::Selected,
     time::SimulationTime,
-    ui::{get_name, nformat, precision, show_tree, IdentedInfo, SeparationPlot, WindowsUiSet},
+    ui::{
+        get_name, nformat, precision, show_tree, IdentedInfo, SeparationPlot, SourceOf,
+        TrajectoryPlot, WindowsUiSet,
+    },
     MainState,
 };
 
@@ -439,7 +441,7 @@ impl BodyInfoWindow {
                                 }
                             }
                         }
-                        ui.add_enabled_ui(info.plot_start_overwrite.is_none(), |ui| {
+                        ui.add_enabled_ui(info.plot_end_overwrite.is_none(), |ui| {
                             let mut plot_end = plot.end.to_tai_seconds();
                             if ui
                                 .add(
@@ -799,7 +801,7 @@ impl BodyInfoWindow {
                     ui.spacing_mut().interact_size.x = 150.0;
 
                     let speed =
-                        (burn.duration.max(precision()) / 100).min(Duration::from_seconds(60.0));
+                        (burn.duration.max(precision()) * 1e-3).min(Duration::from_seconds(60.0));
 
                     let mut duration = burn.duration.to_seconds();
                     ui.label("Length:");

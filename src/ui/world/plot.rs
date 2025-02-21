@@ -6,6 +6,7 @@ use crate::{
     },
     selection::Selectable,
     time::SimulationTime,
+    ui::WorldUiSet,
     MainState,
 };
 
@@ -57,9 +58,9 @@ pub struct TrajectoryHitPoint {
 }
 
 #[derive(Default)]
-pub struct TrajectoryPlotPlugin;
+pub struct PlotPlugin;
 
-impl Plugin for TrajectoryPlotPlugin {
+impl Plugin for PlotPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<TrajectoryHitPoint>()
             .add_systems(Startup, setup_gizmos)
@@ -76,6 +77,7 @@ impl Plugin for TrajectoryPlotPlugin {
                     ),
                 )
                     .chain()
+                    .in_set(WorldUiSet)
                     .run_if(in_state(MainState::Running))
                     .after(bevy::transform::TransformSystem::TransformPropagate),
             );
@@ -96,6 +98,7 @@ pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
 }
 
 pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
+    // TODO: There is probably a simpler way to do this.
     let (cell, translation) = root.translation_to_grid(pos);
     root.global_transform(&cell, &Transform::from_translation(translation))
         .translation()
@@ -186,69 +189,6 @@ impl PlotPoints {
                 Some(p1.lerp(p2, t))
             }
         }
-    }
-}
-
-#[expect(unused)]
-pub fn compute_plot_points(
-    mut commands: Commands,
-    sim_time: Res<SimulationTime>,
-    mut query_plot: Query<(Entity, &TrajectoryPlot)>,
-    query_trajectory: Query<&Trajectory>,
-    root: Single<&Grid, With<BigSpace>>,
-    camera: Query<(&GlobalTransform, &Projection)>,
-) {
-    let Ok((camera_transform, proj)) = camera.get_single() else {
-        return;
-    };
-
-    for (entity, plot) in query_plot.iter_mut() {
-        commands.queue(move |world: &mut World| {
-            if let Some(mut points) = world.get_mut::<PlotPoints>(entity) {
-                points.clear();
-            }
-        });
-
-        let Some(relative) = plot.relative_trajectory(&query_trajectory) else {
-            continue;
-        };
-
-        if !plot.enabled || relative.is_empty() || plot.start >= plot.end {
-            continue;
-        }
-
-        let threshold = match proj {
-            Projection::Perspective(p) => {
-                const ARC_MINUTE: f32 = 0.000290888;
-                plot.threshold * ARC_MINUTE * p.fov
-            }
-            _ => unreachable!(),
-        } as f64;
-
-        let start = relative.start();
-        let end = relative.end();
-
-        let min = plot.start.clamp(start, end);
-        let max = plot.end.clamp(start, end);
-
-        let current = sim_time.current().clamp(relative.start(), relative.end());
-        let translation = StateVector::from_position(
-            relative
-                .reference
-                .map(|r| r.position(current).unwrap())
-                .unwrap_or_default(),
-        );
-
-        let eval = |at| to_global_sv(relative.state_vector(at).unwrap() + translation, *root);
-
-        let new_points =
-            PlotPoints::new(eval, min, max, camera_transform, threshold, plot.max_points);
-
-        commands.queue(move |world: &mut World| {
-            if let Some(mut points) = world.get_mut::<PlotPoints>(entity) {
-                *points = new_points;
-            }
-        });
     }
 }
 
@@ -403,13 +343,6 @@ pub fn trajectory_picking(
 fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &TrajectoryPlot)>) {
     for (points, plot) in query.iter() {
         gizmos.linestrip(points.iter().map(|(_, p)| *p), plot.color);
-        // for &p in &points {
-        //     let dir = camera_transform.translation() - p;
-        //     let size = dir.length() * 0.01;
-        //     gizmos
-        //         .circle(p, Dir3::new(dir).unwrap(), size, plot.color)
-        //         .resolution(16);
-        // }
     }
 }
 
@@ -419,7 +352,6 @@ fn plot_burns(
     query_plot: Query<(&PlotPoints, &TrajectoryPlot)>,
     root: Single<&Grid, With<BigSpace>>,
     camera: Query<&GlobalTransform, With<Camera>>,
-    // ctx: Res<PredictionCtx<DiscreteStatesBuilder>>,
 ) {
     let camera_transform = camera.single();
 

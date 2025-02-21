@@ -3,13 +3,12 @@ use crate::{
     floating_origin::BigGridBundle,
     hierarchy::OrbitedBy,
     load::{LoadShipEvent, Ship, SystemRoot},
-    plot::TrajectoryPlot,
     prediction::{
         ComputePredictionEvent, DiscreteStates, DiscreteStatesBuilder, Mu, StateVector, Trajectory,
         TrajectoryData,
     },
     time::SimulationTime,
-    ui::{get_name, precision, show_tree, IdentedInfo, Labelled, WindowsUiSet},
+    ui::{get_name, precision, show_tree, IdentedInfo, Labelled, WindowsUiSet, TrajectoryPlot},
     MainState,
 };
 
