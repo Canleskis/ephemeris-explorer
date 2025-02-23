@@ -74,13 +74,11 @@ impl OrbitCamera {
 #[derive(Resource, Default)]
 pub struct AdditionalCameraInput {
     pub scroll: f64,
-    pub zoom: f64,
 }
 
 impl AdditionalCameraInput {
     pub fn reset(&mut self) {
         self.scroll = 0.0;
-        self.zoom = 0.0;
     }
 }
 
@@ -139,8 +137,7 @@ impl Plugin for CameraPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    scale_mouse_to_zoom,
-                    zoom_camera,
+                    scale_mouse_to_fov,
                     follow_changed,
                     (
                         orbit_controls.run_if(in_state(CameraState::Orbit)),
@@ -257,14 +254,10 @@ fn mouse_controls(
     }
 }
 
-fn scale_mouse_to_zoom(
-    projection: Query<&Projection, With<Camera>>,
+fn scale_mouse_to_fov(
+    perspective: Single<&PerspectiveProjection, With<Camera>>,
     mut input: ResMut<CameraInput>,
 ) {
-    let Projection::Perspective(perspective) = projection.single() else {
-        return;
-    };
-
     input.pitch *= perspective.fov as f64;
     input.yaw *= perspective.fov as f64;
 }
@@ -272,14 +265,7 @@ fn scale_mouse_to_zoom(
 fn keyboard_controls(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut input: ResMut<CameraInput>,
-    mut input_2: ResMut<AdditionalCameraInput>,
 ) {
-    keyboard
-        .pressed(KeyCode::ArrowUp)
-        .then(|| input_2.zoom -= 1.0);
-    keyboard
-        .pressed(KeyCode::ArrowDown)
-        .then(|| input_2.zoom += 1.0);
     keyboard
         .pressed(KeyCode::KeyW)
         .then(|| input.forward -= 1.0);
@@ -297,21 +283,6 @@ fn keyboard_controls(
     keyboard
         .pressed(KeyCode::ShiftLeft)
         .then(|| input.boost = true);
-}
-
-fn zoom_camera(
-    time: Res<Time>,
-    input_2: ResMut<AdditionalCameraInput>,
-    mut camera: Query<&mut Projection, With<Camera>>,
-) {
-    for mut projection in camera.iter_mut() {
-        if let Projection::Perspective(perspective) = &mut *projection {
-            perspective.fov *= 1.0 + input_2.zoom as f32 * time.delta_secs();
-            perspective.fov = perspective
-                .fov
-                .clamp(0.001, 2.0 * std::f32::consts::FRAC_PI_3);
-        }
-    }
 }
 
 fn sync_camera_distance(

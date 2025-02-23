@@ -205,6 +205,7 @@ fn top_menu(
     planner: Option<Res<PredictionPlannerWindow>>,
     debug: Option<Res<EphemeridesDebugWindow>>,
     spawner: Option<Res<ShipSpawnerWindow>>,
+    settings: Option<Res<SettingsWindow>>,
 ) {
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
@@ -221,18 +222,19 @@ fn top_menu(
                 menu_label(planner, ui, &mut commands, "Prediction planner");
                 menu_label(debug, ui, &mut commands, "Ephemerides debug");
                 menu_label(spawner, ui, &mut commands, "Spawn ship");
+                menu_label(settings, ui, &mut commands, "Settings");
             });
         });
 }
 
 fn menu_label<T>(menu: Option<Res<T>>, ui: &mut egui::Ui, commands: &mut Commands, label: &str)
 where
-    T: Resource + Default,
+    T: Resource + FromWorld,
 {
     if ui.selectable_label(menu.is_some(), label).clicked() {
         match menu.is_some() {
             true => commands.remove_resource::<T>(),
-            false => commands.insert_resource(T::default()),
+            false => commands.init_resource::<T>(),
         }
     }
 }

@@ -23,7 +23,9 @@ impl Plugin for SelectionPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    entity_picker.run_if(not(crate::ui::is_using_pointer)),
+                    entity_picker
+                        .never_param_warn()
+                        .run_if(not(crate::ui::is_using_pointer)),
                     select_clicked,
                 )
                     .chain()
@@ -37,21 +39,13 @@ fn entity_picker(
     ray_map: Res<RayMap>,
     mouse_input: Res<ButtonInput<MouseButton>>,
     mut mouse_move: EventReader<MouseMotion>,
-    query_camera: Query<&Projection, With<Camera>>,
+    perspective: Single<&PerspectiveProjection, With<Camera>>,
     query_can_select: Query<(Entity, &GlobalTransform, &Selectable)>,
 ) {
     if !mouse_input.just_pressed(MouseButton::Left) || !mouse_move.is_empty() {
         mouse_move.clear();
         return;
     }
-
-    let Ok(proj) = query_camera.get_single() else {
-        return;
-    };
-    let fov = match proj {
-        Projection::Perspective(p) => p.fov,
-        _ => return,
-    };
 
     let Some((_, ray)) = ray_map.iter().next() else {
         return;
@@ -64,7 +58,7 @@ fn entity_picker(
             let distance = transform.translation().distance(Vec3::from(ray.origin));
             let toi = ray.sphere_intersection_at(&bevy::math::bounding::BoundingSphere::new(
                 transform.translation(),
-                clickable.radius + distance * fov * 1e-2,
+                clickable.radius + distance * perspective.fov * 1e-2,
             ))?;
 
             Some((entity, clickable.index as f32 * toi))

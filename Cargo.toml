@@ -36,6 +36,7 @@ indexmap = { version = "2", features = ["serde"] }
 toml = "0.8"
 thiserror = "2"
 rand = "0.8"
+dirs = "6.0.0"
 
 [profile.dev]
 opt-level = 1

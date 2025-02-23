@@ -1,5 +1,5 @@
 use crate::{
-    flight_plan::{Burn, FlightPlan, FlightPlanChanged},
+    flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
     prediction::{
         DiscreteStatesBuilder, Predicting, RelativeTrajectory, Trajectory, TrajectoryData,
@@ -59,7 +59,7 @@ struct LabelEntity(Entity);
 struct Label;
 
 /// We should ideally be using billboards here, but none of the available options suit the project's
-/// needs for now.
+/// needs for now. Specifically, we want billboards with a fixed size always facing the camera.
 fn spawn_labels(
     mut commands: Commands,
     query_labelled: Query<(Entity, &Name, &Labelled), Added<Labelled>>,
@@ -241,20 +241,13 @@ fn show_intersections(
     query_trajectory: Query<&Trajectory>,
     query_points: Query<(&Name, &PlotPoints, &TrajectoryPlot)>,
     mut query_flight_plan: Query<&mut FlightPlan>,
-    query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
+    camera: Single<(&GlobalTransform, &Camera, &PerspectiveProjection)>,
     mut persisted: Local<Vec<TrajectoryHitPoint>>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
-    let Ok((camera_transform, camera, proj)) = query_camera.get_single() else {
-        return;
-    };
+    let (camera_transform, camera, perspective) = *camera;
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
-    };
-
-    let fov = match proj {
-        Projection::Perspective(p) => p.fov,
-        _ => return,
     };
 
     let mut buffer = events.read().cloned().collect::<Vec<_>>();
@@ -390,7 +383,7 @@ fn show_intersections(
                                 };
 
                                 let direction = camera_transform.translation() - *position;
-                                let size = direction.length() * PICK_THRESHOLD * fov;
+                                let size = direction.length() * PICK_THRESHOLD * perspective.fov;
 
                                 gizmos.circle(
                                     Transform::from_translation(*position)
@@ -449,7 +442,7 @@ impl SeparationPlot {
 fn show_separation(
     mut contexts: EguiContexts,
     mut gizmos: Gizmos,
-    query_camera: Query<(&GlobalTransform, &Camera, &Projection)>,
+    camera: Single<(&GlobalTransform, &Camera, &PerspectiveProjection)>,
     query_data: Query<(&Name, &PlotPoints, &TrajectoryPlot, Option<&SeparationPlot>)>,
     // Don't display the separation if the prediction is still being computed.
     query_trajectory: Query<&Trajectory, Without<Predicting<DiscreteStatesBuilder>>>,
@@ -459,11 +452,7 @@ fn show_separation(
         return;
     };
 
-    let (camera_transform, camera, proj) = query_camera.single();
-    let fov = match proj {
-        Projection::Perspective(p) => p.fov,
-        _ => return,
-    };
+    let (camera_transform, camera, perspective) = *camera;
 
     let color = LinearRgba::gray(0.4);
 
@@ -495,7 +484,7 @@ fn show_separation(
 
             let position = points.evaluate(at)?;
             let direction = camera_transform.translation() - position;
-            let size = direction.length() * 6e-3 * fov;
+            let size = direction.length() * 6e-3 * perspective.fov;
             gizmos.rect(
                 Transform::from_translation(position)
                     .looking_to(direction, camera_transform.up())
@@ -520,7 +509,7 @@ fn show_separation(
             let target_position = target_data.and_then(|(points, _)| points.evaluate(at));
             if let Some(target_position) = target_position {
                 let direction = camera_transform.translation() - target_position;
-                let size = direction.length() * 6e-3 * fov;
+                let size = direction.length() * 6e-3 * perspective.fov;
                 gizmos.rect(
                     Transform::from_translation(target_position)
                         .looking_to(direction, camera_transform.up())

@@ -536,7 +536,6 @@ fn setup_camera(
                 ..default()
             },
             PerspectiveProjection {
-                fov: 45f32.to_radians(),
                 near: 0.001,
                 ..default()
             },

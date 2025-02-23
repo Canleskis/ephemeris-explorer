@@ -2,12 +2,14 @@ mod body;
 mod debug;
 mod export;
 mod planner;
+mod settings;
 mod spawner;
 
 pub use body::*;
 pub use debug::*;
 pub use export::*;
 pub use planner::*;
+pub use settings::*;
 pub use spawner::*;
 
 use bevy::prelude::*;
@@ -26,6 +28,7 @@ impl Plugin for WindowsUiPlugin {
             ShipSpawnerPlugin,
             EphemeridesDebugPlugin,
             BodyInfoPlugin,
+            SettingsPlugin,
         ));
     }
 }

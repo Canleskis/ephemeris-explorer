@@ -10,6 +10,7 @@ mod load;
 mod prediction;
 mod rotation;
 mod selection;
+mod settings;
 mod starlight;
 mod time;
 mod ui;
@@ -25,13 +26,13 @@ use crate::{
         Backward, DiscreteStatesBuilder, FixedSegmentsBuilder, Forward, PredictionPlugin,
     },
     selection::SelectionPlugin,
+    settings::{AppSettings, PersistentSettingsPlugin},
     starlight::StarLightPlugin,
     time::SimulationTimePlugin,
     ui::UiPlugin,
 };
 
 use bevy::prelude::*;
-use bevy::window::WindowMode;
 use bevy_egui::EguiPlugin;
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -51,7 +52,6 @@ fn main() {
                         canvas: Some("#app".to_owned()),
                         visible: false,
                         title: "Ephemeris Explorer".to_owned(),
-                        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
                         ..default()
                     }),
                     ..default()
@@ -59,6 +59,7 @@ fn main() {
                 .disable::<TransformPlugin>(),
             bevy::diagnostic::FrameTimeDiagnosticsPlugin,
             EguiPlugin,
+            PersistentSettingsPlugin,
             CameraPlugin,
             SelectionPlugin,
             StarLightPlugin,
@@ -140,18 +141,11 @@ fn delay_window_visiblity(mut window: Query<&mut Window>, frames: Res<bevy::core
     }
 }
 
-fn toggle_full_screen(
-    kb: Res<ButtonInput<KeyCode>>,
-    mut query_window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
-) {
+fn toggle_full_screen(kb: Res<ButtonInput<KeyCode>>, settings: Option<ResMut<AppSettings>>) {
+    let Some(mut settings) = settings else {
+        return;
+    };
     if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
-        let mode = &mut query_window.single_mut().mode;
-        bevy::log::debug!("Toggling window mode");
-        match *mode {
-            WindowMode::Windowed => {
-                *mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-            }
-            _ => *mode = WindowMode::Windowed,
-        }
+        settings.fullscreen = !settings.fullscreen;
     }
 }

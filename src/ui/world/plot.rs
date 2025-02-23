@@ -198,12 +198,8 @@ pub fn compute_plot_points_parallel(
     mut query_plot: Query<(Entity, &TrajectoryPlot)>,
     query_trajectory: Query<&Trajectory>,
     root: Single<&Grid, With<BigSpace>>,
-    camera: Query<(&GlobalTransform, &Projection)>,
+    camera: Single<(&GlobalTransform, &PerspectiveProjection)>,
 ) {
-    let Ok((camera_transform, proj)) = camera.get_single() else {
-        return;
-    };
-
     query_plot.par_iter_mut().for_each(|(entity, plot)| {
         commands.command_scope(move |mut commands| {
             commands.queue(move |world: &mut World| {
@@ -215,13 +211,8 @@ pub fn compute_plot_points_parallel(
 
         if let Some(relative) = plot.relative_trajectory(&query_trajectory) {
             if plot.enabled && !relative.is_empty() && plot.start < plot.end {
-                let tan2_angular_resolution = match proj {
-                    Projection::Perspective(p) => {
-                        const ARC_MINUTE: f32 = 0.000290888;
-                        plot.threshold * ARC_MINUTE * p.fov
-                    }
-                    _ => unreachable!(),
-                } as f64;
+                const ARC_MINUTE: f32 = 0.000290888;
+                let tan2_angular_resolution = (plot.threshold * ARC_MINUTE * camera.1.fov) as f64;
 
                 let start = relative.start();
                 let end = relative.end();
@@ -241,7 +232,7 @@ pub fn compute_plot_points_parallel(
                     |at| to_global_sv(relative.state_vector(at).unwrap() + translation, *root),
                     min,
                     max,
-                    camera_transform,
+                    camera.0,
                     tan2_angular_resolution,
                     plot.max_points,
                 );
@@ -263,19 +254,10 @@ pub const PICK_THRESHOLD: f32 = 6e-3;
 pub fn trajectory_picking(
     ray_map: Res<RayMap>,
     query_clickable: Query<(&GlobalTransform, &Selectable)>,
-    query_camera: Query<&Projection, With<Camera>>,
+    perspective: Single<&PerspectiveProjection, With<Camera>>,
     query_points: Query<(Entity, &PlotPoints)>,
     mut events: EventWriter<TrajectoryHitPoint>,
 ) {
-    let Ok(proj) = query_camera.get_single() else {
-        return;
-    };
-
-    let fov = match proj {
-        Projection::Perspective(p) => p.fov,
-        _ => return,
-    };
-
     let Some((_, ray)) = ray_map.iter().next() else {
         return;
     };
@@ -287,7 +269,7 @@ pub fn trajectory_picking(
             let distance = transform.translation().distance(Vec3::from(ray.origin));
             ray.sphere_intersection_at(&bevy::math::bounding::BoundingSphere::new(
                 transform.translation(),
-                clickable.radius + distance * fov * 1e-2,
+                clickable.radius + distance * perspective.fov * 1e-2,
             ))
         })
         .fold(f32::MAX, f32::min);
@@ -328,7 +310,7 @@ pub fn trajectory_picking(
             let closest_point_ray = ray.origin + ray.direction * t_ray;
             let separation = (closest_point_ray - closest_point_seg).length();
 
-            if separation < t_ray * fov * PICK_THRESHOLD {
+            if separation < t_ray * perspective.fov * PICK_THRESHOLD {
                 events.send(TrajectoryHitPoint {
                     entity,
                     time: *t1 + (*t2 - *t1) * t_seg as f64,
@@ -351,10 +333,8 @@ fn plot_burns(
     query: Query<(&Trajectory, &FlightPlan, &SourceOf, &DiscreteStatesBuilder)>,
     query_plot: Query<(&PlotPoints, &TrajectoryPlot)>,
     root: Single<&Grid, With<BigSpace>>,
-    camera: Query<&GlobalTransform, With<Camera>>,
+    camera: Single<(&GlobalTransform, &PerspectiveProjection)>,
 ) {
-    let camera_transform = camera.single();
-
     for (trajectory, flight_plan, source_of, builder) in query.iter() {
         for (points, plot) in query_plot.iter_many(source_of) {
             if !plot.enabled || trajectory.is_empty() {
@@ -379,8 +359,8 @@ fn plot_burns(
                 let Some(world_pos) = points.evaluate(burn.start) else {
                     continue;
                 };
-                let direction = camera_transform.translation() - world_pos;
-                let size = direction.length() * 0.02;
+                let direction = camera.0.translation() - world_pos;
+                let size = direction.length() * 0.02 * camera.1.fov;
                 gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
                 gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
                 gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);
@@ -396,14 +376,8 @@ fn plot_debug_points_discrete(
     query_plot: Query<&TrajectoryPlot>,
     query_trajectory: Query<&Trajectory>,
     root: Single<&Grid, With<BigSpace>>,
-    query_camera: Query<(&GlobalTransform, &Projection)>,
+    camera: Single<(&GlobalTransform, &PerspectiveProjection)>,
 ) {
-    let (camera_transform, proj) = query_camera.single();
-    let fov = match proj {
-        Projection::Perspective(p) => p.fov,
-        _ => return,
-    };
-
     for plot in query_plot.iter() {
         let Ok(trajectory) = query_trajectory.get(plot.source) else {
             continue;
@@ -433,8 +407,8 @@ fn plot_debug_points_discrete(
                 continue;
             };
             let position = to_global_pos(position + translation, *root);
-            let direction = camera_transform.translation() - position;
-            let size = direction.length() * 4e-3 * fov;
+            let direction = camera.0.translation() - position;
+            let size = direction.length() * 4e-3 * camera.1.fov;
             gizmos.circle(
                 Transform::from_translation(position)
                     .looking_to(direction, Vec3::Y)
