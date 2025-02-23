@@ -77,7 +77,9 @@ fn main() {
             AutoExtendPlugin::<FixedSegmentsBuilder<Backward>>::default(),
         ))
         .add_plugins((
+            #[cfg(debug_assertions)]
             bevy::remote::RemotePlugin::default(),
+            #[cfg(debug_assertions)]
             bevy::remote::http::RemoteHttpPlugin::default(),
         ))
         .init_state::<MainState>()

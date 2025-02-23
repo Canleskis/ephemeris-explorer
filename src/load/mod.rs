@@ -309,7 +309,7 @@ fn spawn_loaded_bodies(
 
             entity.with_children(|cmds| {
                 cmds.spawn((
-                    Name::new(format!("{} Plot", name)),
+                    Name::new(name.to_string()),
                     TrajectoryPlot {
                         source: cmds.parent_entity(),
                         enabled: depth <= 1,
@@ -475,7 +475,7 @@ fn spawn_ship(
             ),
         ))
         .with_child((
-            Name::new(format!("{} Plot", ship.name)),
+            Name::new(ship.name.to_string()),
             TrajectoryPlot {
                 source: id,
                 enabled: true,

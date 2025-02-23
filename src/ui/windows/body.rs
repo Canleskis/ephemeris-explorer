@@ -501,9 +501,7 @@ impl BodyInfoWindow {
                                         ui,
                                         SeparationPlot::Trajectory(*root),
                                         |&item| item,
-                                        |_, separation| {
-                                            matches!(separation, SeparationPlot::Trajectory(_))
-                                        },
+                                        |_, _| true,
                                         |ui, _, separation, _| {
                                             let ref_entity = separation.entity();
                                             let color = query_plot

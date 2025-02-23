@@ -402,6 +402,12 @@ impl bevy::asset::AssetLoader for ShipLoader {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
             let mut ship: Ship = serde_json::from_slice(&bytes)?;
+            ship.name = ship
+                .name
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == ' ')
+                .take(24)
+                .collect();
             ship.start = ship.start.floor(Duration::from_seconds(1.0));
 
             Ok(ship)

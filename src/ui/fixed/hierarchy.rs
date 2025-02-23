@@ -27,6 +27,8 @@ pub fn solar_system_hierarchy(
         .resizable(false)
         .min_width(250.0)
         .show(ctx, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+
             egui::ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {

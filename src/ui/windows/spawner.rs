@@ -8,7 +8,7 @@ use crate::{
         TrajectoryData,
     },
     time::SimulationTime,
-    ui::{get_name, precision, show_tree, IdentedInfo, Labelled, WindowsUiSet, TrajectoryPlot},
+    ui::{get_name, precision, show_tree, IdentedInfo, Labelled, TrajectoryPlot, WindowsUiSet},
     MainState,
 };
 
@@ -197,7 +197,15 @@ impl ShipSpawnerWindow {
 
                 ui.horizontal(|ui| {
                     ui.label("Name:");
-                    if ui.add(egui::TextEdit::singleline(&mut data.name)).changed() {
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut data.name).char_limit(24))
+                        .changed()
+                    {
+                        data.name = data
+                            .name
+                            .chars()
+                            .filter(|c| c.is_alphanumeric() || *c == ' ')
+                            .collect();
                         name.set(data.name.to_string());
                     }
                 });
@@ -216,8 +224,8 @@ impl ShipSpawnerWindow {
                             ui,
                             query_hierarchy.get(*root).unwrap(),
                             |&(e, name, _)| (e, name.clone()),
-                            |i, _| i != 0,
-                            |ui, _, (ref_entity, ref_name, children), _| {
+                            |_, _| true,
+                            |ui, _, (ref_entity, ref_name, orbited_by), _| {
                                 ui.horizontal(|ui| {
                                     if ui
                                         .selectable_value(
@@ -232,7 +240,7 @@ impl ShipSpawnerWindow {
                                     }
                                 });
 
-                                children.map(|c| query_hierarchy.iter_many(c))
+                                orbited_by.map(|c| query_hierarchy.iter_many(c))
                             },
                         );
                     });
