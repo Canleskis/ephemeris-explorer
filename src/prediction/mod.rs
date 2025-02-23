@@ -269,7 +269,7 @@ fn dispatch_predictions<B, const EXTEND: bool>(
                     }
 
                     if let Err(step_error) = instance.step() {
-                        bevy::log::debug!("{name}: {step_error}");
+                        bevy::log::error!("{name}: {step_error}");
                         end = instance.time();
                     }
                     remaining = remaining.saturating_sub(1);

@@ -399,17 +399,14 @@ impl ReferenceFrame {
         &self,
         (current_t, current_sv): (Epoch, StateVector<DVec3>),
         ctx: &bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
-    ) -> (DVec3, DVec3, DVec3) {
+    ) -> Option<(DVec3, DVec3, DVec3)> {
         match self {
-            Self::Frenet(reference) => {
-                let reference_sv = ctx
-                    .get(reference)
-                    .and_then(|(ref_traj, _)| ref_traj.state_vector(current_t))
-                    .expect("failed to find reference trajectory");
-
-                direction_from_states(current_sv, reference_sv)
-            }
-            Self::Cartesian => (DVec3::X, DVec3::Y, DVec3::Z),
+            Self::Frenet(reference) => Some(direction_from_states(
+                current_sv,
+                ctx.get(reference)
+                    .and_then(|(ref_traj, _)| ref_traj.state_vector(current_t))?,
+            )),
+            Self::Cartesian => Some((DVec3::X, DVec3::Y, DVec3::Z)),
         }
     }
 }
@@ -447,9 +444,11 @@ impl ConstantAcceleration {
         &self,
         (current_t, current_sv): (Epoch, StateVector<DVec3>),
         ctx: &bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
-    ) -> DVec3 {
-        let (x_dir, y_dir, z_dir) = self.frame.direction((current_t, current_sv), ctx);
-        self.acceleration.x * x_dir + self.acceleration.y * y_dir + self.acceleration.z * z_dir
+    ) -> Option<DVec3> {
+        let (x_dir, y_dir, z_dir) = self.frame.direction((current_t, current_sv), ctx)?;
+        Some(
+            self.acceleration.x * x_dir + self.acceleration.y * y_dir + self.acceleration.z * z_dir,
+        )
     }
 }
 
@@ -630,8 +629,10 @@ impl TrajectoryBuilder for DiscreteStatesBuilder {
             dy.position = y.velocity;
             dy.velocity = Self::gravitational_acceleration(t, y, &self.context);
             if let Some((_, Some(manoeuvre))) = self.manoeuvres.range(..t).next_back() {
-                dy.velocity += manoeuvre.acceleration((t, *y), &self.context);
+                dy.velocity += manoeuvre.acceleration((t, *y), &self.context).ok_or(())?;
             }
+
+            Ok(())
         })?;
 
         trajs.into_iter().next().unwrap().push(

@@ -349,9 +349,12 @@ fn plot_burns(
                 let Some(sv) = trajectory.state_vector(burn.start) else {
                     continue;
                 };
-                let (prograde, radial, normal) = burn
+                let Some((prograde, radial, normal)) = burn
                     .reference_frame()
-                    .direction((burn.start, sv), builder.context());
+                    .direction((burn.start, sv), builder.context())
+                else {
+                    continue;
+                };
                 let prograde = transform_vector3(prograde, *root);
                 let radial = transform_vector3(radial, *root);
                 let normal = transform_vector3(normal, *root);

@@ -5,6 +5,7 @@ pub enum StepError {
     StepSizeUnderflow,
     MaxIterationsReached,
     MaxTimeReached,
+    FailedEvaluation,
 }
 
 impl std::fmt::Display for StepError {
@@ -13,6 +14,7 @@ impl std::fmt::Display for StepError {
             Self::StepSizeUnderflow => write!(f, "step size underflow"),
             Self::MaxIterationsReached => write!(f, "max iterations reached"),
             Self::MaxTimeReached => write!(f, "max time reached"),
+            Self::FailedEvaluation => write!(f, "failed evaluation"),
         }
     }
 }
@@ -348,17 +350,17 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
 
     /// Compute the initial stepsize
     #[inline]
-    fn init_dt<F>(&self, dir: f64, delta_max: f64, mut evaluate: F) -> f64
+    fn init_dt<F>(&self, dir: f64, delta_max: f64, mut evaluate: F) -> Result<f64, ()>
     where
         V: std::ops::Index<usize, Output = f64>
             + std::ops::Add<Output = V>
             + std::ops::Mul<f64, Output = V>
             + Default
             + Copy,
-        F: FnMut(f64, &V, &mut V),
+        F: FnMut(f64, &V, &mut V) -> Result<(), ()>,
     {
         let mut f0 = V::default();
-        evaluate(self.time, &self.state, &mut f0);
+        evaluate(self.time, &self.state, &mut f0)?;
 
         // Compute the norm of y0 and f0
         let mut d0 = 0.0;
@@ -384,7 +386,7 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
 
         let y1 = self.state + f0 * h0;
         let mut f1 = V::default();
-        evaluate(self.time + h0, &y1, &mut f1);
+        evaluate(self.time + h0, &y1, &mut f1)?;
 
         // Compute the norm of f1-f0 divided by h0
         let mut d2 = 0.0;
@@ -403,7 +405,7 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
             (0.01 / (d1.sqrt().max(d2))).powf(1.0 / 5.0)
         };
 
-        sign((100.0 * h0.abs()).min(h1.min(delta_max)), dir)
+        Ok(sign((100.0 * h0.abs()).min(h1.min(delta_max)), dir))
     }
 
     #[inline]
@@ -414,7 +416,7 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
             + std::ops::Mul<f64, Output = V>
             + Default
             + Copy,
-        F: FnMut(f64, &V, &mut V),
+        F: FnMut(f64, &V, &mut V) -> Result<(), ()>,
     {
         loop {
             // Check if step number is within allowed range
@@ -428,19 +430,24 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
                     return Err(StepError::MaxTimeReached);
                 }
             } else if self.delta == 0.0 {
-                self.delta =
-                    self.init_dt(dir, self.delta_max.min(bound - self.time), &mut evaluate);
+                self.delta = self
+                    .init_dt(dir, self.delta_max.min(bound - self.time), &mut evaluate)
+                    .map_err(|_| StepError::FailedEvaluation)?;
             }
 
             if 0.1 * self.delta.abs() <= f64::EPSILON * self.time.abs() {
                 return Err(StepError::StepSizeUnderflow);
             }
 
-            let k = self.k.get_or_insert_with(|| {
-                let mut k = [V::default(); 7];
-                evaluate(self.time, &self.state, &mut k[0]);
-                k
-            });
+            let k = match self.k {
+                Some(ref mut k) => k,
+                None => {
+                    let mut k = [V::default(); 7];
+                    evaluate(self.time, &self.state, &mut k[0])
+                        .map_err(|_| StepError::FailedEvaluation)?;
+                    self.k.insert(k)
+                }
+            };
 
             // 6 Stages
             let mut y_next = V::default();
@@ -453,7 +460,8 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
                     self.time + self.delta * butcher_tableau::c(s + 1),
                     &y_next,
                     &mut k[s],
-                );
+                )
+                .map_err(|_| StepError::FailedEvaluation)?;
             }
             k[1] = k[6];
 
