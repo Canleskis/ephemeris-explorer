@@ -1,4 +1,8 @@
-use crate::{settings::AppSettings, ui::WindowsUiSet, MainState};
+use crate::{
+    settings::{AppSettings, UserSettings},
+    ui::WindowsUiSet,
+    MainState,
+};
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
@@ -19,13 +23,13 @@ impl Plugin for SettingsPlugin {
 
 #[derive(Resource)]
 pub struct SettingsWindow {
-    last: AppSettings,
+    last: UserSettings,
 }
 
 impl FromWorld for SettingsWindow {
     fn from_world(world: &mut World) -> Self {
         Self {
-            last: *world.get_resource_or_init(),
+            last: world.get_resource_or_init::<AppSettings>().user,
         }
     }
 }
@@ -49,13 +53,13 @@ impl SettingsWindow {
                 if ui
                     .scope(|ui| {
                         let settings = settings.bypass_change_detection();
-                        ui.checkbox(&mut settings.fullscreen, "Fullscreen")
+                        ui.checkbox(&mut settings.user.fullscreen, "Fullscreen")
                             | ui.add(
-                                egui::Slider::new(&mut settings.bloom_intensity, 0.0..=0.5)
+                                egui::Slider::new(&mut settings.user.bloom_intensity, 0.0..=0.5)
                                     .text("Bloom intensity"),
                             )
                             | ui.add(
-                                egui::Slider::new(&mut settings.fov, 0.05..=120.0)
+                                egui::Slider::new(&mut settings.user.fov, 0.05..=120.0)
                                     .logarithmic(true)
                                     .text("Field of view"),
                             )
@@ -68,7 +72,7 @@ impl SettingsWindow {
 
                 ui.horizontal(|ui| {
                     if ui.button("Discard").clicked() {
-                        *settings = window.last;
+                        settings.user = window.last;
                         should_close = false;
                     }
                 })

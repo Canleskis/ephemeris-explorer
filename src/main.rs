@@ -52,6 +52,7 @@ fn main() {
                         canvas: Some("#app".to_owned()),
                         visible: false,
                         title: "Ephemeris Explorer".to_owned(),
+                        position: WindowPosition::At(IVec2::new(320, 180)),
                         ..default()
                     }),
                     ..default()
@@ -146,6 +147,6 @@ fn toggle_full_screen(kb: Res<ButtonInput<KeyCode>>, settings: Option<ResMut<App
         return;
     };
     if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
-        settings.fullscreen = !settings.fullscreen;
+        settings.user.fullscreen = !settings.user.fullscreen;
     }
 }
