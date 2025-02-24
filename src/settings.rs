@@ -1,8 +1,11 @@
+use crate::ui::LabelSettings;
+
 use bevy::{
     core_pipeline::bloom::Bloom,
     prelude::*,
     window::{MonitorSelection, WindowMode},
 };
+use big_space::camera::CameraController;
 use serde::{Deserialize, Serialize};
 
 pub struct PersistentSettingsPlugin;
@@ -19,14 +22,17 @@ impl Plugin for PersistentSettingsPlugin {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Resource, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UserSettings {
     pub fullscreen: bool,
     pub bloom_intensity: f32,
     pub fov: f32,
+    pub line_width: f32,
+    pub show_labels: bool,
+    pub mouse_sensitivity: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Resource, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowSettings {
     pub size: Vec2,
     pub position: IVec2,
@@ -53,6 +59,9 @@ impl Default for AppSettings {
                     fullscreen: false,
                     bloom_intensity: 0.15,
                     fov: 45.0,
+                    show_labels: true,
+                    line_width: 1.0,
+                    mouse_sensitivity: 1.0,
                 },
                 window: WindowSettings {
                     size: Vec2::new(1280.0, 720.0),
@@ -65,6 +74,9 @@ impl Default for AppSettings {
 impl AppSettings {
     fn apply(
         mut settings: ResMut<AppSettings>,
+        label_settings: ResMut<LabelSettings>,
+        gizmos_config: ResMut<GizmoConfigStore>,
+        mut controller: Query<&mut CameraController>,
         mut window: Query<&mut Window>,
         mut bloom: Query<&mut Bloom>,
         mut projection: Query<(&mut PerspectiveProjection, &mut Projection)>,
@@ -113,6 +125,23 @@ impl AppSettings {
                 })
                 .set_if_neq(settings.user.fov.to_radians());
         }
+        gizmos_config
+            .map_unchanged(|c| &mut c.config_mut::<DefaultGizmoConfigGroup>().0.line_width)
+            .set_if_neq(settings.user.line_width);
+
+        if let Ok(mut controller) = controller.get_single_mut() {
+            controller
+                .reborrow()
+                .map_unchanged(|controller| &mut controller.speed_pitch)
+                .set_if_neq(settings.user.mouse_sensitivity * 2e-2);
+            controller
+                .map_unchanged(|controller| &mut controller.speed_yaw)
+                .set_if_neq(settings.user.mouse_sensitivity * 2e-2);
+        }
+
+        label_settings
+            .map_unchanged(|s| &mut s.enabled)
+            .set_if_neq(settings.user.show_labels);
     }
 
     fn write(settings: Res<AppSettings>) {

@@ -62,31 +62,23 @@ pub struct PlotPlugin;
 
 impl Plugin for PlotPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<TrajectoryHitPoint>()
-            .add_systems(Startup, setup_gizmos)
-            .add_systems(
-                PostUpdate,
+        app.add_event::<TrajectoryHitPoint>().add_systems(
+            PostUpdate,
+            (
+                compute_plot_points_parallel,
                 (
-                    compute_plot_points_parallel,
-                    (
-                        plot_trajectories,
-                        plot_burns,
-                        trajectory_picking.run_if(not(
-                            crate::ui::is_using_pointer.or(crate::camera::is_using_pointer)
-                        )),
-                    ),
-                )
-                    .chain()
-                    .in_set(WorldUiSet)
-                    .run_if(in_state(MainState::Running))
-                    .after(bevy::transform::TransformSystem::TransformPropagate),
-            );
-    }
-}
-
-fn setup_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
-    for (_, config, _) in config_store.iter_mut() {
-        config.line_width = 1.0;
+                    plot_trajectories,
+                    plot_burns,
+                    trajectory_picking.run_if(not(
+                        crate::ui::is_using_pointer.or(crate::camera::is_using_pointer)
+                    )),
+                ),
+            )
+                .chain()
+                .in_set(WorldUiSet)
+                .run_if(in_state(MainState::Running))
+                .after(bevy::transform::TransformSystem::TransformPropagate),
+        );
     }
 }
 

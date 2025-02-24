@@ -1,6 +1,8 @@
+mod labels;
 mod plot;
 mod tooltip;
 
+pub use labels::*;
 pub use plot::*;
 pub use tooltip::*;
 
@@ -13,6 +15,6 @@ pub struct WorldUiPlugin;
 
 impl Plugin for WorldUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((TooltipPlugin, PlotPlugin));
+        app.add_plugins((TooltipPlugin, PlotPlugin, LabelsPlugin));
     }
 }

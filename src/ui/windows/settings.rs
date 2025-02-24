@@ -53,7 +53,9 @@ impl SettingsWindow {
                 if ui
                     .scope(|ui| {
                         let settings = settings.bypass_change_detection();
-                        ui.checkbox(&mut settings.user.fullscreen, "Fullscreen")
+                        ui.heading("Graphics settings")
+                            | ui.separator()
+                            | ui.checkbox(&mut settings.user.fullscreen, "Fullscreen")
                             | ui.add(
                                 egui::Slider::new(&mut settings.user.bloom_intensity, 0.0..=0.5)
                                     .text("Bloom intensity"),
@@ -62,6 +64,19 @@ impl SettingsWindow {
                                 egui::Slider::new(&mut settings.user.fov, 0.05..=120.0)
                                     .logarithmic(true)
                                     .text("Field of view"),
+                            )
+                            | ui.add(
+                                egui::Slider::new(&mut settings.user.line_width, 0.1..=4.0)
+                                    .logarithmic(true)
+                                    .text("Line width"),
+                            )
+                            | ui.checkbox(&mut settings.user.show_labels, "Show labels")
+                            | ui.heading("Input settings")
+                            | ui.separator()
+                            | ui.add(
+                                egui::Slider::new(&mut settings.user.mouse_sensitivity, 0.1..=5.0)
+                                    .logarithmic(true)
+                                    .text("Mouse sensitivity"),
                             )
                     })
                     .inner
