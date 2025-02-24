@@ -145,6 +145,7 @@ impl FlightPlan {
 #[derive(Clone, Copy, Event)]
 pub struct FlightPlanChanged;
 
+#[derive(Default)]
 pub struct FlightPlanPlugin;
 
 impl Plugin for FlightPlanPlugin {

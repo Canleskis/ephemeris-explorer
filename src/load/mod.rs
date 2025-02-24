@@ -22,7 +22,7 @@ use crate::{
     MainState,
 };
 
-use bevy::asset::{LoadedFolder, RecursiveDependencyLoadState};
+use bevy::asset::RecursiveDependencyLoadState;
 use bevy::core_pipeline::Skybox;
 use bevy::math::DVec3;
 use bevy::prelude::*;
@@ -44,9 +44,10 @@ pub enum EphemeridesLoadingStage {
     Ships,
 }
 
-pub struct LoadingPlugin;
+#[derive(Default)]
+pub struct LoadSystemPlugin;
 
-impl Plugin for LoadingPlugin {
+impl Plugin for LoadSystemPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(LoadingScreenPlugin)
             .add_sub_state::<LoadingStage>()
@@ -59,7 +60,7 @@ impl Plugin for LoadingPlugin {
             Update,
             text_on_load::<Image>.run_if(in_state(LoadingStage::Assets)),
         )
-        .init_resource::<LoadingErrors>()
+        .add_systems(OnEnter(MainState::Loading), setup_asset_errors)
         .add_systems(
             First,
             (
@@ -114,11 +115,12 @@ impl Plugin for LoadingPlugin {
 
 #[derive(Event, Clone)]
 pub struct LoadSolarSystemEvent {
+    pub path: std::path::PathBuf,
     pub state: Handle<SolarSystemState>,
     pub eph_settings: Handle<EphemeridesSettings>,
     pub hierarchy_tree: Handle<HierarchyTree>,
     pub skybox: Handle<Image>,
-    pub ships: Handle<LoadedFolder>,
+    pub ships: Vec<Handle<Ship>>,
 }
 
 impl LoadSolarSystemEvent {
@@ -126,14 +128,19 @@ impl LoadSolarSystemEvent {
         dir: &std::path::Path,
         asset_server: &AssetServer,
     ) -> std::io::Result<Self> {
-        // We can't really check if the files exist for now.
-        // Hopefully in the future we can use the asset server to check if the files exist.
         Ok(Self {
+            path: dir.to_path_buf(),
             state: asset_server.load(dir.join("state.json")),
             eph_settings: asset_server.load(dir.join("ephemeris.json")),
             hierarchy_tree: asset_server.load(dir.join("hierarchy.json")),
             skybox: asset_server.load(dir.join("skybox.png")),
-            ships: asset_server.load_folder(dir.join("ships")),
+            ships: std::fs::read_dir(dir.join("ships"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|entry| entry.path().extension() == Some("json".as_ref()))
+                .map(|entry| asset_server.load(entry.path()))
+                .collect(),
         })
     }
 }
@@ -151,8 +158,8 @@ pub fn handle_load_events(
             reconfigured: false,
             handle: event.skybox.clone(),
         });
-        commands.insert_resource(ShipsFolderHandle {
-            handle: event.ships.clone(),
+        commands.insert_resource(ShipsHandles {
+            handles: event.ships.clone(),
         });
 
         next_state.set(MainState::Loading);
@@ -193,26 +200,27 @@ fn skybox_loaded(skybox: Res<SkyboxHandle>, asset_server: Res<AssetServer>) -> b
     ) || skybox.reconfigured
 }
 
-fn ships_loaded(folder: Res<ShipsFolderHandle>, asset_server: Res<AssetServer>) -> bool {
-    matches!(
-        asset_server.recursive_dependency_load_state(&folder.handle),
-        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed(_)
-    )
+fn ships_loaded(folder: Res<ShipsHandles>, asset_server: Res<AssetServer>) -> bool {
+    folder.handles.iter().all(|handle| {
+        matches!(
+            asset_server.load_state(handle),
+            bevy::asset::LoadState::Loaded | bevy::asset::LoadState::Failed(_)
+        )
+    })
 }
 
 #[derive(Default, Resource, Deref, DerefMut)]
 pub struct LoadingErrors(pub Vec<bevy::asset::AssetLoadError>);
 
+fn setup_asset_errors(mut commands: Commands) {
+    commands.insert_resource(LoadingErrors::default());
+}
+
 fn agregate_asset_errors(
     mut events: EventReader<bevy::asset::UntypedAssetLoadFailedEvent>,
     mut errors: ResMut<LoadingErrors>,
 ) {
-    errors.extend(
-        events
-            .read()
-            .filter(|event| event.id.try_typed::<LoadedFolder>().is_err())
-            .map(|event| event.error.clone()),
-    );
+    errors.extend(events.read().map(|event| event.error.clone()));
 }
 
 fn spawn_loaded_bodies(
@@ -437,18 +445,13 @@ fn spawn_loaded_bodies(
 
 fn spawn_loaded_ships(
     mut commands: Commands,
-    folder: Res<ShipsFolderHandle>,
+    folder: Res<ShipsHandles>,
     assets: Res<Assets<Ship>>,
-    folder_assets: Res<Assets<LoadedFolder>>,
 ) {
-    let Some(folder) = folder_assets.get(&folder.handle) else {
-        return;
-    };
-
     for ship in folder
         .handles
         .iter()
-        .filter_map(|handle| assets.get(&handle.clone().try_typed().ok()?))
+        .filter_map(|handle| assets.get(handle))
     {
         commands.trigger(SpawnShip(ship.clone()));
     }

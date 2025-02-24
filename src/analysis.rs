@@ -26,6 +26,7 @@ impl SphereOfInfluence {
     }
 }
 
+#[derive(Default)]
 pub struct OrbitalAnalysisPlugin;
 
 impl Plugin for OrbitalAnalysisPlugin {

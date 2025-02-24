@@ -59,6 +59,7 @@ impl SimulationTime {
     }
 }
 
+#[derive(Default)]
 pub struct SimulationTimePlugin;
 
 impl Plugin for SimulationTimePlugin {

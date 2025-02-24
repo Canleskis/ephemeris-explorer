@@ -4,8 +4,8 @@ pub use loaders::*;
 
 use crate::MainState;
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
-use bevy::{asset::LoadedFolder, math::DVec3};
 use hifitime::{Duration, Epoch};
 
 #[derive(Resource)]
@@ -132,8 +132,8 @@ fn reconfigure_skybox_image(mut images: ResMut<Assets<Image>>, mut skybox: ResMu
 }
 
 #[derive(Debug, Resource)]
-pub struct ShipsFolderHandle {
-    pub handle: Handle<LoadedFolder>,
+pub struct ShipsHandles {
+    pub handles: Vec<Handle<Ship>>,
 }
 
 #[derive(Debug)]

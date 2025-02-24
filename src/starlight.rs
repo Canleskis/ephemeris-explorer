@@ -9,6 +9,7 @@ pub struct Star {
     pub illuminance: f32,
 }
 
+#[derive(Default)]
 pub struct StarLightPlugin;
 
 impl Plugin for StarLightPlugin {

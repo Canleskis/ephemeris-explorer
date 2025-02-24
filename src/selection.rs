@@ -14,6 +14,7 @@ pub struct ClickEvent(pub Option<Entity>);
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct Selected(pub Option<Entity>);
 
+#[derive(Default)]
 pub struct SelectionPlugin;
 
 impl Plugin for SelectionPlugin {

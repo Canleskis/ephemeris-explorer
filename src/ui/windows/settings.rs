@@ -29,7 +29,7 @@ pub struct SettingsWindow {
 impl FromWorld for SettingsWindow {
     fn from_world(world: &mut World) -> Self {
         Self {
-            last: world.get_resource_or_init::<AppSettings>().user,
+            last: world.get_resource_or_init::<AppSettings>().user.clone(),
         }
     }
 }
@@ -87,7 +87,7 @@ impl SettingsWindow {
 
                 ui.horizontal(|ui| {
                     if ui.button("Discard").clicked() {
-                        settings.user = window.last;
+                        settings.user = window.last.clone();
                         should_close = false;
                     }
                 })

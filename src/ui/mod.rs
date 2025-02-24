@@ -9,7 +9,7 @@ pub use world::*;
 use crate::{load::LoadSolarSystemEvent, MainState};
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContext, EguiContexts};
+use bevy_egui::{egui, EguiContext, EguiContexts, EguiPlugin};
 use bevy_file_dialog::prelude::*;
 use hifitime::Epoch;
 use std::str::FromStr;
@@ -28,18 +28,23 @@ pub fn is_using_keyboard(query: Query<&EguiContext, With<bevy::window::PrimaryWi
         .is_ok_and(|ctx| ctx.wants_keyboard_input())
 }
 
+#[derive(Default)]
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(
+        app.add_plugins((
+            bevy::ui::UiPlugin::default(),
+            EguiPlugin,
+            WorldUiPlugin,
+            FixedUiPlugin,
+            WindowsUiPlugin,
             FileDialogPlugin::new()
                 .with_pick_directory::<SolarSystemDir>()
                 .with_load_file::<ShipFile>()
                 .with_save_file::<ExportSolarSystemFile>()
                 .with_save_file::<ExportShipFile>(),
-        )
-        .add_plugins((WorldUiPlugin, FixedUiPlugin, WindowsUiPlugin))
+        ))
         .add_systems(Startup, setup_egui)
         .add_systems(
             Update,

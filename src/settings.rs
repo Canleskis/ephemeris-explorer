@@ -1,4 +1,4 @@
-use crate::ui::LabelSettings;
+use crate::{load::LoadSolarSystemEvent, ui::LabelSettings};
 
 use bevy::{
     core_pipeline::bloom::Bloom,
@@ -8,6 +8,7 @@ use bevy::{
 use big_space::camera::CameraController;
 use serde::{Deserialize, Serialize};
 
+#[derive(Default)]
 pub struct PersistentSettingsPlugin;
 
 impl Plugin for PersistentSettingsPlugin {
@@ -22,8 +23,9 @@ impl Plugin for PersistentSettingsPlugin {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UserSettings {
+    pub system_path: std::path::PathBuf,
     pub fullscreen: bool,
     pub bloom_intensity: f32,
     pub fov: f32,
@@ -38,11 +40,13 @@ pub struct WindowSettings {
     pub position: IVec2,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Resource, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Resource, Serialize, Deserialize)]
 pub struct AppSettings {
     pub user: UserSettings,
     pub window: WindowSettings,
 }
+
+const DEFAULT_SOLAR_SYSTEM_PATH: &str = "systems/full_solar_system_2433282.500372499";
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -56,6 +60,9 @@ impl Default for AppSettings {
             })
             .unwrap_or(Self {
                 user: UserSettings {
+                    system_path: std::env::current_dir()
+                        .expect("failed to get current directory")
+                        .join(DEFAULT_SOLAR_SYSTEM_PATH),
                     fullscreen: false,
                     bloom_intensity: 0.15,
                     fov: 45.0,
@@ -80,6 +87,7 @@ impl AppSettings {
         mut window: Query<&mut Window>,
         mut bloom: Query<&mut Bloom>,
         mut projection: Query<(&mut PerspectiveProjection, &mut Projection)>,
+        mut load_event: EventReader<LoadSolarSystemEvent>,
     ) {
         if let Ok(mut window) = window.get_single_mut() {
             window
@@ -142,6 +150,10 @@ impl AppSettings {
         label_settings
             .map_unchanged(|s| &mut s.enabled)
             .set_if_neq(settings.user.show_labels);
+
+        for event in load_event.read() {
+            settings.user.system_path = event.path.clone();
+        }
     }
 
     fn write(settings: Res<AppSettings>) {

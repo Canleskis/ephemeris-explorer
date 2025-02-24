@@ -21,7 +21,7 @@ use crate::{
     camera::CameraPlugin,
     flight_plan::FlightPlanPlugin,
     floating_origin::FloatingOriginPlugin,
-    load::{LoadSolarSystemEvent, LoadingPlugin},
+    load::{LoadSolarSystemEvent, LoadSystemPlugin},
     prediction::{
         Backward, DiscreteStatesBuilder, FixedSegmentsBuilder, Forward, PredictionPlugin,
     },
@@ -33,7 +33,6 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use bevy_egui::EguiPlugin;
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MainState {
@@ -42,43 +41,69 @@ pub enum MainState {
     Running,
 }
 
+struct MainPlugins;
+
+impl PluginGroup for MainPlugins {
+    fn build(self) -> bevy::app::PluginGroupBuilder {
+        bevy::app::PluginGroupBuilder::start::<Self>()
+            .add(bevy::app::PanicHandlerPlugin)
+            .add(bevy::log::LogPlugin::default())
+            .add(bevy::core::TaskPoolPlugin::default())
+            .add(bevy::core::TypeRegistrationPlugin)
+            .add(bevy::core::FrameCountPlugin)
+            .add(bevy::time::TimePlugin)
+            .add(bevy::hierarchy::HierarchyPlugin)
+            .add(bevy::diagnostic::DiagnosticsPlugin)
+            .add(bevy::input::InputPlugin)
+            .add(bevy::app::ScheduleRunnerPlugin::default())
+            .add(bevy::window::WindowPlugin {
+                primary_window: Some(Window {
+                    visible: false,
+                    title: "Ephemeris Explorer".to_owned(),
+                    position: WindowPosition::At(IVec2::new(320, 180)),
+                    ..default()
+                }),
+                ..default()
+            })
+            .add(bevy::a11y::AccessibilityPlugin)
+            .add(bevy::app::TerminalCtrlCHandlerPlugin)
+            .add(bevy::asset::AssetPlugin::default())
+            .add(bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default())
+            .add(bevy::render::RenderPlugin::default())
+            .add(bevy::render::texture::ImagePlugin::default())
+            .add(bevy::render::pipelined_rendering::PipelinedRenderingPlugin)
+            .add(bevy::core_pipeline::CorePipelinePlugin)
+            .add(bevy::sprite::SpritePlugin::default())
+            .add(bevy::text::TextPlugin)
+            .add(bevy::pbr::PbrPlugin::default())
+            .add(bevy::gizmos::GizmoPlugin)
+            .add(bevy::state::app::StatesPlugin)
+            .add(bevy::picking::input::PointerInputPlugin::default())
+            .add(bevy::picking::PickingPlugin::default())
+            .add(bevy::picking::InteractionPlugin)
+            .add(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+            .add(PersistentSettingsPlugin)
+            .add(CameraPlugin)
+            .add(SelectionPlugin)
+            .add(StarLightPlugin)
+            .add(FloatingOriginPlugin::default())
+            .add(SimulationTimePlugin)
+            .add(OrbitalAnalysisPlugin)
+            .add(UiPlugin)
+            .add(LoadSystemPlugin)
+            .add(FlightPlanPlugin)
+            .add(PredictionPlugin::<FixedSegmentsBuilder<Forward>>::default())
+            .add(PredictionPlugin::<FixedSegmentsBuilder<Backward>>::default())
+            .add(PredictionPlugin::<DiscreteStatesBuilder>::default())
+            .add(AutoExtendPlugin::<FixedSegmentsBuilder<Forward>>::default())
+            .add(AutoExtendPlugin::<FixedSegmentsBuilder<Backward>>::default())
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        prevent_default_event_handling: false,
-                        canvas: Some("#app".to_owned()),
-                        visible: false,
-                        title: "Ephemeris Explorer".to_owned(),
-                        position: WindowPosition::At(IVec2::new(320, 180)),
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .disable::<TransformPlugin>(),
-            bevy::diagnostic::FrameTimeDiagnosticsPlugin,
-            EguiPlugin,
-            PersistentSettingsPlugin,
-            CameraPlugin,
-            SelectionPlugin,
-            StarLightPlugin,
-            FloatingOriginPlugin::default(),
-            SimulationTimePlugin,
-            OrbitalAnalysisPlugin,
-            UiPlugin,
-            LoadingPlugin,
-            FlightPlanPlugin,
-        ))
-        .add_plugins((
-            PredictionPlugin::<FixedSegmentsBuilder<Forward>>::default(),
-            PredictionPlugin::<FixedSegmentsBuilder<Backward>>::default(),
-            PredictionPlugin::<DiscreteStatesBuilder>::default(),
-            AutoExtendPlugin::<FixedSegmentsBuilder<Forward>>::default(),
-            AutoExtendPlugin::<FixedSegmentsBuilder<Backward>>::default(),
-        ))
-        .add_plugins((
+            MainPlugins,
             #[cfg(debug_assertions)]
             bevy::remote::RemotePlugin::default(),
             #[cfg(debug_assertions)]
@@ -86,7 +111,7 @@ fn main() {
         ))
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
-        .add_systems(Startup, (set_window_icon, default_solar_system))
+        .add_systems(Startup, (set_window_icon, load_initial_solar_system))
         .add_systems(First, delay_window_visiblity)
         .add_systems(PreUpdate, toggle_full_screen)
         .run();
@@ -113,21 +138,17 @@ fn set_window_icon(
     };
 }
 
-const DEFAULT_SOLAR_SYSTEM_PATH: &str = "systems/full_solar_system_2433282.500372499";
-
-fn default_solar_system(
+fn load_initial_solar_system(
+    settings: Res<AppSettings>,
     asset_server: Res<AssetServer>,
     mut events: EventWriter<LoadSolarSystemEvent>,
 ) {
-    match LoadSolarSystemEvent::try_from_dir(
-        std::path::Path::new(DEFAULT_SOLAR_SYSTEM_PATH),
-        &asset_server,
-    ) {
+    match LoadSolarSystemEvent::try_from_dir(&settings.user.system_path, &asset_server) {
         Ok(event) => {
             events.send(event);
         }
         Err(err) => {
-            panic!("Failed to load default solar system: {}", err);
+            panic!("Failed to load solar system: {}", err);
         }
     }
 }

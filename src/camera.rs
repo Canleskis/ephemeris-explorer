@@ -98,6 +98,7 @@ impl CameraInputExt for CameraInput {
     }
 }
 
+#[derive(Default)]
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
