@@ -132,7 +132,9 @@ impl<B: TrajectoryBuilder> PredictionInstance<B> {
 
     #[inline]
     pub fn time(&self) -> Epoch {
-        self.boundaries().min_by(B::cmp).unwrap()
+        self.boundaries()
+            .min_by(B::cmp)
+            .unwrap_or_else(|| B::add(Epoch::default(), -Duration::MAX))
     }
 
     #[inline]
@@ -269,7 +271,7 @@ fn dispatch_predictions<B, const EXTEND: bool>(
                     }
 
                     if let Err(step_error) = instance.step() {
-                        bevy::log::error!("{name}: {step_error}");
+                        bevy::log::warn!("{name}: {step_error}");
                         end = instance.time();
                     }
                     remaining = remaining.saturating_sub(1);

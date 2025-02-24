@@ -48,14 +48,14 @@ pub struct Burn {
 }
 
 impl Burn {
-    pub fn new(start: Epoch, reference: Entity) -> Self {
+    pub fn new(start: Epoch, frame: BurnFrame, reference: Entity) -> Self {
         Self {
             id: uuid::Uuid::new_v4(),
             start,
             duration: Duration::from_seconds(60.0),
             acceleration: DVec3::ZERO,
             reference,
-            frame: BurnFrame::Frenet,
+            frame,
             enabled: true,
             overlaps: false,
         }

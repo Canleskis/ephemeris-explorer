@@ -2,7 +2,7 @@ use crate::{
     camera::Followed,
     floating_origin::BigGridBundle,
     hierarchy::OrbitedBy,
-    load::{LoadShipEvent, Ship, SystemRoot},
+    load::{Ship, SpawnShip, SystemRoot},
     prediction::{
         ComputePredictionEvent, DiscreteStates, DiscreteStatesBuilder, Mu, StateVector, Trajectory,
         TrajectoryData,
@@ -325,7 +325,7 @@ impl ShipSpawnerWindow {
                 {
                     let sv = data.global_state_vector(data.start, &query_trajectory);
 
-                    commands.trigger(LoadShipEvent(Ship::new(
+                    commands.trigger(SpawnShip(Ship::new(
                         data.name.to_string(),
                         data.start,
                         sv.position,
@@ -408,7 +408,7 @@ fn load_solar_system_state(
     }
     for loaded in ev_loaded.read() {
         if let Ok(ship) = serde_json::from_slice(&loaded.contents) {
-            commands.trigger(LoadShipEvent(ship));
+            commands.trigger(SpawnShip(ship));
         }
     }
 }

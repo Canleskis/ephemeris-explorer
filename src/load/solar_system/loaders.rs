@@ -1,6 +1,6 @@
 use super::{
     Body, BodyVisuals, EphemeridesSettings, EphemerisSettings, HierarchyTree, OrbitVisuals, Ship,
-    SolarSystem,
+    SolarSystemState,
 };
 
 use bevy::asset::AssetPath;
@@ -190,11 +190,11 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
     }
 }
 
-pub struct SolarSystemLoader;
+pub struct SolarSystemStateLoader;
 
 #[non_exhaustive]
 #[derive(Debug, Error)]
-pub enum SolarSystemLoaderError {
+pub enum SolarSystemStateLoaderError {
     /// An [IO Error](std::io::Error)
     #[error("Could not read the file: {0}")]
     Io(#[from] std::io::Error),
@@ -203,12 +203,12 @@ pub enum SolarSystemLoaderError {
     JsonError(#[from] serde_json::error::Error),
 }
 
-impl bevy::asset::AssetLoader for SolarSystemLoader {
-    type Asset = SolarSystem;
+impl bevy::asset::AssetLoader for SolarSystemStateLoader {
+    type Asset = SolarSystemState;
 
     type Settings = ();
 
-    type Error = SolarSystemLoaderError;
+    type Error = SolarSystemStateLoaderError;
 
     fn load(
         &self,
@@ -251,7 +251,7 @@ impl bevy::asset::AssetLoader for SolarSystemLoader {
                 );
             }
 
-            Ok(SolarSystem {
+            Ok(SolarSystemState {
                 bodies,
                 epoch: json.epoch,
             })

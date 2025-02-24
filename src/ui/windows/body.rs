@@ -654,9 +654,14 @@ impl BodyInfoWindow {
                         if new_button.clicked() {
                             let last_burn = flight_plan.burns.last();
                             let start = last_burn.map(|b| b.end()).unwrap_or(min_time);
-                            flight_plan
-                                .burns
-                                .push(Burn::new(start, plot.reference.unwrap_or(*root)));
+                            flight_plan.burns.push(Burn::new(
+                                start,
+                                match plot.reference {
+                                    Some(e) if e != *root => BurnFrame::Frenet,
+                                    _ => BurnFrame::Cartesian,
+                                },
+                                plot.reference.unwrap_or(*root),
+                            ));
                             changed = true;
                         }
 

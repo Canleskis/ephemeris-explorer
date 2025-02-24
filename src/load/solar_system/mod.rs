@@ -19,6 +19,10 @@ pub struct UniqueAsset<'w, T: Asset> {
 }
 
 impl<T: Asset> UniqueAsset<'_, T> {
+    pub fn handle(&self) -> &Handle<T> {
+        &self.handle.0
+    }
+
     pub fn get(&self) -> Option<&T> {
         self.assets.get(&self.handle.0)
     }
@@ -66,12 +70,12 @@ pub struct LoadSolarSytemPlugin;
 impl Plugin for LoadSolarSytemPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<BodyVisuals>()
-            .init_asset::<SolarSystem>()
+            .init_asset::<SolarSystemState>()
             .init_asset::<HierarchyTree>()
             .init_asset::<EphemeridesSettings>()
             .init_asset::<Ship>()
             .register_asset_loader(BodyVisualsLoader)
-            .register_asset_loader(SolarSystemLoader)
+            .register_asset_loader(SolarSystemStateLoader)
             .register_asset_loader(HierarchyTreeLoader)
             .register_asset_loader(EphemeridesSettingsLoader)
             .register_asset_loader(ShipLoader)
@@ -181,7 +185,7 @@ impl Default for BodyVisuals {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Body {
     pub mu: f64,
     pub position: DVec3,
@@ -189,15 +193,15 @@ pub struct Body {
     pub visuals: Handle<BodyVisuals>,
 }
 
-#[derive(Asset, TypePath, Debug)]
-pub struct SolarSystem {
+#[derive(Debug, Default, Asset, TypePath)]
+pub struct SolarSystemState {
     pub bodies: bevy::utils::HashMap<String, Body>,
     pub epoch: Epoch,
 }
 
 fn handle_missing_visuals(
     asset_server: Res<AssetServer>,
-    mut solar_system: UniqueAssetMut<SolarSystem>,
+    mut solar_system: UniqueAssetMut<SolarSystemState>,
     mut writer: EventWriter<AssetEvent<BodyVisuals>>,
 ) {
     if let Some(solar_system) = solar_system.get_mut() {
@@ -215,13 +219,13 @@ fn handle_missing_visuals(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct EphemerisSettings {
     pub degree: usize,
     pub count: usize,
 }
 
-#[derive(Asset, TypePath, Debug)]
+#[derive(Debug, Default, Asset, TypePath)]
 pub struct EphemeridesSettings {
     pub dt: Duration,
     pub settings: bevy::utils::HashMap<String, EphemerisSettings>,
@@ -229,6 +233,15 @@ pub struct EphemeridesSettings {
 
 #[derive(Asset, TypePath, Deref, DerefMut, Debug, serde::Deserialize)]
 pub struct HierarchyTree(pub indexmap::IndexMap<String, HierarchyTree>);
+
+impl Default for HierarchyTree {
+    fn default() -> Self {
+        HierarchyTree(indexmap::IndexMap::from([(
+            String::from("Empty System"),
+            HierarchyTree(indexmap::IndexMap::new()),
+        )]))
+    }
+}
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct Burn {

@@ -78,8 +78,16 @@ impl Plugin for SimulationTimePlugin {
 }
 
 fn sync_bounds(mut sim_time: ResMut<SimulationTime>, query: Query<&Trajectory, With<BoundsTime>>) {
-    sim_time.start = query.iter().map(|e| e.start()).max().unwrap_or_default();
-    sim_time.end = query.iter().map(|e| e.end()).min().unwrap_or_default();
+    sim_time.start = query
+        .iter()
+        .map(|e| e.start())
+        .max()
+        .unwrap_or_else(|| Epoch::from_tai_duration(Duration::MIN));
+    sim_time.end = query
+        .iter()
+        .map(|e| e.end())
+        .min()
+        .unwrap_or_else(|| Epoch::from_tai_duration(Duration::MAX));
 }
 
 fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {

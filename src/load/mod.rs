@@ -59,18 +59,20 @@ impl Plugin for LoadingPlugin {
             Update,
             text_on_load::<Image>.run_if(in_state(LoadingStage::Assets)),
         )
+        .init_resource::<LoadingErrors>()
         .add_systems(
             First,
-            finish_assets_loading
-                .after(handle_load_events)
-                .run_if(
+            (
+                finish_assets_loading.after(handle_load_events).run_if(
                     in_state(LoadingStage::Assets)
                         .and(bodies_loaded)
                         .and(eph_settings_loaded)
                         .and(hierarchy_loaded)
                         .and(skybox_loaded)
                         .and(ships_loaded),
-                )
+                ),
+                agregate_asset_errors,
+            )
                 .chain(),
         );
 
@@ -94,6 +96,7 @@ impl Plugin for LoadingPlugin {
                 Update,
                 ephemerides_ships_progress.run_if(in_state(EphemeridesLoadingStage::Ships)),
             );
+
         #[cfg(debug_assertions)]
         app.add_systems(
             Update,
@@ -111,7 +114,7 @@ impl Plugin for LoadingPlugin {
 
 #[derive(Event, Clone)]
 pub struct LoadSolarSystemEvent {
-    pub state: Handle<SolarSystem>,
+    pub state: Handle<SolarSystemState>,
     pub eph_settings: Handle<EphemeridesSettings>,
     pub hierarchy_tree: Handle<HierarchyTree>,
     pub skybox: Handle<Image>,
@@ -162,7 +165,7 @@ fn finish_assets_loading(world: &mut World) {
         .set(LoadingStage::Ephemerides);
 }
 
-fn bodies_loaded(solar_system: UniqueAsset<SolarSystem>) -> bool {
+fn bodies_loaded(solar_system: UniqueAsset<SolarSystemState>) -> bool {
     matches!(
         solar_system.recursive_dependency_load_state(),
         RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed(_)
@@ -193,22 +196,36 @@ fn skybox_loaded(skybox: Res<SkyboxHandle>, asset_server: Res<AssetServer>) -> b
 fn ships_loaded(folder: Res<ShipsFolderHandle>, asset_server: Res<AssetServer>) -> bool {
     matches!(
         asset_server.recursive_dependency_load_state(&folder.handle),
-        RecursiveDependencyLoadState::Loaded
+        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed(_)
     )
+}
+
+#[derive(Default, Resource, Deref, DerefMut)]
+pub struct LoadingErrors(pub Vec<bevy::asset::AssetLoadError>);
+
+fn agregate_asset_errors(
+    mut events: EventReader<bevy::asset::UntypedAssetLoadFailedEvent>,
+    mut errors: ResMut<LoadingErrors>,
+) {
+    errors.extend(
+        events
+            .read()
+            .filter(|event| event.id.try_typed::<LoadedFolder>().is_err())
+            .map(|event| event.error.clone()),
+    );
 }
 
 fn spawn_loaded_bodies(
     mut commands: Commands,
-    solar_system: UniqueAsset<SolarSystem>,
+    solar_system: UniqueAsset<SolarSystemState>,
     hierachy_tree: UniqueAsset<HierarchyTree>,
     eph_settings: UniqueAsset<EphemeridesSettings>,
     visuals: Res<Assets<BodyVisuals>>,
+    mut errors: ResMut<LoadingErrors>,
 ) {
     // We can assume all assets are loaded at this point and just unwrap everything.
-    let system = solar_system.get().unwrap();
-    let hierachy_tree = hierachy_tree.get().unwrap();
-    let eph_settings = eph_settings.get().unwrap();
-    let dt = eph_settings.dt;
+    let empty = HierarchyTree::default();
+    let hierachy_tree = hierachy_tree.get().unwrap_or(&empty);
 
     // Hierarchy should always have one root element.
     let (name, tree) = hierachy_tree.first().unwrap();
@@ -225,19 +242,18 @@ fn spawn_loaded_bodies(
         ))
         .id();
 
+    let empty = SolarSystemState::default();
+    let system = solar_system.get().unwrap_or(&empty);
+
+    let empty = EphemeridesSettings::default();
+    let settings = eph_settings.get().unwrap_or(&empty);
+
     let mut massive_states = Vec::new();
 
-    spawn_from_hierarchy(
-        0,
-        root,
-        &mut commands,
-        &mut massive_states,
-        root,
-        tree,
-        eph_settings,
-        system,
-        &visuals,
-    );
+    enum MissingDataError {
+        State(String),
+        EphemeridesSettings(String),
+    }
 
     fn spawn_from_hierarchy(
         depth: usize,
@@ -247,13 +263,26 @@ fn spawn_loaded_bodies(
         parent: Entity,
         tree: &HierarchyTree,
         eph_settings: &EphemeridesSettings,
-        solar_system: &SolarSystem,
+        solar_system: &SolarSystemState,
         visuals: &Assets<BodyVisuals>,
-    ) {
+    ) -> Vec<MissingDataError> {
+        let mut errors = Vec::new();
         for (name, tree) in tree.iter() {
-            let body = solar_system.bodies.get(name).unwrap();
+            let body = match solar_system.bodies.get(name) {
+                Some(body) => body,
+                None => {
+                    errors.push(MissingDataError::State(name.clone()));
+                    continue;
+                }
+            };
+            let settings = match eph_settings.settings.get(name) {
+                Some(settings) => settings,
+                None => {
+                    errors.push(MissingDataError::EphemeridesSettings(name.clone()));
+                    continue;
+                }
+            };
             let visual = visuals.get(&body.visuals).unwrap();
-            let settings = eph_settings.settings.get(name).unwrap();
 
             let radius = ((visual.radii.x + visual.radii.y + visual.radii.z) / 3.0) as f32;
             let soi = massive_states
@@ -353,7 +382,7 @@ fn spawn_loaded_bodies(
                 body: entity,
             });
 
-            spawn_from_hierarchy(
+            errors.extend(spawn_from_hierarchy(
                 depth + 1,
                 root,
                 commands,
@@ -363,10 +392,41 @@ fn spawn_loaded_bodies(
                 eph_settings,
                 solar_system,
                 visuals,
-            );
+            ))
         }
+
+        errors
     }
 
+    let spawn_errors = spawn_from_hierarchy(
+        0,
+        root,
+        &mut commands,
+        &mut massive_states,
+        root,
+        tree,
+        settings,
+        system,
+        &visuals,
+    );
+
+    for error in spawn_errors {
+        let (path, name) = match error {
+            MissingDataError::State(name) => (solar_system.handle().path(), name),
+            MissingDataError::EphemeridesSettings(name) => (eph_settings.handle().path(), name),
+        };
+        errors.push(bevy::asset::AssetLoadError::AssetReaderError(
+            bevy::asset::io::AssetReaderError::NotFound(
+                path.cloned()
+                    .unwrap_or_default()
+                    .path()
+                    .to_path_buf()
+                    .join(name),
+            ),
+        ));
+    }
+
+    let dt = settings.dt;
     commands.entity(root).insert((
         FixedSegmentsBuilder::new(Forward::new(dt), system.epoch, massive_states.clone()),
         FixedSegmentsBuilder::new(Backward::new(dt), system.epoch, massive_states),
@@ -375,8 +435,27 @@ fn spawn_loaded_bodies(
     commands.insert_resource(SimulationTime::new(system.epoch));
 }
 
+fn spawn_loaded_ships(
+    mut commands: Commands,
+    folder: Res<ShipsFolderHandle>,
+    assets: Res<Assets<Ship>>,
+    folder_assets: Res<Assets<LoadedFolder>>,
+) {
+    let Some(folder) = folder_assets.get(&folder.handle) else {
+        return;
+    };
+
+    for ship in folder
+        .handles
+        .iter()
+        .filter_map(|handle| assets.get(&handle.clone().try_typed().ok()?))
+    {
+        commands.trigger(SpawnShip(ship.clone()));
+    }
+}
+
 #[derive(Event)]
-pub struct LoadShipEvent(pub Ship);
+pub struct SpawnShip(pub Ship);
 
 pub fn find_by_name(query: &Query<(Entity, &Name), With<Mu>>, reference: &str) -> Option<Entity> {
     query
@@ -386,7 +465,7 @@ pub fn find_by_name(query: &Query<(Entity, &Name), With<Mu>>, reference: &str) -
 }
 
 fn spawn_ship(
-    trigger: Trigger<LoadShipEvent>,
+    trigger: Trigger<SpawnShip>,
     mut commands: Commands,
     sim_time: Res<SimulationTime>,
     query_names: Query<(Entity, &Name), With<Mu>>,
@@ -501,25 +580,6 @@ fn spawn_ship(
     });
 
     commands.trigger_targets(FlightPlanChanged, id);
-}
-
-fn spawn_loaded_ships(
-    mut commands: Commands,
-    folder: Res<ShipsFolderHandle>,
-    assets: Res<Assets<Ship>>,
-    folder_assets: Res<Assets<LoadedFolder>>,
-) {
-    let Some(folder) = folder_assets.get(&folder.handle) else {
-        return;
-    };
-
-    for ship in folder
-        .handles
-        .iter()
-        .filter_map(|handle| assets.get(&handle.clone().try_typed().ok()?))
-    {
-        commands.trigger(LoadShipEvent(ship.clone()));
-    }
 }
 
 fn setup_camera(
@@ -639,14 +699,6 @@ fn ephemerides_ships_progress(
     }
 }
 
-#[expect(unused)]
-fn true_for_frames(frames: usize) -> impl Fn(Local<usize>) -> bool {
-    move |mut completed: Local<usize>| {
-        *completed += 1;
-        *completed > frames
-    }
-}
-
 #[allow(unused)]
 fn bypass_ephemerides_loading(
     kb: Res<ButtonInput<KeyCode>>,
@@ -654,5 +706,13 @@ fn bypass_ephemerides_loading(
 ) {
     if kb.just_pressed(KeyCode::Escape) {
         state.set(MainState::Running);
+    }
+}
+
+#[expect(unused)]
+fn true_for_frames(frames: usize) -> impl Fn(Local<usize>) -> bool {
+    move |mut completed: Local<usize>| {
+        *completed += 1;
+        *completed > frames
     }
 }

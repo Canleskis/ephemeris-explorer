@@ -365,6 +365,12 @@ fn show_intersections(
                                                         if ui.button("Add manoeuvre").clicked() {
                                                             flight_plan.burns.push(Burn::new(
                                                                 time,
+                                                                match plot.reference {
+                                                                    Some(e) if e != *root => {
+                                                                        BurnFrame::Frenet
+                                                                    }
+                                                                    _ => BurnFrame::Cartesian,
+                                                                },
                                                                 plot.reference.unwrap_or(*root),
                                                             ));
                                                             commands.trigger_targets(

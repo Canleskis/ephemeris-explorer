@@ -262,10 +262,7 @@ fn scale_mouse_to_fov(
     input.yaw *= perspective.fov as f64;
 }
 
-fn keyboard_controls(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut input: ResMut<CameraInput>,
-) {
+fn keyboard_controls(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<CameraInput>) {
     keyboard
         .pressed(KeyCode::KeyW)
         .then(|| input.forward -= 1.0);

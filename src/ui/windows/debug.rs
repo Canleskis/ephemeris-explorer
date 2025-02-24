@@ -1,5 +1,5 @@
 use crate::{
-    load::{SolarSystem, UniqueAsset},
+    load::{SolarSystemState, UniqueAsset},
     prediction::{
         integration::{IntegrationState, PEFRL},
         FixedSegments, FixedSegmentsBuilder, Forward, Trajectory, TrajectoryData,
@@ -38,7 +38,7 @@ impl EphemeridesDebugWindow {
         mut contexts: EguiContexts,
         mut commands: Commands,
         window: Option<Res<Self>>,
-        system: UniqueAsset<SolarSystem>,
+        system: UniqueAsset<SolarSystemState>,
         sim_time: Res<SimulationTime>,
         query_builder: Query<&FixedSegmentsBuilder<Forward>>,
         query: Query<(Entity, &Name, &Trajectory)>,
@@ -52,9 +52,12 @@ impl EphemeridesDebugWindow {
         egui::Window::new("Ephemerides debug")
             .open(&mut open)
             .show(ctx, |ui| {
+                let Some(system) = system.get() else {
+                    return;
+                };
+
                 let builder = query_builder.single();
                 let dt = builder.integrator().delta();
-                let system = system.get().unwrap();
                 let start = system.epoch;
                 let duration = Duration::from_days(365.0 * 2.0).min(sim_time.end() - start);
                 let compute_error = || {
