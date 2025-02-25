@@ -604,7 +604,7 @@ fn setup_camera(
             },
             bevy::render::camera::Exposure { ev100: 12.0 },
             bevy::core_pipeline::bloom::Bloom::NATURAL,
-            Msaa::Sample8,
+            Msaa::Sample4,
             Skybox {
                 image: skybox.handle.clone(),
                 brightness: 1000.0,
