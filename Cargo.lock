@@ -2229,7 +2229,7 @@ checksum = "9343d356d7cac894dacafc161b4654e0881301097bdf32a122ed503d97cb94b6"
 
 [[package]]
 name = "ephemeris_explorer"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-channel",
  "bevy",
