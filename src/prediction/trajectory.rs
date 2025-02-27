@@ -193,7 +193,6 @@ pub struct Trajectory(std::sync::Arc<std::sync::RwLock<dyn TrajectoryInner>>);
 
 impl Trajectory {
     pub fn new<T: TrajectoryInner + 'static>(trajectory: T) -> Self {
-        // Self(Box::new(trajectory))
         Self(std::sync::Arc::new(std::sync::RwLock::new(trajectory)))
     }
 
@@ -204,29 +203,6 @@ impl Trajectory {
     pub fn write(&mut self, f: impl FnOnce(&mut dyn TrajectoryInner)) {
         f(&mut *self.0.write().unwrap())
     }
-
-    // pub fn try_downcast_ref<T: TrajectoryInner + 'static>(&self) -> Option<&T> {
-    //     // let r = self.0.read().unwrap();
-    //     // r.as_any().downcast_ref()
-
-    //     todo!()
-    // }
-
-    // pub fn try_downcast_mut<T: TrajectoryInner + 'static>(&mut self) -> Option<&mut T> {
-    //     // self.0.as_any_mut().downcast_mut()
-    //     // self.0.write().unwrap().as_any_mut().downcast_mut()
-    //     todo!()
-    // }
-
-    // pub fn downcast_ref<T: TrajectoryInner + 'static>(&self) -> &T {
-    //     self.try_downcast_ref()
-    //         .unwrap_or_else(|| panic!("failed to downcast to {}", std::any::type_name::<T>()))
-    // }
-
-    // pub fn downcast_mut<T: TrajectoryInner + 'static>(&mut self) -> &mut T {
-    //     self.try_downcast_mut()
-    //         .unwrap_or_else(|| panic!("failed to downcast to {}", std::any::type_name::<T>()))
-    // }
 
     pub fn size(&self) -> usize {
         self.read().deep_size_of()
@@ -422,8 +398,8 @@ impl Segment {
 
 #[inline]
 fn fast_eval_and_deriv(coeffs: &[f64], x: f64) -> (f64, f64) {
-    let first = *coeffs.first().unwrap();
-    let last = *coeffs.last().unwrap();
+    let first = coeffs.first().copied().unwrap_or_default();
+    let last = coeffs.last().copied().unwrap_or_default();
 
     let mut eval = last;
     let mut deriv = last;

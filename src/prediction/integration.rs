@@ -33,6 +33,7 @@ pub struct PEFRL<S> {
     time: f64,
     delta: f64,
     state: Vec<S>,
+    buf: Vec<DVec3>,
 }
 
 impl<S> PEFRL<S> {
@@ -46,6 +47,7 @@ impl<S> PEFRL<S> {
         Self {
             time: initial_time,
             delta,
+            buf: Vec::with_capacity(inital_state.len()),
             state: inital_state,
         }
     }
@@ -82,33 +84,37 @@ impl<S: IntegrationState> PEFRL<S> {
             *state.position() += Self::XI * dt * velocity;
         }
 
-        let mut acc = Vec::with_capacity(self.state.len());
-        evaluate(Self::XI * dt, &self.state, &mut acc);
-        for (state, acceleration) in self.state.iter_mut().zip(acc.iter()) {
+        self.buf.clear();
+        evaluate(Self::XI * dt, &self.state, &mut self.buf);
+        for (state, acceleration) in self.state.iter_mut().zip(self.buf.iter()) {
             *state.velocity() += h1 * *acceleration;
             let velocity = *state.velocity();
             *state.position() += Self::CHI * dt * velocity;
         }
 
-        acc.clear();
-        evaluate((Self::XI + Self::CHI) * dt, &self.state, &mut acc);
-        for (state, acceleration) in self.state.iter_mut().zip(acc.iter()) {
+        self.buf.clear();
+        evaluate((Self::XI + Self::CHI) * dt, &self.state, &mut self.buf);
+        for (state, acceleration) in self.state.iter_mut().zip(self.buf.iter()) {
             *state.velocity() += h2 * *acceleration;
             let velocity = *state.velocity();
             *state.position() += (1.0 - 2.0 * (Self::CHI + Self::XI)) * dt * velocity;
         }
 
-        acc.clear();
-        evaluate((1.0 - Self::XI - Self::CHI) * dt, &self.state, &mut acc);
-        for (state, acceleration) in self.state.iter_mut().zip(acc.iter()) {
+        self.buf.clear();
+        evaluate(
+            (1.0 - Self::XI - Self::CHI) * dt,
+            &self.state,
+            &mut self.buf,
+        );
+        for (state, acceleration) in self.state.iter_mut().zip(self.buf.iter()) {
             *state.velocity() += h2 * *acceleration;
             let velocity = *state.velocity();
             *state.position() += Self::CHI * dt * velocity;
         }
 
-        acc.clear();
-        evaluate((1.0 - Self::XI) * dt, &self.state, &mut acc);
-        for (state, acceleration) in self.state.iter_mut().zip(acc.iter()) {
+        self.buf.clear();
+        evaluate((1.0 - Self::XI) * dt, &self.state, &mut self.buf);
+        for (state, acceleration) in self.state.iter_mut().zip(self.buf.iter()) {
             *state.velocity() += h1 * *acceleration;
             let velocity = *state.velocity();
             *state.position() += Self::XI * dt * velocity;
@@ -147,7 +153,7 @@ impl Controller {
 
     /// Determines if the step must be accepted or rejected and adapts the step size accordingly.
     #[inline]
-    pub fn accept(&mut self, err: f64, dir: f64, h: f64, h_max: f64, h_new: &mut f64) -> bool {
+    pub fn accept(&mut self, err: f64, h: f64, h_max: f64, h_new: &mut f64) -> bool {
         let fac11 = err.powf(self.alpha);
         let mut fac = fac11 * self.fac_old.powf(-self.beta);
         fac = (self.facc2).max((self.facc1).min(fac / self.safety_factor));
@@ -158,10 +164,10 @@ impl Controller {
             self.fac_old = err.max(1.0E-4);
 
             if h_new.abs() > h_max {
-                *h_new = dir * h_max;
+                *h_new = h_max;
             }
             if self.reject {
-                *h_new = dir * h_new.abs().min(h.abs());
+                *h_new = h_new.abs().min(h.abs());
             }
 
             self.reject = false;
@@ -350,7 +356,7 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
 
     /// Compute the initial stepsize
     #[inline]
-    fn init_dt<F>(&self, dir: f64, delta_max: f64, mut evaluate: F) -> Result<f64, ()>
+    fn init_dt<F>(&self, delta_max: f64, mut evaluate: F) -> Result<f64, ()>
     where
         V: std::ops::Index<usize, Output = f64>
             + std::ops::Add<Output = V>
@@ -382,7 +388,6 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
         };
 
         h0 = h0.min(delta_max);
-        h0 *= dir;
 
         let y1 = self.state + f0 * h0;
         let mut f1 = V::default();
@@ -405,11 +410,11 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
             (0.01 / (d1.sqrt().max(d2))).powf(1.0 / 5.0)
         };
 
-        Ok(sign((100.0 * h0.abs()).min(h1.min(delta_max)), dir))
+        Ok((100.0 * h0.abs()).min(h1.min(delta_max)))
     }
 
     #[inline]
-    pub fn step<F>(&mut self, bound: f64, dir: f64, mut evaluate: F) -> Result<(), StepError>
+    pub fn step<F>(&mut self, bound: f64, mut evaluate: F) -> Result<(), StepError>
     where
         V: std::ops::Index<usize, Output = f64>
             + std::ops::Add<Output = V>
@@ -424,14 +429,14 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
                 return Err(StepError::MaxIterationsReached);
             }
 
-            if (self.time + 1.01 * self.delta - bound) * dir >= 0.0 {
+            if (self.time + 1.01 * self.delta - bound) >= 0.0 {
                 self.delta = bound - self.time;
                 if self.delta == 0.0 {
                     return Err(StepError::MaxTimeReached);
                 }
             } else if self.delta == 0.0 {
                 self.delta = self
-                    .init_dt(dir, self.delta_max.min(bound - self.time), &mut evaluate)
+                    .init_dt(self.delta_max.min(bound - self.time), &mut evaluate)
                     .map_err(|_| StepError::FailedEvaluation)?;
             }
 
@@ -492,7 +497,7 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
             // Step size control
             if self
                 .controller
-                .accept(err, dir, delta_old, self.delta_max, &mut self.delta_new)
+                .accept(err, delta_old, self.delta_max, &mut self.delta_new)
             {
                 k[0] = k[1];
                 self.state = y_next;
@@ -501,14 +506,5 @@ impl<const DIM: usize, V> DormandPrince5<DIM, V> {
                 return Ok(());
             }
         }
-    }
-}
-
-#[inline]
-fn sign(a: f64, b: f64) -> f64 {
-    if b > 0.0 {
-        a.abs()
-    } else {
-        -a.abs()
     }
 }

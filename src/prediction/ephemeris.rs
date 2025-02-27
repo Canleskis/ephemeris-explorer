@@ -624,7 +624,7 @@ impl TrajectoryBuilder for DiscreteStatesBuilder {
         .map_or(self.max_time(), |max| max.min(self.max_time()))
         .to_tai_seconds();
 
-        self.integrator.step(max_time, 1.0, |t, y, dy| {
+        self.integrator.step(max_time, |t, y, dy| {
             let t = Epoch::from_tai_seconds(t);
             dy.position = y.velocity;
             dy.velocity = Self::gravitational_acceleration(t, y, &self.context);

@@ -126,6 +126,7 @@ fn reconfigure_skybox_image(mut images: ResMut<Assets<Image>>, mut skybox: ResMu
                     ..default()
                 });
         }
+        image.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
 
         skybox.reconfigured = true;
     }
@@ -278,7 +279,7 @@ impl Ship {
     }
 }
 
-/// All the bodies in a stellar system, planetary system or satellite system should be a child of a
-/// root entity with this component.
+/// All the bodies in a gravitationally bound system should be a child of a root entity with this
+/// component.
 #[derive(Component)]
 pub struct SystemRoot;

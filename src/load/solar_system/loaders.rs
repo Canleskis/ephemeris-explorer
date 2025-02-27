@@ -132,20 +132,30 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
             reader.read_to_end(&mut bytes).await?;
             let toml = toml::from_str::<BodyVisualsToml>(std::str::from_utf8(&bytes)?)?;
 
-            let material = StandardMaterial {
-                base_color: Srgba::hex(toml.material.base_color).unwrap().into(),
-                base_color_texture: toml.material.base_color_texture.map(|p| ctx.load(p)),
-                emissive: (Srgba::hex(toml.material.emissive).unwrap()
-                    * toml.material.emissive_intensity)
-                    .into(),
-                emissive_texture: toml.material.emissive_texture.map(|p| ctx.load(p)),
-                perceptual_roughness: toml.material.perceptual_roughness,
-                metallic_roughness_texture: toml
-                    .material
-                    .metallic_roughness_texture
-                    .map(|p| ctx.load(p)),
-                alpha_mode: AlphaMode::Opaque,
-                ..default()
+            let mut load_image = |path| {
+                ctx.loader()
+                    .with_settings::<bevy::image::ImageLoaderSettings>(|s| {
+                        s.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+                    })
+                    .load(path)
+            };
+
+            let material = {
+                StandardMaterial {
+                    base_color: Srgba::hex(toml.material.base_color).unwrap().into(),
+                    base_color_texture: toml.material.base_color_texture.map(&mut load_image),
+                    emissive: (Srgba::hex(toml.material.emissive).unwrap()
+                        * toml.material.emissive_intensity)
+                        .into(),
+                    emissive_texture: toml.material.emissive_texture.map(&mut load_image),
+                    perceptual_roughness: toml.material.perceptual_roughness,
+                    metallic_roughness_texture: toml
+                        .material
+                        .metallic_roughness_texture
+                        .map(&mut load_image),
+                    alpha_mode: AlphaMode::Opaque,
+                    ..default()
+                }
             };
             let material = ctx.add_labeled_asset("material".to_owned(), material);
 
