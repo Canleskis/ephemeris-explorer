@@ -1,0 +1,10 @@
+[package]
+name = "horizons_solar_system"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy_math = { version = "0.15", features = ["serialize"] }
+hifitime = "4.0.2"
+serde = { version = "1", features = ["derive"] }
+reqwest = { version = "0.12", features = ["blocking"] }

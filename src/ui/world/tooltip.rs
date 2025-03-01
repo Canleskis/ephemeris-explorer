@@ -1,9 +1,8 @@
 use crate::{
+    dynamics::SpacecraftPropagator,
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
-    prediction::{
-        DiscreteStatesBuilder, Predicting, RelativeTrajectory, Trajectory, TrajectoryData,
-    },
+    prediction::{Predicting, Trajectory},
     time::SimulationTime,
     ui::{
         nformat, PlotPoints, SourceOf, TrajectoryHitPoint, TrajectoryPlot, WorldUiSet,
@@ -14,6 +13,7 @@ use crate::{
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
+use ephemeris::{EvaluateTrajectory, RelativeTrajectory};
 use hifitime::{Duration, Epoch};
 
 pub struct TooltipPlugin;
@@ -75,14 +75,14 @@ fn show_intersections(
         if hits.is_empty() {
             continue;
         }
-        let is_persisted = i == 1;
+        let is_pinned = i == 1;
         // All hits are on the same entity.
         let entity = hits[0].entity;
         let Ok((name, points, plot)) = query_points.get(entity) else {
             continue;
         };
 
-        let Some(relative) = plot.relative_trajectory(&query_trajectory) else {
+        let Some(relative) = plot.get_relative_trajectory(&query_trajectory) else {
             continue;
         };
 
@@ -107,7 +107,7 @@ fn show_intersections(
         egui::Window::new(name.as_str())
             .id(egui::Id::new(i.to_string() + "#intersections"))
             .fixed_pos(window_position.to_array())
-            .fixed_size([200.0, 200.0])
+            .fixed_size([250.0, 200.0])
             .collapsible(false)
             .resizable(false)
             .fade_in(false)
@@ -118,9 +118,15 @@ fn show_intersections(
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.style_mut().interaction.selectable_labels = false;
-                        ui.label(name.as_str());
+                        let suf = if window_data.len() == 1 { "" } else { "s" };
+                        ui.label(format!(
+                            "{} — {} crossing{}",
+                            name.as_str(),
+                            window_data.len(),
+                            suf
+                        ));
 
-                        if !is_persisted {
+                        if !is_pinned {
                             return;
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -170,9 +176,9 @@ fn show_intersections(
                                                                 time,
                                                                 match plot.reference {
                                                                     Some(e) if e != *root => {
-                                                                        BurnFrame::Frenet
+                                                                        BurnFrame::Relative
                                                                     }
-                                                                    _ => BurnFrame::Cartesian,
+                                                                    _ => BurnFrame::Inertial,
                                                                 },
                                                                 plot.reference.unwrap_or(*root),
                                                             ));
@@ -235,7 +241,6 @@ fn close_button(ui: &mut egui::Ui) -> egui::Response {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Component, Hash)]
 pub enum SeparationPlot {
     Trajectory(Entity),
-    #[expect(unused)]
     Plot(Entity),
 }
 
@@ -254,7 +259,7 @@ fn show_separation(
     camera: Single<(&GlobalTransform, &Camera, &PerspectiveProjection)>,
     query_data: Query<(&Name, &PlotPoints, &TrajectoryPlot, Option<&SeparationPlot>)>,
     // Don't display the separation if the prediction is still being computed.
-    query_trajectory: Query<&Trajectory, Without<Predicting<DiscreteStatesBuilder>>>,
+    query_trajectory: Query<&Trajectory, Without<Predicting<SpacecraftPropagator>>>,
     query_source_of: Query<&SourceOf>,
 ) {
     let Some(ctx) = contexts.try_ctx_mut() else {
@@ -289,6 +294,7 @@ fn show_separation(
                 plot.end.min(target_end),
                 0.001,
                 1000,
+                |t1, t2, at| t1.distance_squared(t2, at).unwrap(),
             )?;
 
             let position = points.evaluate(at)?;

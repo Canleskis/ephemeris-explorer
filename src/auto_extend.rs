@@ -1,5 +1,7 @@
 use crate::{
-    prediction::{ExtendPredictionEvent, PredictionTracker, TrajectoryBuilder},
+    prediction::{
+        ExtendPredictionEvent, PredictionContext, PredictionPropagator, PredictionTracker,
+    },
     time::SimulationTime,
     MainState,
 };
@@ -8,12 +10,12 @@ use bevy::prelude::*;
 use hifitime::Duration;
 
 #[derive(Resource)]
-pub struct AutoExtendSettings<B> {
+pub struct AutoExtendSettings<P> {
     pub enabled: bool,
-    pub _marker: std::marker::PhantomData<fn(B)>,
+    pub _marker: std::marker::PhantomData<fn(P)>,
 }
 
-impl<B> Default for AutoExtendSettings<B> {
+impl<P> Default for AutoExtendSettings<P> {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -22,7 +24,7 @@ impl<B> Default for AutoExtendSettings<B> {
     }
 }
 
-impl<B> AutoExtendSettings<B> {
+impl<P> AutoExtendSettings<P> {
     pub fn new(enabled: bool) -> Self {
         Self {
             enabled,
@@ -31,46 +33,46 @@ impl<B> AutoExtendSettings<B> {
     }
 }
 
-pub struct AutoExtendPlugin<B>(pub std::marker::PhantomData<fn(B)>);
+pub struct AutoExtendPlugin<P>(pub std::marker::PhantomData<fn(P)>);
 
-impl<B> Default for AutoExtendPlugin<B> {
+impl<P> Default for AutoExtendPlugin<P> {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl<B> Plugin for AutoExtendPlugin<B>
+impl<P> Plugin for AutoExtendPlugin<P>
 where
-    B: TrajectoryBuilder + Component,
+    P: PredictionPropagator,
 {
     fn build(&self, app: &mut App) {
-        app.insert_resource(AutoExtendSettings::<B>::new(true))
+        app.insert_resource(AutoExtendSettings::<P>::new(true))
             .add_systems(
                 First,
-                auto_extend::<B>
+                auto_extend::<P>
                     .after(bevy::time::TimeSystem)
                     .run_if(in_state(MainState::Running)),
             );
     }
 }
 
-fn auto_extend<B>(
+fn auto_extend<P>(
     mut commands: Commands,
     time: Res<Time>,
     sim_time: Res<SimulationTime>,
-    auto_extend: Res<AutoExtendSettings<B>>,
-    query_tracker: Query<Option<&PredictionTracker<B>>, With<B>>,
+    auto_extend: Res<AutoExtendSettings<P>>,
+    query_tracker: Query<Option<&PredictionTracker<P>>, With<PredictionContext<P>>>,
 ) where
-    B: TrajectoryBuilder + Component,
+    P: PredictionPropagator,
 {
     if !auto_extend.enabled || sim_time.paused {
         return;
     }
 
-    let boundary = std::cmp::max_by(sim_time.start(), sim_time.end(), B::cmp);
+    let boundary = std::cmp::max_by(sim_time.start(), sim_time.end(), P::cmp);
     let delta = sim_time.time_scale * Duration::from_seconds(1.0);
     let next = sim_time.current() + delta;
-    if !B::cmp(&next, &boundary).is_ge() {
+    if !P::cmp(&next, &boundary).is_ge() {
         return;
     }
     // TODO: Make this configurable or based on the system somehow.
@@ -83,6 +85,6 @@ fn auto_extend<B>(
         }
 
         // Synchronisation every 100 step.
-        commands.trigger(ExtendPredictionEvent::<B>::all(duration, 100));
+        commands.trigger(ExtendPredictionEvent::<P>::all(duration, 100));
     }
 }

@@ -1,9 +1,8 @@
 use crate::{
+    dynamics::{CubicHermiteSplineSamples, UniformSpline},
     flight_plan::FlightPlan,
     floating_origin::{BigSpace, Grid},
-    prediction::{
-        DiscreteStatesBuilder, RelativeTrajectory, StateVector, Trajectory, TrajectoryData,
-    },
+    prediction::Trajectory,
     selection::Selectable,
     time::SimulationTime,
     ui::WorldUiSet,
@@ -12,6 +11,9 @@ use crate::{
 
 use bevy::prelude::*;
 use bevy::{math::DVec3, picking::backend::ray::RayMap};
+use ephemeris::{
+    BoundedTrajectory, EvaluateTrajectory, ManoeuvreFrame, RelativeTrajectory, StateVector,
+};
 use hifitime::Epoch;
 
 #[derive(Component)]
@@ -34,7 +36,7 @@ pub type SourceOf = Children;
 
 impl TrajectoryPlot {
     #[inline]
-    pub fn relative_trajectory<'w>(
+    pub fn get_relative_trajectory<'w>(
         &self,
         query_trajectory: &'w Query<&Trajectory>,
     ) -> Option<RelativeTrajectory<&'w Trajectory>> {
@@ -68,6 +70,7 @@ impl Plugin for PlotPlugin {
                 compute_plot_points_parallel,
                 (
                     plot_trajectories,
+                    // plot_knots,
                     plot_burns,
                     trajectory_picking.run_if(not(
                         crate::ui::is_using_pointer.or(crate::camera::is_using_pointer)
@@ -82,6 +85,7 @@ impl Plugin for PlotPlugin {
     }
 }
 
+#[inline]
 pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
     root.local_floating_origin()
         .grid_transform()
@@ -89,6 +93,7 @@ pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
         .as_vec3()
 }
 
+#[inline]
 pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
     // TODO: There is probably a simpler way to do this.
     let (cell, translation) = root.translation_to_grid(pos);
@@ -96,6 +101,7 @@ pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
         .translation()
 }
 
+#[inline]
 pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
     StateVector {
         velocity: transform_vector3(sv.velocity, root).as_dvec3(),
@@ -106,6 +112,8 @@ pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
 impl PlotPoints {
     // Adapted from Principia's PlotMethod3.
     // (https://github.com/mockingbirdnest/Principia/blob/2024080411-Klein/ksp_plugin/planetarium_body.hpp)
+    // TODO: Rewrite this into more idiomatic Rust.
+    #[inline]
     pub fn new(
         eval: impl Fn(Epoch) -> StateVector<DVec3>,
         min: Epoch,
@@ -201,7 +209,7 @@ pub fn compute_plot_points_parallel(
             });
         });
 
-        if let Some(relative) = plot.relative_trajectory(&query_trajectory) {
+        if let Some(relative) = plot.get_relative_trajectory(&query_trajectory) {
             if plot.enabled && !relative.is_empty() && plot.start < plot.end {
                 const ARC_MINUTE: f32 = 0.000290888;
                 let tan2_angular_resolution = (plot.threshold * ARC_MINUTE * camera.1.fov) as f64;
@@ -322,12 +330,13 @@ fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &TrajectoryP
 
 fn plot_burns(
     mut gizmos: Gizmos,
-    query: Query<(&Trajectory, &FlightPlan, &SourceOf, &DiscreteStatesBuilder)>,
+    query: Query<(&Trajectory, &FlightPlan, &SourceOf)>,
+    query_trajectory: Query<&Trajectory>,
     query_plot: Query<(&PlotPoints, &TrajectoryPlot)>,
     root: Single<&Grid, With<BigSpace>>,
     camera: Single<(&GlobalTransform, &PerspectiveProjection)>,
 ) {
-    for (trajectory, flight_plan, source_of, builder) in query.iter() {
+    for (trajectory, flight_plan, source_of) in query.iter() {
         for (points, plot) in query_plot.iter_many(source_of) {
             if !plot.enabled || trajectory.is_empty() {
                 continue;
@@ -341,15 +350,16 @@ fn plot_burns(
                 let Some(sv) = trajectory.state_vector(burn.start) else {
                     continue;
                 };
-                let Some((prograde, radial, normal)) = burn
-                    .reference_frame()
-                    .direction((burn.start, sv), builder.context())
+                let Some(transform) = burn
+                    .try_reference_frame(&query_trajectory)
+                    .expect("invalid burn reference entity")
+                    .transform(burn.start, &sv)
                 else {
                     continue;
                 };
-                let prograde = transform_vector3(prograde, *root);
-                let radial = transform_vector3(radial, *root);
-                let normal = transform_vector3(normal, *root);
+                let prograde = transform_vector3(transform.0.x_axis, *root);
+                let radial = transform_vector3(transform.0.y_axis, *root);
+                let normal = transform_vector3(transform.0.z_axis, *root);
 
                 let Some(world_pos) = points.evaluate(burn.start) else {
                     continue;
@@ -365,43 +375,22 @@ fn plot_burns(
 }
 
 #[expect(unused)]
-fn plot_debug_points_discrete(
+fn plot_knots(
     mut gizmos: Gizmos,
-    sim_time: Res<SimulationTime>,
-    query_plot: Query<&TrajectoryPlot>,
+    query_plot: Query<(&TrajectoryPlot, &PlotPoints)>,
     query_trajectory: Query<&Trajectory>,
-    root: Single<&Grid, With<BigSpace>>,
     camera: Single<(&GlobalTransform, &PerspectiveProjection)>,
 ) {
-    for plot in query_plot.iter() {
-        let Ok(trajectory) = query_trajectory.get(plot.source) else {
-            continue;
-        };
-        let locked_trajectory = trajectory.read();
-        let Some(states) = locked_trajectory
-            .as_any()
-            .downcast_ref::<crate::prediction::DiscreteStates>()
-        else {
-            continue;
-        };
-        let reference_trajectory = plot.reference.and_then(|e| query_trajectory.get(e).ok());
-        let relative = RelativeTrajectory::new(trajectory, reference_trajectory);
-
-        let current = sim_time.current().clamp(relative.start(), relative.end());
-        let translation = relative
-            .reference
-            .map(|r| r.position(current).unwrap())
-            .unwrap_or_default();
-
-        for (t, _) in states.points() {
-            if t < &plot.start || t > &plot.end {
-                continue;
-            }
-
-            let Some(position) = relative.position(*t) else {
+    fn plot_knots(
+        gizmos: &mut Gizmos,
+        camera: (&GlobalTransform, &PerspectiveProjection),
+        knots: impl Iterator<Item = Epoch>,
+        plot_points: &PlotPoints,
+    ) {
+        for t in knots {
+            let Some(position) = plot_points.evaluate(t) else {
                 continue;
             };
-            let position = to_global_pos(position + translation, *root);
             let direction = camera.0.translation() - position;
             let size = direction.length() * 4e-3 * camera.1.fov;
             gizmos.circle(
@@ -411,6 +400,26 @@ fn plot_debug_points_discrete(
                 size,
                 LinearRgba::WHITE,
             );
+        }
+    }
+
+    for (plot, plot_points) in query_plot.iter() {
+        if !plot.enabled {
+            continue;
+        }
+        let Ok(trajectory) = query_trajectory.get(plot.source) else {
+            continue;
+        };
+        let traj = trajectory.read();
+
+        if let Some(traj) = traj.as_any().downcast_ref::<CubicHermiteSplineSamples>() {
+            let knots = traj.points().iter().map(|(t, _)| *t);
+            plot_knots(&mut gizmos, *camera, knots, plot_points);
+        };
+
+        if let Some(traj) = traj.as_any().downcast_ref::<UniformSpline>() {
+            let knots = (0..traj.len()).map(|i| traj.start() + traj.interval() * i as i64);
+            plot_knots(&mut gizmos, *camera, knots, plot_points);
         }
     }
 }

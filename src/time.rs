@@ -1,11 +1,12 @@
 use crate::{
     floating_origin::{BigSpace, Grid, GridCell},
-    prediction::{Trajectory, TrajectoryData},
+    prediction::Trajectory,
     rotation::Rotating,
     MainState,
 };
 
 use bevy::prelude::*;
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
 use hifitime::{Duration, Epoch};
 
 #[derive(Component)]

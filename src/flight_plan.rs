@@ -1,41 +1,37 @@
-use crate::prediction::{
-    ConstantAcceleration, DiscreteStates, DiscreteStatesBuilder, ExtendPredictionEvent,
-    ReferenceFrame, Trajectory, TrajectoryData,
+use crate::{
+    dynamics::{ConstantThrust, CubicHermiteSplineSamples, ReferenceFrame, SpacecraftPropagator},
+    prediction::{ExtendPredictionEvent, PredictionContext, Trajectory},
 };
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use ephemeris::BoundedTrajectory;
 use hifitime::{Duration, Epoch};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BurnFrame {
-    Frenet,
-    Cartesian,
+    Relative,
+    Inertial,
 }
 
 impl std::fmt::Display for BurnFrame {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            BurnFrame::Frenet => write!(f, "Frenet"),
-            BurnFrame::Cartesian => write!(f, "Cartesian"),
+            BurnFrame::Relative => write!(f, "Relative"),
+            BurnFrame::Inertial => write!(f, "Inertial"),
         }
     }
 }
 
 impl BurnFrame {
+    #[inline]
     pub fn values() -> [Self; 2] {
-        [BurnFrame::Frenet, BurnFrame::Cartesian]
-    }
-
-    pub fn as_reference_frame(&self, reference: Entity) -> ReferenceFrame {
-        match self {
-            BurnFrame::Frenet => ReferenceFrame::Frenet(reference),
-            BurnFrame::Cartesian => ReferenceFrame::Cartesian,
-        }
+        [BurnFrame::Relative, BurnFrame::Inertial]
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Burn {
     pub id: uuid::Uuid,
     pub start: Epoch,
@@ -48,6 +44,7 @@ pub struct Burn {
 }
 
 impl Burn {
+    #[inline]
     pub fn new(start: Epoch, frame: BurnFrame, reference: Entity) -> Self {
         Self {
             id: uuid::Uuid::new_v4(),
@@ -61,6 +58,7 @@ impl Burn {
         }
     }
 
+    #[inline]
     pub fn with(
         start: Epoch,
         duration: Duration,
@@ -80,22 +78,32 @@ impl Burn {
         }
     }
 
+    #[inline]
     pub fn active(&self) -> bool {
         self.enabled && !self.overlaps
     }
 
+    #[inline]
     pub fn end(&self) -> Epoch {
         self.start + self.duration
     }
 
+    #[inline]
     pub fn delta_v(&self) -> f64 {
         self.acceleration.length() * self.duration.to_seconds()
     }
 
-    pub fn reference_frame(&self) -> ReferenceFrame {
-        self.frame.as_reference_frame(self.reference)
+    #[inline]
+    pub fn try_reference_frame(&self, query: &Query<&Trajectory>) -> Option<ReferenceFrame> {
+        match self.frame {
+            BurnFrame::Relative => Some(ReferenceFrame::relative(
+                query.get(self.reference).ok()?.clone(),
+            )),
+            BurnFrame::Inertial => Some(ReferenceFrame::inertial()),
+        }
     }
 
+    #[inline]
     pub fn overlaps_with(&self, other: &Burn) -> bool {
         self.enabled && other.enabled && self.start < other.end() && self.end() > other.start
     }
@@ -150,7 +158,7 @@ pub struct FlightPlanPlugin;
 
 impl Plugin for FlightPlanPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(compute_flight_plan);
+        app.add_observer(apply_flight_plan);
     }
 }
 
@@ -162,22 +170,26 @@ fn first_missing(b1: &[Burn], b2: &[Burn]) -> Option<Epoch> {
         .map(|t| t - Duration::EPSILON)
 }
 
-fn compute_flight_plan(
+fn apply_flight_plan(
     trigger: Trigger<FlightPlanChanged>,
     mut commands: Commands,
     mut query: Query<(
         &mut FlightPlan,
         &mut LastFlightPlan,
-        &mut DiscreteStatesBuilder,
+        &mut PredictionContext<SpacecraftPropagator>,
         &Trajectory,
     )>,
+    query_trajectory: Query<&Trajectory>,
 ) {
     let entity = trigger.entity();
-    let Ok((mut flight_plan, mut last, mut builder, trajectory)) = query.get_mut(entity) else {
+    let Ok((mut flight_plan, mut last, mut prediction, trajectory)) = query.get_mut(entity) else {
         return;
     };
     let binding = trajectory.read();
-    let trajectory = binding.as_any().downcast_ref::<DiscreteStates>().unwrap();
+    let trajectory = binding
+        .as_any()
+        .downcast_ref::<CubicHermiteSplineSamples>()
+        .unwrap();
     let min = trajectory.start();
     let max = trajectory.end();
 
@@ -234,45 +246,51 @@ fn compute_flight_plan(
         return;
     };
 
+    let propagator = &mut prediction.propagator;
+
+    // TODO: This comment on the error calculation might not be accurate anymore
+    //
     // We could theoretically restart from the point before the new start time in some cases, but
-    // the integrator needs the previous error of that point to calculate the new step size, which
+    // the controller needs the previous error of that point to calculate the new step size, which
     // we don't store. So for now we just restart from the previous integrator reset, which is the
     // end of the previous burn.
     // We could fix this by changing how the integrator computes the error.
+    //
     // Note: Each key in the manoeuvres map is an integrator reset.
-    let restart = builder
-        .manoeuvres()
-        .range(..=last_valid)
-        .next_back()
-        .map_or(min, |(t, _)| *t);
+    let restart_epoch = propagator
+        .schedule()
+        .last_event_at(last_valid)
+        .time()
+        .max(min);
 
-    let Some(&restart_sv) = trajectory.get(restart) else {
+    let Some(&restart_sv) = trajectory.get(restart_epoch) else {
         bevy::log::error!(
             "something went wrong when trying to compute the flight plan from {}",
-            restart
+            restart_epoch
         );
         return;
     };
 
-    builder.clear_manoeuvres();
-    builder.set_initial_state(restart, restart_sv);
-    builder.set_max_iterations(flight_plan.max_iterations);
+    propagator.clear_manoeuvres();
     for burn in &flight_plan.burns {
         if !burn.enabled || burn.overlaps || burn.start < min {
             continue;
         }
-        builder.insert_manoeuvre(ConstantAcceleration::new(
+        propagator.push_manoeuvre(ConstantThrust::new(
             burn.start,
             burn.duration,
             burn.acceleration / 1e3,
-            burn.reference_frame(),
+            burn.try_reference_frame(&query_trajectory)
+                .expect("invalid burn reference entity"),
         ));
     }
+    propagator.set_initial_state(restart_epoch, restart_sv);
+    propagator.set_max_iterations(flight_plan.max_iterations);
 
-    if flight_plan.end >= restart {
-        commands.trigger(ExtendPredictionEvent::<DiscreteStatesBuilder>::with(
+    if flight_plan.end >= restart_epoch {
+        commands.trigger(ExtendPredictionEvent::<SpacecraftPropagator>::with(
             [entity],
-            Duration::EPSILON.max(flight_plan.end - restart),
+            Duration::EPSILON.max(flight_plan.end - restart_epoch),
             100,
         ));
     }

@@ -1,12 +1,10 @@
 use crate::{
     camera::Followed,
+    dynamics::{Bodies, CubicHermiteSplineSamples, Mu, SpacecraftPropagator, DEFAULT_PARAMS},
     floating_origin::BigGridBundle,
     hierarchy::OrbitedBy,
     load::{Ship, SpawnShip, SystemRoot},
-    prediction::{
-        ComputePredictionEvent, DiscreteStates, DiscreteStatesBuilder, Mu, StateVector, Trajectory,
-        TrajectoryData,
-    },
+    prediction::{ComputePredictionEvent, PredictionContext, Trajectory},
     time::SimulationTime,
     ui::{get_name, precision, show_tree, IdentedInfo, Labelled, TrajectoryPlot, WindowsUiSet},
     MainState,
@@ -16,6 +14,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_file_dialog::prelude::*;
+use ephemeris::{EvaluateTrajectory, StateVector};
 use hifitime::{Duration, Epoch};
 use std::str::FromStr;
 
@@ -79,7 +78,11 @@ impl ShipSpawnerWindow {
         mut query_preview: Query<(
             Entity,
             &mut ShipSpawnerData,
-            Option<(&mut Name, &mut DiscreteStatesBuilder, &mut TrajectoryPlot)>,
+            Option<(
+                &mut Name,
+                &mut PredictionContext<SpacecraftPropagator>,
+                &mut TrajectoryPlot,
+            )>,
         )>,
         query_trajectory: Query<&Trajectory>,
         query_context: Query<(Entity, &Trajectory, &Mu)>,
@@ -100,7 +103,7 @@ impl ShipSpawnerWindow {
             return;
         };
 
-        let Ok((preview, mut data, Some((mut name, mut builder, mut plot)))) =
+        let Ok((preview, mut data, Some((mut name, mut prediction, mut plot)))) =
             query_preview.get_single_mut()
         else {
             let (entity, data) = match query_preview.get_single() {
@@ -135,13 +138,19 @@ impl ShipSpawnerWindow {
                     offset: Vec2::new(0.0, radius) * 1.1,
                     index: 99,
                 },
-                Trajectory::new(DiscreteStates::new(data.start, sv.velocity, sv.position)),
-                DiscreteStatesBuilder::new(
-                    entity,
+                Trajectory::new(CubicHermiteSplineSamples::new(
                     data.start,
-                    sv.velocity,
                     sv.position,
-                    new_context(),
+                    sv.velocity,
+                )),
+                PredictionContext::new(
+                    vec![entity],
+                    SpacecraftPropagator::new(
+                        data.start,
+                        sv,
+                        DEFAULT_PARAMS,
+                        Bodies(new_context()),
+                    ),
                 ),
                 TrajectoryPlot {
                     enabled: true,
@@ -328,6 +337,7 @@ impl ShipSpawnerWindow {
                     commands.trigger(SpawnShip(Ship::new(
                         data.name.to_string(),
                         data.start,
+                        data.start + data.preview_duration,
                         sv.position,
                         sv.velocity,
                         Vec::new(),
@@ -368,15 +378,11 @@ impl ShipSpawnerWindow {
 
         if !window.valid_preview {
             let sv = data.global_state_vector(data.start, &query_trajectory);
-            *builder = DiscreteStatesBuilder::new(
-                preview,
-                data.start,
-                sv.velocity,
-                sv.position,
-                new_context(),
-            );
+            // prediction.propagator =
+            //     SpacecraftPropagator::new(data.start, sv.velocity, sv.position, new_context());
+            prediction.propagator.set_initial_state(data.start, sv);
 
-            commands.trigger(ComputePredictionEvent::<DiscreteStatesBuilder>::with(
+            commands.trigger(ComputePredictionEvent::<SpacecraftPropagator>::with(
                 [preview],
                 data.preview_duration,
                 100,

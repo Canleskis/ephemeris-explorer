@@ -27,7 +27,6 @@ impl<T: Asset> UniqueAsset<'_, T> {
         self.assets.get(&self.handle.0)
     }
 
-    #[expect(unused)]
     pub fn load_state(&self) -> bevy::asset::LoadState {
         self.server.load_state(&self.handle.0)
     }
@@ -45,7 +44,6 @@ pub struct UniqueAssetMut<'w, T: Asset> {
 }
 
 impl<T: Asset> UniqueAssetMut<'_, T> {
-    #[expect(unused)]
     pub fn get(&self) -> Option<&T> {
         self.assets.get(&self.handle.0)
     }
@@ -54,20 +52,18 @@ impl<T: Asset> UniqueAssetMut<'_, T> {
         self.assets.get_mut(&self.handle.0)
     }
 
-    #[expect(unused)]
     pub fn load_state(&self) -> bevy::asset::LoadState {
         self.server.load_state(&self.handle.0)
     }
 
-    #[expect(unused)]
     pub fn recursive_dependency_load_state(&self) -> bevy::asset::RecursiveDependencyLoadState {
         self.server.recursive_dependency_load_state(&self.handle.0)
     }
 }
 
-pub struct LoadSolarSytemPlugin;
+pub struct LoadSolarSystemPlugin;
 
-impl Plugin for LoadSolarSytemPlugin {
+impl Plugin for LoadSolarSystemPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<BodyVisuals>()
             .init_asset::<SolarSystemState>()
@@ -110,24 +106,31 @@ pub struct SkyboxHandle {
     pub handle: Handle<Image>,
 }
 
-fn reconfigure_skybox_image(mut images: ResMut<Assets<Image>>, mut skybox: ResMut<SkyboxHandle>) {
+fn reconfigure_skybox_image(
+    mut images: ResMut<Assets<Image>>,
+    mut skybox: ResMut<SkyboxHandle>,
+    asset_server: Res<AssetServer>,
+) {
     if skybox.reconfigured {
         return;
     }
 
-    if let Some(image) = images.get_mut(&skybox.handle) {
-        // NOTE: PNGs do not have any metadata that could indicate they contain a cubemap texture,
-        // so they appear as one texture. The following code reconfigures the texture as necessary.
-        if image.texture_descriptor.array_layer_count() == 1 {
-            image.reinterpret_stacked_2d_as_array(image.height() / image.width());
-            image.texture_view_descriptor =
-                Some(bevy::render::render_resource::TextureViewDescriptor {
-                    dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube),
-                    ..default()
-                });
+    if !skybox.reconfigured && asset_server.load_state(&skybox.handle).is_loaded() {
+        if let Some(image) = images.get_mut(&skybox.handle) {
+            // NOTE: PNGs do not have any metadata that could indicate they contain a cubemap texture,
+            // so they appear as one texture. The following code reconfigures the texture as necessary.
+            if image.texture_descriptor.array_layer_count() == 1 {
+                image.reinterpret_stacked_2d_as_array(image.height() / image.width());
+                image.texture_view_descriptor =
+                    Some(bevy::render::render_resource::TextureViewDescriptor {
+                        dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube),
+                        ..default()
+                    });
+            }
+            image.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
         }
-        image.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
-
+        // If the image is loaded but inaccessible, it means it was likely already reconfigured but
+        // is now on the render world.
         skybox.reconfigured = true;
     }
 }
@@ -235,8 +238,9 @@ pub struct EphemeridesSettings {
 #[derive(Asset, TypePath, Deref, DerefMut, Debug, serde::Deserialize)]
 pub struct HierarchyTree(pub indexmap::IndexMap<String, HierarchyTree>);
 
-impl Default for HierarchyTree {
-    fn default() -> Self {
+impl HierarchyTree {
+    #[inline]
+    pub fn empty() -> Self {
         HierarchyTree(indexmap::IndexMap::from([(
             String::from("Empty System"),
             HierarchyTree(indexmap::IndexMap::new()),
@@ -245,7 +249,7 @@ impl Default for HierarchyTree {
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
-pub struct Burn {
+pub struct BurnDe {
     pub start: Epoch,
     pub duration: Duration,
     pub acceleration: DVec3,
@@ -255,23 +259,26 @@ pub struct Burn {
 #[derive(Clone, Asset, TypePath, Debug, serde::Deserialize)]
 pub struct Ship {
     pub start: Epoch,
+    pub end: Epoch,
     pub name: String,
     pub position: DVec3,
     pub velocity: DVec3,
-    pub burns: Vec<Burn>,
+    pub burns: Vec<BurnDe>,
 }
 
 impl Ship {
     pub fn new(
         name: String,
         start: Epoch,
+        end: Epoch,
         position: DVec3,
         velocity: DVec3,
-        burns: Vec<Burn>,
+        burns: Vec<BurnDe>,
     ) -> Self {
         Ship {
             name,
             start: start.floor(Duration::from_seconds(1.0)),
+            end: end.ceil(Duration::from_seconds(1.0)),
             position,
             velocity,
             burns,

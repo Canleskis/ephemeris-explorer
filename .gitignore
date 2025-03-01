@@ -12,6 +12,7 @@ target/
 
 skybox/
 
+fetch_cache/
 data/
 output/
 __pycache__/

@@ -1,0 +1,24 @@
+[package]
+name = "ephemeris"
+edition = "2024"
+version = "0.1.0"
+
+[dependencies]
+integration = { path = "../integration" }
+
+hifitime = "4.0.2"
+particular = { git = "https://github.com/Canleskis/particular.git", features = [
+    "glam",
+] }
+deepsize = "0.2.0"
+smallvec = { version = "1.13.2", features = ["serde"] }
+
+[dev-dependencies]
+particular = { git = "https://github.com/Canleskis/particular.git", features = [
+    "glam",
+] }
+bevy_math = { version = "0.15", default-features = false }
+hifitime = "4.0.2"
+
+horizons_solar_system = { path = "../horizons_solar_system" }
+bincode = { version = "2", features = ["serde"] }

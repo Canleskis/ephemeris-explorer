@@ -25,7 +25,7 @@ fn setup_lights(mut commands: Commands, query: Query<(Entity, &Star), Added<Star
     for (entity, star) in &query {
         commands
             .spawn((
-                Name::new(format!("{}'s starlight", entity)),
+                Name::new(format!("{entity}'s starlight")),
                 StarLight(entity),
                 DirectionalLight {
                     color: star.color,

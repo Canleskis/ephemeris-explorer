@@ -1,30 +1,30 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod analysis;
-mod auto_extend;
-mod camera;
-mod flight_plan;
-mod floating_origin;
-mod hierarchy;
-mod load;
-mod prediction;
-mod rotation;
-mod selection;
-mod settings;
-mod starlight;
-mod time;
-mod ui;
+pub mod analysis;
+pub mod auto_extend;
+pub mod camera;
+pub mod dynamics;
+pub mod flight_plan;
+pub mod floating_origin;
+pub mod hierarchy;
+pub mod load;
+pub mod prediction;
+pub mod rotation;
+pub mod selection;
+pub mod settings;
+pub mod starlight;
+pub mod time;
+pub mod ui;
 
 use crate::{
     analysis::OrbitalAnalysisPlugin,
     auto_extend::AutoExtendPlugin,
     camera::CameraPlugin,
+    dynamics::{Backward, Forward, NBodyPropagator, SpacecraftPropagator},
     flight_plan::FlightPlanPlugin,
     floating_origin::FloatingOriginPlugin,
     load::{LoadSolarSystemEvent, LoadSystemPlugin},
-    prediction::{
-        Backward, DiscreteStatesBuilder, FixedSegmentsBuilder, Forward, PredictionPlugin,
-    },
+    prediction::PredictionPlugin,
     selection::SelectionPlugin,
     settings::{AppSettings, PersistentSettingsPlugin},
     starlight::StarLightPlugin,
@@ -92,11 +92,11 @@ impl PluginGroup for MainPlugins {
             .add(UiPlugin)
             .add(LoadSystemPlugin)
             .add(FlightPlanPlugin)
-            .add(PredictionPlugin::<FixedSegmentsBuilder<Forward>>::default())
-            .add(PredictionPlugin::<FixedSegmentsBuilder<Backward>>::default())
-            .add(PredictionPlugin::<DiscreteStatesBuilder>::default())
-            .add(AutoExtendPlugin::<FixedSegmentsBuilder<Forward>>::default())
-            .add(AutoExtendPlugin::<FixedSegmentsBuilder<Backward>>::default())
+            .add(PredictionPlugin::<NBodyPropagator<Forward>>::default())
+            .add(PredictionPlugin::<NBodyPropagator<Backward>>::default())
+            .add(PredictionPlugin::<SpacecraftPropagator>::default())
+            .add(AutoExtendPlugin::<NBodyPropagator<Forward>>::default())
+            .add(AutoExtendPlugin::<NBodyPropagator<Backward>>::default())
     }
 }
 
@@ -111,7 +111,14 @@ fn main() {
         ))
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
-        .add_systems(Startup, (set_window_icon, load_initial_solar_system))
+        .add_systems(
+            Startup,
+            (
+                set_window_icon,
+                load_initial_solar_system,
+                // load_later_solar_system,
+            ),
+        )
         .add_systems(First, delay_window_visiblity)
         .add_systems(PreUpdate, toggle_full_screen)
         .run();
@@ -148,7 +155,7 @@ fn load_initial_solar_system(
             events.send(event);
         }
         Err(err) => {
-            panic!("Failed to load solar system: {}", err);
+            panic!("Failed to load solar system: {err}");
         }
     }
 }

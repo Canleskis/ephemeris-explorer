@@ -1,5 +1,3 @@
-#![expect(unused)]
-
 pub use big_space::floating_origins::{BigSpace, FloatingOrigin};
 
 pub type Precision = i32;

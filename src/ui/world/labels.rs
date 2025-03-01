@@ -53,7 +53,7 @@ fn spawn_labels(
     for (entity, name, labelled) in &query_labelled {
         let id = commands
             .spawn((
-                Name::new(format!("{} label", name)),
+                Name::new(format!("{name} label")),
                 Text::new(name.to_string()),
                 labelled.font.clone(),
                 labelled.colour,
@@ -120,9 +120,12 @@ fn update_labels_position(
             .map(|position| position - computed_node.size() / 2.0);
 
         if let Ok(viewport_position) = viewport_position {
+            node.display = Display::DEFAULT;
             node.position_type = PositionType::Absolute;
             node.left = Val::Px(viewport_position.x);
             node.top = Val::Px(viewport_position.y);
+        } else {
+            node.display = Display::None;
         }
     }
 }

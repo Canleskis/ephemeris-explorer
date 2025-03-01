@@ -1,9 +1,10 @@
 use crate::{
     camera::{Followed, SetFollowed},
+    dynamics::{Bodies, SpacecraftPropagator},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     hierarchy::{HierarchyQueryExt, OrbitedBy, Orbiting},
     load::SystemRoot,
-    prediction::{DiscreteStatesBuilder, Mu, Trajectory, TrajectoryData},
+    prediction::{PredictionContext, Trajectory},
     selection::Selected,
     time::SimulationTime,
     ui::{
@@ -16,6 +17,7 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_file_dialog::prelude::*;
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
 use hifitime::{Duration, Epoch};
 use std::str::FromStr;
 
@@ -41,7 +43,7 @@ impl Plugin for BodyInfoPlugin {
 
 fn ui_coordinate(frame: BurnFrame, ui: &mut egui::Ui, coord: &str) {
     match frame {
-        BurnFrame::Frenet => match coord {
+        BurnFrame::Relative => match coord {
             "x" => {
                 ui.label("Prograde:");
             }
@@ -55,7 +57,7 @@ fn ui_coordinate(frame: BurnFrame, ui: &mut egui::Ui, coord: &str) {
             }
             _ => {}
         },
-        BurnFrame::Cartesian => match coord {
+        BurnFrame::Inertial => match coord {
             "x" => {
                 ui.label("x:");
             }
@@ -163,7 +165,7 @@ impl BodyInfoWindow {
         mut query: Query<(
             Option<&Orbiting>,
             &SourceOf,
-            Option<(&mut FlightPlan, &DiscreteStatesBuilder)>,
+            Option<(&mut FlightPlan, &PredictionContext<SpacecraftPropagator>)>,
             &mut Self,
         )>,
         mut query_plot: Query<&mut TrajectoryPlot>,
@@ -200,7 +202,7 @@ impl BodyInfoWindow {
                     };
                     let mut plot = query_plot.get_mut(*plot_entity).unwrap();
 
-                    let Some(relative) = plot.relative_trajectory(&query_trajectory) else {
+                    let Some(relative) = plot.get_relative_trajectory(&query_trajectory) else {
                         return;
                     };
 
@@ -212,8 +214,8 @@ impl BodyInfoWindow {
                                 let mut names = query_hierarchy.transmute_lens();
                                 let bytes =
                                     query_trajectory.get(entity).ok().and_then(|trajectory| {
-                                        let time = trajectory.start();
-                                        let sv = trajectory.state_vector(time)?;
+                                        let start = trajectory.start();
+                                        let sv = trajectory.state_vector(start)?;
                                         let burns = flight_plan
                                             .burns
                                             .iter()
@@ -222,7 +224,8 @@ impl BodyInfoWindow {
                                         Some(
                                             serde_json::to_vec_pretty(&serde_json::json!({
                                                 "name": name,
-                                                "start": time,
+                                                "start": start,
+                                                "end": flight_plan.end,
                                                 "position": sv.position,
                                                 "velocity": sv.velocity,
                                                 "burns": burns,
@@ -253,8 +256,7 @@ impl BodyInfoWindow {
                                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                                 .show(ui.ctx(), |ui| {
                                     ui.label(format!(
-                                        r#"Are you sure you want to delete "{}"?"#,
-                                        name
+                                        r#"Are you sure you want to delete "{name}"?"#
                                     ));
                                     ui.label("All unsaved flight plan data will be lost.");
                                     ui.add_space(10.0);
@@ -324,7 +326,7 @@ impl BodyInfoWindow {
                             let sv = relative.state_vector(sim_time.current());
 
                             IdentedInfo::new("Position", sv.map(|sv| sv.position))
-                                .hover_text(format!("Position relative to {}", plot_reference_name))
+                                .hover_text(format!("Position relative to {plot_reference_name}"))
                                 .show(ui, |ui, position| {
                                     if let Some(position) = position {
                                         ui.label(nformat!("x: {:.2} km", position.x));
@@ -337,7 +339,7 @@ impl BodyInfoWindow {
                                     }
                                 });
                             IdentedInfo::new("Velocity", sv.map(|sv| sv.velocity))
-                                .hover_text(format!("Velocity relative to {}", plot_reference_name))
+                                .hover_text(format!("Velocity relative to {plot_reference_name}"))
                                 .show(ui, |ui, velocity| {
                                     if let Some(velocity) = velocity {
                                         ui.label(nformat!("x: {:.2} km/s", velocity.x));
@@ -351,7 +353,7 @@ impl BodyInfoWindow {
                                 });
                             ui.end_row();
                             IdentedInfo::new("Distance", sv.map(|sv| sv.position.length()))
-                                .hover_text(format!("Distance relative to {}", plot_reference_name))
+                                .hover_text(format!("Distance relative to {plot_reference_name}"))
                                 .show(ui, |ui, distance| {
                                     if let Some(distance) = distance {
                                         ui.label(nformat!("{:.2} km", distance));
@@ -360,7 +362,7 @@ impl BodyInfoWindow {
                                     }
                                 });
                             IdentedInfo::new("Speed", sv.map(|sv| sv.velocity.length()))
-                                .hover_text(format!("Speed relative to {}", plot_reference_name))
+                                .hover_text(format!("Speed relative to {plot_reference_name}"))
                                 .show(ui, |ui, speed| {
                                     if let Some(speed) = speed {
                                         ui.label(nformat!("{:.2} km/s", speed));
@@ -583,7 +585,7 @@ impl BodyInfoWindow {
                             .insert(SeparationPlot::Trajectory(plot.reference.unwrap_or(*root)));
                     }
 
-                    let Some((flight_plan, builder)) = data.as_mut() else {
+                    let Some((flight_plan, prediction)) = data.as_mut() else {
                         return;
                     };
 
@@ -657,8 +659,8 @@ impl BodyInfoWindow {
                             flight_plan.burns.push(Burn::new(
                                 start,
                                 match plot.reference {
-                                    Some(e) if e != *root => BurnFrame::Frenet,
-                                    _ => BurnFrame::Cartesian,
+                                    Some(e) if e != *root => BurnFrame::Relative,
+                                    _ => BurnFrame::Inertial,
                                 },
                                 plot.reference.unwrap_or(*root),
                             ));
@@ -705,7 +707,7 @@ impl BodyInfoWindow {
                                             idx,
                                             *root,
                                             entity,
-                                            builder.context(),
+                                            prediction.propagator.context(),
                                             &mut query_hierarchy,
                                             &query_orbited_by,
                                             min_time,
@@ -736,7 +738,7 @@ impl BodyInfoWindow {
         idx: usize,
         root: Entity,
         selected: Entity,
-        context: &bevy::ecs::entity::EntityHashMap<(Trajectory, Mu)>,
+        context: &Bodies,
         query_hierarchy: &mut Query<(Entity, &Name, Option<&OrbitedBy>)>,
         query_orbited_by: &Query<&OrbitedBy>,
         min_time: Epoch,
@@ -846,7 +848,7 @@ impl BodyInfoWindow {
                             }
                         });
 
-                    if matches!(burn.frame, BurnFrame::Frenet) {
+                    if matches!(burn.frame, BurnFrame::Relative) {
                         egui::ComboBox::from_id_salt("Reference")
                             .wrap_mode(egui::TextWrapMode::Extend)
                             .selected_text(get_name(
@@ -856,7 +858,7 @@ impl BodyInfoWindow {
                             .show_ui(ui, |ui| {
                                 let first_in_context = query_orbited_by
                                     .iter_orbiting_descendants(root)
-                                    .find(|e| context.contains_key(e));
+                                    .find(|e| context.0.contains_key(e));
 
                                 let Some(first_in_context) = first_in_context else {
                                     return;
@@ -890,7 +892,7 @@ impl BodyInfoWindow {
                                         children.map(|c| {
                                             query_hierarchy
                                                 .iter_many(c)
-                                                .filter(|(e, ..)| context.contains_key(e))
+                                                .filter(|(e, ..)| context.0.contains_key(e))
                                         })
                                     },
                                 );
@@ -953,7 +955,7 @@ fn burn_to_value(burn: &Burn, query: Query<&Name>) -> serde_json::Value {
         "acceleration": burn.acceleration,
     });
 
-    if let BurnFrame::Frenet = burn.frame {
+    if let BurnFrame::Relative = burn.frame {
         json["reference"] = serde_json::json!(query.get(burn.reference).unwrap().to_string());
     }
 

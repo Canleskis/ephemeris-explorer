@@ -1,20 +1,17 @@
 use crate::{
+    dynamics::{Forward, NBodyPropagator, UniformSpline},
     load::{SolarSystemState, UniqueAsset},
-    prediction::{
-        integration::{IntegrationState, PEFRL},
-        FixedSegments, FixedSegmentsBuilder, Forward, Trajectory, TrajectoryData,
-    },
+    prediction::{PredictionContext, Trajectory},
     time::SimulationTime,
     ui::WindowsUiSet,
     MainState,
 };
 
-use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory, NBodyProblem, NewtonianGravity};
 use hifitime::{Duration, Epoch};
-use particular::gravity::newtonian::Acceleration;
-use particular::prelude::*;
+use integration::prelude::*;
 use thousands::Separable;
 
 pub struct EphemeridesDebugPlugin;
@@ -40,7 +37,7 @@ impl EphemeridesDebugWindow {
         window: Option<Res<Self>>,
         system: UniqueAsset<SolarSystemState>,
         sim_time: Res<SimulationTime>,
-        query_builder: Query<&FixedSegmentsBuilder<Forward>>,
+        query_prediction: Query<&PredictionContext<NBodyPropagator<Forward>>>,
         query: Query<(Entity, &Name, &Trajectory)>,
         mut errors: Local<Option<bevy::ecs::entity::EntityHashMap<f64>>>,
     ) {
@@ -56,78 +53,56 @@ impl EphemeridesDebugWindow {
                     return;
                 };
 
-                let builder = query_builder.single();
-                let dt = builder.integrator().delta();
+                let prediction = query_prediction.single();
+                let dt = prediction.propagator.delta();
                 let start = system.epoch;
                 let duration = Duration::from_days(365.0 * 2.0).min(sim_time.end() - start);
+
                 let compute_error = || {
-                    #[derive(Clone, Component, Position, Mass)]
-                    struct DiscreteData {
-                        pub velocity: DVec3,
-                        pub position: DVec3,
-                        pub mu: f64,
-                    }
-
-                    impl IntegrationState for DiscreteData {
-                        #[inline]
-                        fn velocity(&mut self) -> &mut DVec3 {
-                            &mut self.velocity
-                        }
-
-                        #[inline]
-                        fn position(&mut self) -> &mut DVec3 {
-                            &mut self.position
-                        }
-                    }
-                    // We collect the entities in the same order as the builder stores them.
-                    let ((query, state), mut discrete): ((Vec<_>, Vec<_>), Vec<_>) = query
-                        .iter()
-                        .sort::<Entity>()
-                        .filter(|(.., trajectory)| trajectory.read().as_any().is::<FixedSegments>())
-                        .map(|(entity, name, trajectory)| {
-                            (
+                    let (query, positions, velocities, mus): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
+                        query
+                            .iter()
+                            .sort::<Entity>()
+                            .filter(|(.., trajectory)| {
+                                trajectory.read().as_any().is::<UniformSpline>()
+                            })
+                            .map(|(entity, name, trajectory)| {
                                 (
                                     (entity, name, trajectory),
-                                    DiscreteData {
-                                        velocity: system.bodies[&**name].velocity,
-                                        position: system.bodies[&**name].position,
-                                        mu: system.bodies[&**name].mu,
-                                    },
-                                ),
-                                vec![system.bodies[&**name].position],
-                            )
-                        })
-                        .unzip();
-                    let mut integrator = PEFRL::new(start.to_tai_seconds(), dt, state);
+                                    system.bodies[&**name].position,
+                                    system.bodies[&**name].velocity,
+                                    system.bodies[&**name].mu,
+                                )
+                            })
+                            .collect();
 
-                    for _ in 0..(duration.to_seconds() / dt).ceil() as _ {
-                        _ = integrator.step(|_, states, accs| {
-                            accs.extend(states.brute_force_pairs(Acceleration::checked()))
-                        });
-                        for (state, data) in std::iter::zip(integrator.state(), &mut discrete) {
-                            data.push(state.position);
+                    let nbody = NBodyProblem {
+                        time: start.to_tai_seconds(),
+                        bound: start.to_tai_seconds() + duration.to_seconds(),
+                        state: SecondOrderState::new(positions, velocities),
+                        ode: NewtonianGravity {
+                            gravitational_parameters: mus,
+                        },
+                    };
+
+                    let method: QuinlanTremaine12 = QuinlanTremaine12::new(dt.to_seconds());
+                    let mut integrator = method.integrate(nbody);
+
+                    let mut errors = bevy::ecs::entity::EntityHashMap::<f64>::default();
+                    while let Ok((t, state)) = integrator.advance() {
+                        let epoch = Epoch::from_tai_seconds(t);
+                        for ((entity, _, traj), position) in query.iter().zip(&state.y) {
+                            let traj_position = traj.position(epoch).unwrap();
+
+                            let error = position.distance(traj_position) * 1e3;
+                            errors
+                                .entry(*entity)
+                                .and_modify(|e| *e = e.max(error))
+                                .or_insert(error);
                         }
                     }
 
-                    query
-                        .iter()
-                        .zip(discrete)
-                        .map(|((entity, _, traj), discrete)| {
-                            (
-                                *entity,
-                                discrete
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, discrete_position)| {
-                                        let epoch = start + Duration::from_seconds(dt) * i as i64;
-                                        let traj_position = traj.position(epoch).unwrap();
-
-                                        discrete_position.distance(traj_position) * 1e3
-                                    })
-                                    .fold(0.0, f64::max),
-                            )
-                        })
-                        .collect::<bevy::ecs::entity::EntityHashMap<_>>()
+                    errors
                 };
 
                 let available_height = ui.available_height();
@@ -183,7 +158,7 @@ impl EphemeridesDebugWindow {
                             .map(|(entity, name, data)| {
                                 (
                                     name.as_str(),
-                                    data.size(),
+                                    data.heap_size(),
                                     data.len(),
                                     data.start(),
                                     data.end(),
@@ -222,15 +197,15 @@ impl EphemeridesDebugWindow {
                                 ui.label(count.to_string());
                             });
                             row.col(|ui| {
-                                ui.label(format!("{:x}", start));
+                                ui.label(format!("{start:x}"));
                             });
                             row.col(|ui| {
-                                ui.label(format!("{:x}", end));
+                                ui.label(format!("{end:x}"));
                             });
                             row.col(|ui| {
                                 ui.label(
                                     error
-                                        .map(|error| format!("{:.2} metres", error))
+                                        .map(|error| format!("{error:.2} metres"))
                                         .unwrap_or_else(|| "N/A".to_string()),
                                 );
                             });

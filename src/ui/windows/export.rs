@@ -1,8 +1,9 @@
 use crate::{
+    dynamics::Mu,
     flight_plan::FlightPlan,
     hierarchy::OrbitedBy,
     load::SystemRoot,
-    prediction::{Mu, Trajectory, TrajectoryData},
+    prediction::Trajectory,
     time::SimulationTime,
     ui::{epoch_clamped_parser, precision, show_tree, WindowsUiSet},
     MainState,
@@ -11,6 +12,7 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_file_dialog::prelude::*;
+use ephemeris::EvaluateTrajectory;
 use hifitime::Epoch;
 
 pub struct ExportPlugin;

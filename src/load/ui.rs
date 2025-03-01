@@ -68,7 +68,7 @@ pub fn text_on_load<A: Asset>(
 
     if let Some(path) = loaded_path {
         for mut text in query.iter_mut() {
-            **text = format!("Loaded {}", path);
+            **text = format!("Loaded {path}");
         }
     }
 }

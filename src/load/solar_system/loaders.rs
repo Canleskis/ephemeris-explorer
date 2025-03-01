@@ -428,3 +428,39 @@ impl bevy::asset::AssetLoader for ShipLoader {
         &["json"]
     }
 }
+
+// pub struct SkyboxLoader(pub bevy::image::ImageLoader);
+
+// impl bevy::asset::AssetLoader for SkyboxLoader {
+//     type Asset = Skybox;
+
+//     type Settings = bevy::image::ImageLoaderSettings;
+
+//     type Error = bevy::image::ImageLoaderError;
+
+//     fn load(
+//         &self,
+//         reader: &mut dyn bevy::asset::io::Reader,
+//         settings: &Self::Settings,
+//         load_context: &mut bevy::asset::LoadContext,
+//     ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+//         async move {
+//             let mut image = self.0.load(reader, settings, load_context).await?;
+//             if image.texture_descriptor.array_layer_count() == 1 {
+//                 image.reinterpret_stacked_2d_as_array(image.height() / image.width());
+//                 image.texture_view_descriptor =
+//                     Some(bevy::render::render_resource::TextureViewDescriptor {
+//                         dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube),
+//                         ..default()
+//                     });
+//             }
+//             image.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+
+//             Ok(Skybox(image))
+//         }
+//     }
+
+//     fn extensions(&self) -> &[&str] {
+//         bevy::image::ImageLoader::SUPPORTED_FILE_EXTENSIONS
+//     }
+// }

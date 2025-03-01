@@ -1,10 +1,8 @@
 use crate::{
     auto_extend::AutoExtendSettings,
+    dynamics::{Backward, Forward, NBodyPropagator},
     load::SystemRoot,
-    prediction::{
-        Backward, ExtendPredictionEvent, FixedSegmentsBuilder, Forward, PredictionTracker,
-        TrajectoryBuilder,
-    },
+    prediction::{ExtendPredictionEvent, PredictionPropagator, PredictionTracker},
     time::SimulationTime,
     ui::WindowsUiSet,
     MainState,
@@ -32,19 +30,21 @@ impl Plugin for PredictionPlannerPlugin {
 pub struct PredictionPlannerWindow;
 
 impl PredictionPlannerWindow {
-    fn prediction_content<B: TrajectoryBuilder + Component>(
+    fn prediction_content<P>(
         ui: &mut egui::Ui,
         commands: &mut Commands,
         root: Entity,
-        auto_extend: &mut AutoExtendSettings<B>,
-        prediction: Option<Ref<PredictionTracker<B>>>,
+        auto_extend: &mut AutoExtendSettings<P>,
+        prediction: Option<Ref<PredictionTracker<P>>>,
         buffer: &mut String,
         parser: impl Fn(&str) -> Option<Epoch>,
         response: &egui::Response,
         default: Epoch,
         time_taken: &mut Option<std::time::Duration>,
         delta: std::time::Duration,
-    ) {
+    ) where
+        P: PredictionPropagator,
+    {
         let (backward_duration, backward_label) = match parser(buffer) {
             Some(start) if prediction.is_none() => {
                 let duration = (start - default).abs();
@@ -54,7 +54,7 @@ impl PredictionPlannerWindow {
             }
             _ => {
                 if !response.has_focus() {
-                    *buffer = format!("{:x}", default);
+                    *buffer = format!("{default:x}");
                 }
                 let label = if prediction.is_some() {
                     "Prediction in progress"
@@ -72,7 +72,7 @@ impl PredictionPlannerWindow {
 
         if let Some(prediction) = prediction.as_ref() {
             let time_taken = time_taken.get_or_insert_with(Default::default);
-            if prediction.in_progress() {
+            if prediction.is_in_progress() {
                 *time_taken += delta;
             }
         }
@@ -83,7 +83,7 @@ impl PredictionPlannerWindow {
             ui.label(backward_label);
             if let Some(time_taken) = &*time_taken {
                 ui.separator();
-                ui.label(format!("Time taken: {:?}", time_taken));
+                ui.label(format!("Time taken: {time_taken:?}"));
             }
         });
 
@@ -92,7 +92,7 @@ impl PredictionPlannerWindow {
                 ui.add_enabled_ui(backward_duration.is_some(), |ui| {
                     if ui.button("Start prediction").clicked() {
                         if let Some(duration) = backward_duration {
-                            commands.trigger(ExtendPredictionEvent::<B>::all(duration, 1000));
+                            commands.trigger(ExtendPredictionEvent::<P>::all(duration, 1000));
                         }
                     }
                 });
@@ -106,7 +106,7 @@ impl PredictionPlannerWindow {
                 }
                 let button = egui::Button::new("Cancel").min_size(egui::vec2(55.0, 0.0));
                 if ui.add(button).clicked() {
-                    commands.entity(root).remove::<PredictionTracker<B>>();
+                    commands.entity(root).remove::<PredictionTracker<P>>();
                 }
                 ui.add(egui::ProgressBar::new(prediction.progress()).show_percentage());
             }
@@ -119,15 +119,15 @@ impl PredictionPlannerWindow {
         mut commands: Commands,
         window: Option<Res<Self>>,
         sim_time: Res<SimulationTime>,
-        mut auto_extend_forward: ResMut<AutoExtendSettings<FixedSegmentsBuilder<Forward>>>,
-        mut auto_extend_backward: ResMut<AutoExtendSettings<FixedSegmentsBuilder<Backward>>>,
+        mut auto_extend_forward: ResMut<AutoExtendSettings<NBodyPropagator<Forward>>>,
+        mut auto_extend_backward: ResMut<AutoExtendSettings<NBodyPropagator<Backward>>>,
         mut start_buffer: Local<String>,
         mut end_buffer: Local<String>,
         prediction: Query<
             (
                 Entity,
-                Option<Ref<PredictionTracker<FixedSegmentsBuilder<Forward>>>>,
-                Option<Ref<PredictionTracker<FixedSegmentsBuilder<Backward>>>>,
+                Option<Ref<PredictionTracker<NBodyPropagator<Forward>>>>,
+                Option<Ref<PredictionTracker<NBodyPropagator<Backward>>>>,
             ),
             With<SystemRoot>,
         >,

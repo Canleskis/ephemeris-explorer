@@ -140,7 +140,7 @@ pub fn time_controls(
                         })
                         .custom_parser(|text| Some(Duration::from_str(text).ok()?.to_seconds())),
                     TimeScale::Multiplier => slider.prefix("x").custom_formatter(|_, _| {
-                        format!("{:.2}", computed_time_scale).separate_with_commas()
+                        format!("{computed_time_scale:.2}").separate_with_commas()
                     }),
                 };
 
@@ -176,7 +176,7 @@ pub fn time_controls(
                     .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
                     .and_then(|fps| fps.smoothed())
                 {
-                    ui.add(egui::Label::new(format!("FPS: {:.0}", fps_smoothed)).selectable(false));
+                    ui.add(egui::Label::new(format!("FPS: {fps_smoothed:.0}")).selectable(false));
                 }
             })
         });

@@ -1,16 +1,17 @@
 use crate::{
     hierarchy::{AddOrbit, Orbiting},
-    prediction::{Trajectory, TrajectoryData},
+    prediction::Trajectory,
     time::SimulationTime,
     MainState,
 };
+
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use ephemeris::EvaluateTrajectory;
 
 #[derive(Component)]
 pub enum SphereOfInfluence {
     Fixed(f64),
-    #[expect(unused)]
     Computed(f64),
 }
 

@@ -7,13 +7,14 @@ pub use ui::*;
 use crate::{
     analysis::{under_soi, SphereOfInfluence},
     camera::{CameraController, CanFollow, Followed, OrbitCamera},
+    dynamics::{
+        Backward, Bodies, CubicHermiteSplineSamples, Forward, LeastSquaresFit, Mu, NBodyPropagator,
+        SpacecraftPropagator, StateVector, UniformSpline, DEFAULT_PARAMS,
+    },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
     hierarchy::AddOrbit,
-    prediction::{
-        Backward, DiscreteStates, DiscreteStatesBuilder, ExtendPredictionEvent, FixedSegments,
-        FixedSegmentsBuilder, Forward, Mu, PredictionTracker, Trajectory, TrajectoryData, DIV,
-    },
+    prediction::{ExtendPredictionEvent, PredictionContext, PredictionTracker, Trajectory},
     rotation::Rotating,
     selection::Selectable,
     starlight::Star,
@@ -24,21 +25,22 @@ use crate::{
 
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::core_pipeline::Skybox;
-use bevy::math::DVec3;
 use bevy::prelude::*;
-use hifitime::{Duration, Epoch};
+use ephemeris::{EvaluateTrajectory, DIV};
+
+use hifitime::Duration;
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, SubStates)]
 #[source(MainState = MainState::Loading)]
 pub enum LoadingStage {
     #[default]
     Assets,
-    Ephemerides,
+    Spawn,
 }
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, SubStates)]
-#[source(LoadingStage = LoadingStage::Ephemerides)]
-pub enum EphemeridesLoadingStage {
+#[source(LoadingStage = LoadingStage::Spawn)]
+pub enum SpawnStage {
     #[default]
     Bodies,
     Ships,
@@ -51,8 +53,8 @@ impl Plugin for LoadSystemPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(LoadingScreenPlugin)
             .add_sub_state::<LoadingStage>()
-            .add_sub_state::<EphemeridesLoadingStage>()
-            .add_plugins(LoadSolarSytemPlugin)
+            .add_sub_state::<SpawnStage>()
+            .add_plugins(LoadSolarSystemPlugin)
             .add_event::<LoadSolarSystemEvent>()
             .add_systems(First, handle_load_events);
 
@@ -60,7 +62,7 @@ impl Plugin for LoadSystemPlugin {
             Update,
             text_on_load::<Image>.run_if(in_state(LoadingStage::Assets)),
         )
-        .add_systems(OnEnter(MainState::Loading), setup_asset_errors)
+        .add_systems(OnEnter(MainState::Loading), setup_loading_errors)
         .add_systems(
             First,
             (
@@ -78,7 +80,7 @@ impl Plugin for LoadSystemPlugin {
         );
 
         app.add_systems(
-            OnEnter(EphemeridesLoadingStage::Bodies),
+            OnEnter(SpawnStage::Bodies),
             (
                 spawn_loaded_bodies,
                 setup_camera,
@@ -89,19 +91,19 @@ impl Plugin for LoadSystemPlugin {
         )
         .add_systems(
             Update,
-            ephemerides_bodies_progress.run_if(in_state(EphemeridesLoadingStage::Bodies)),
+            ephemerides_bodies_progress.run_if(in_state(SpawnStage::Bodies)),
         );
         app.add_observer(spawn_ship)
-            .add_systems(OnEnter(EphemeridesLoadingStage::Ships), spawn_loaded_ships)
+            .add_systems(OnEnter(SpawnStage::Ships), spawn_loaded_ships)
             .add_systems(
                 Update,
-                ephemerides_ships_progress.run_if(in_state(EphemeridesLoadingStage::Ships)),
+                ephemerides_ships_progress.run_if(in_state(SpawnStage::Ships)),
             );
 
         #[cfg(debug_assertions)]
         app.add_systems(
             Update,
-            bypass_ephemerides_loading.run_if(in_state(LoadingStage::Ephemerides)),
+            bypass_ephemerides_loading.run_if(in_state(LoadingStage::Spawn)),
         );
 
         bevy::asset::load_internal_binary_asset!(
@@ -113,7 +115,7 @@ impl Plugin for LoadSystemPlugin {
     }
 }
 
-#[derive(Event, Clone)]
+#[derive(Event, Clone, Debug)]
 pub struct LoadSolarSystemEvent {
     pub path: std::path::PathBuf,
     pub state: Handle<SolarSystemState>,
@@ -169,7 +171,7 @@ pub fn handle_load_events(
 fn finish_assets_loading(world: &mut World) {
     world
         .resource_mut::<NextState<LoadingStage>>()
-        .set(LoadingStage::Ephemerides);
+        .set(LoadingStage::Spawn);
 }
 
 fn bodies_loaded(solar_system: UniqueAsset<SolarSystemState>) -> bool {
@@ -209,10 +211,33 @@ fn ships_loaded(folder: Res<ShipsHandles>, asset_server: Res<AssetServer>) -> bo
     })
 }
 
-#[derive(Default, Resource, Deref, DerefMut)]
-pub struct LoadingErrors(pub Vec<bevy::asset::AssetLoadError>);
+#[derive(Clone, Debug)]
+pub enum LoadingError {
+    AssetLoadError(bevy::asset::AssetLoadError),
+    MissingBody(String),
+    MissingEphemeridesSettings(String),
+    MissingReference { ship: String, reference: String },
+}
+impl std::fmt::Display for LoadingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AssetLoadError(err) => write!(f, "Asset load error: {err}"),
+            Self::MissingBody(name) => write!(f, "Missing body in solar system state: {name}"),
+            Self::MissingEphemeridesSettings(name) => {
+                write!(f, "Missing ephemerides settings for body: {name}")
+            }
+            Self::MissingReference { ship, reference } => {
+                write!(f, "Reference \"{reference}\" for \"{ship}\" does not exist")
+            }
+        }
+    }
+}
+impl std::error::Error for LoadingError {}
 
-fn setup_asset_errors(mut commands: Commands) {
+#[derive(Default, Resource, Deref, DerefMut)]
+pub struct LoadingErrors(pub Vec<LoadingError>);
+
+fn setup_loading_errors(mut commands: Commands) {
     commands.insert_resource(LoadingErrors::default());
 }
 
@@ -220,7 +245,11 @@ fn agregate_asset_errors(
     mut events: EventReader<bevy::asset::UntypedAssetLoadFailedEvent>,
     mut errors: ResMut<LoadingErrors>,
 ) {
-    errors.extend(events.read().map(|event| event.error.clone()));
+    errors.extend(
+        events
+            .read()
+            .map(|event| LoadingError::AssetLoadError(event.error.clone())),
+    );
 }
 
 fn spawn_loaded_bodies(
@@ -232,7 +261,7 @@ fn spawn_loaded_bodies(
     mut errors: ResMut<LoadingErrors>,
 ) {
     // We can assume all assets are loaded at this point and just unwrap everything.
-    let empty = HierarchyTree::default();
+    let empty = HierarchyTree::empty();
     let hierachy_tree = hierachy_tree.get().unwrap_or(&empty);
 
     // Hierarchy should always have one root element.
@@ -256,18 +285,19 @@ fn spawn_loaded_bodies(
     let empty = EphemeridesSettings::default();
     let settings = eph_settings.get().unwrap_or(&empty);
 
-    let mut massive_states = Vec::new();
+    let mut spawn_data = Vec::new();
 
     enum MissingDataError {
         State(String),
         EphemeridesSettings(String),
     }
 
+    #[expect(clippy::type_complexity)]
     fn spawn_from_hierarchy(
         depth: usize,
         root: Entity,
         commands: &mut Commands,
-        massive_states: &mut Vec<(Entity, DVec3, DVec3, f64, usize)>,
+        spawn_data: &mut Vec<(Entity, (StateVector, f64, Duration, LeastSquaresFit))>,
         parent: Entity,
         tree: &HierarchyTree,
         eph_settings: &EphemeridesSettings,
@@ -293,17 +323,19 @@ fn spawn_loaded_bodies(
             let visual = visuals.get(&body.visuals).unwrap();
 
             let radius = ((visual.radii.x + visual.radii.y + visual.radii.z) / 3.0) as f32;
-            let soi = massive_states
+            let soi = spawn_data
                 .iter()
                 .find(|(entity, ..)| *entity == parent)
-                .map(|(_, _, parent_position, parent_mu, _)| {
+                .map(|(_, (parent_sv, parent_mu, ..))| {
                     SphereOfInfluence::approximate(
-                        body.position.distance(*parent_position),
+                        body.position.distance(parent_sv.position),
                         body.mu,
                         *parent_mu,
                     )
                 })
                 .unwrap_or(SphereOfInfluence::Fixed(f64::INFINITY));
+
+            let sample_period = eph_settings.dt * settings.count as i64;
 
             let mut entity = commands.spawn_empty();
             entity.insert((
@@ -328,20 +360,24 @@ fn spawn_loaded_bodies(
                     index: depth + 1,
                 },
                 Mu(body.mu),
-                Trajectory::new(FixedSegments::new(
+                Trajectory::new(UniformSpline::new(
                     solar_system.epoch,
-                    eph_settings.dt * DIV as i64 * settings.count as i64,
+                    sample_period * DIV as i64,
                 )),
                 BoundsTime,
                 soi,
             ));
 
-            massive_states.push((
+            spawn_data.push((
                 entity.id(),
-                body.velocity,
-                body.position,
-                body.mu,
-                settings.degree,
+                (
+                    StateVector::new(body.position, body.velocity),
+                    body.mu,
+                    sample_period,
+                    LeastSquaresFit {
+                        degree: settings.degree,
+                    },
+                ),
             ));
 
             entity.with_children(|cmds| {
@@ -394,7 +430,7 @@ fn spawn_loaded_bodies(
                 depth + 1,
                 root,
                 commands,
-                massive_states,
+                spawn_data,
                 entity,
                 tree,
                 eph_settings,
@@ -410,7 +446,7 @@ fn spawn_loaded_bodies(
         0,
         root,
         &mut commands,
-        &mut massive_states,
+        &mut spawn_data,
         root,
         tree,
         settings,
@@ -419,25 +455,27 @@ fn spawn_loaded_bodies(
     );
 
     for error in spawn_errors {
-        let (path, name) = match error {
-            MissingDataError::State(name) => (solar_system.handle().path(), name),
-            MissingDataError::EphemeridesSettings(name) => (eph_settings.handle().path(), name),
-        };
-        errors.push(bevy::asset::AssetLoadError::AssetReaderError(
-            bevy::asset::io::AssetReaderError::NotFound(
-                path.cloned()
-                    .unwrap_or_default()
-                    .path()
-                    .to_path_buf()
-                    .join(name),
-            ),
-        ));
+        match error {
+            MissingDataError::State(name) => {
+                errors.push(LoadingError::MissingBody(name));
+            }
+            MissingDataError::EphemeridesSettings(name) => {
+                errors.push(LoadingError::MissingEphemeridesSettings(name));
+            }
+        }
     }
 
+    let (entities, states): (Vec<_>, Vec<_>) = spawn_data.into_iter().collect();
     let dt = settings.dt;
     commands.entity(root).insert((
-        FixedSegmentsBuilder::new(Forward::new(dt), system.epoch, massive_states.clone()),
-        FixedSegmentsBuilder::new(Backward::new(dt), system.epoch, massive_states),
+        PredictionContext::new(
+            entities.clone(),
+            NBodyPropagator::new(Forward::new(dt), system.epoch, states.clone()),
+        ),
+        PredictionContext::new(
+            entities,
+            NBodyPropagator::new(Backward::new(dt), system.epoch, states),
+        ),
     ));
 
     commands.insert_resource(SimulationTime::new(system.epoch));
@@ -470,24 +508,15 @@ pub fn find_by_name(query: &Query<(Entity, &Name), With<Mu>>, reference: &str) -
 fn spawn_ship(
     trigger: Trigger<SpawnShip>,
     mut commands: Commands,
-    sim_time: Res<SimulationTime>,
-    query_names: Query<(Entity, &Name), With<Mu>>,
+    query_name: Query<(Entity, &Name), With<Mu>>,
     query_soi: Query<(Entity, &Trajectory, &SphereOfInfluence)>,
     query_context: Query<(Entity, &Trajectory, &Mu)>,
     root: Single<Entity, With<SystemRoot>>,
+    mut errors: ResMut<LoadingErrors>,
 ) {
     let ship = &trigger.event().0;
 
     let radius = 0.01;
-
-    let min = sim_time.current().floor(Duration::from_seconds(1.0)) + Duration::from_days(1.0);
-    let end = ship
-        .burns
-        .last()
-        .map(|burn| burn.start + burn.duration)
-        .map(|end| end + ((end - ship.start) / 5).round(Duration::from_hours(1.0)))
-        .map(|end| end.max(ship.start + Duration::from_days(1.0)))
-        .map_or(min, |end| end.max(min));
 
     let parent = under_soi(
         query_soi.iter().filter_map(|(entity, trajectory, soi)| {
@@ -508,6 +537,40 @@ fn spawn_ship(
         entity => commands.entity(entity),
     };
     let id = entity.id();
+
+    let mapped_burns: Result<Vec<_>, &str> = ship
+        .burns
+        .iter()
+        .map(|burn| {
+            let (reference, frame) = match &burn.reference {
+                Some(reference) => (
+                    find_by_name(&query_name, reference).ok_or(reference.as_str())?,
+                    BurnFrame::Relative,
+                ),
+                None => (*root, BurnFrame::Inertial),
+            };
+
+            Ok(Burn::with(
+                burn.start,
+                burn.duration,
+                burn.acceleration,
+                reference,
+                frame,
+            ))
+        })
+        .collect();
+
+    let mapped_burns = match mapped_burns {
+        Ok(burns) => burns,
+        Err(missing) => {
+            errors.push(LoadingError::MissingReference {
+                ship: ship.name.to_string(),
+                reference: missing.to_string(),
+            });
+            return;
+        }
+    };
+
     entity
         .insert((
             // No state scope needed as it is always a child of the root.
@@ -527,34 +590,21 @@ fn spawn_ship(
                 offset: Vec2::new(0.0, radius) * 1.1,
                 index: 99,
             },
-            Trajectory::new(DiscreteStates::new(
+            Trajectory::new(CubicHermiteSplineSamples::new(
                 ship.start,
-                ship.velocity,
                 ship.position,
+                ship.velocity,
             )),
-            DiscreteStatesBuilder::new(id, ship.start, ship.velocity, ship.position, context),
-            FlightPlan::new(
-                end,
-                10_000,
-                ship.burns
-                    .iter()
-                    .map(|burn| {
-                        let (reference, frame) = burn
-                            .reference
-                            .as_ref()
-                            .and_then(|reference| find_by_name(&query_names, reference))
-                            .map(|entity| (entity, BurnFrame::Frenet))
-                            .unwrap_or((*root, BurnFrame::Cartesian));
-                        Burn::with(
-                            burn.start,
-                            burn.duration,
-                            burn.acceleration,
-                            reference,
-                            frame,
-                        )
-                    })
-                    .collect(),
+            PredictionContext::new(
+                vec![id],
+                SpacecraftPropagator::new(
+                    ship.start,
+                    StateVector::new(ship.position, ship.velocity),
+                    DEFAULT_PARAMS,
+                    Bodies(context),
+                ),
             ),
+            FlightPlan::new(ship.end, DEFAULT_PARAMS.n_max as usize, mapped_burns),
         ))
         .with_child((
             Name::new(ship.name.to_string()),
@@ -633,31 +683,27 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
     }
 }
 
-fn compute_ephemerides_bodies(mut commands: Commands, sim_time: Res<SimulationTime>) {
-    let target_forward = Epoch::from_gregorian_tai_hms(1952, 1, 1, 0, 0, 0);
-    let target_backward = Epoch::from_gregorian_tai_hms(1948, 1, 1, 0, 0, 0);
+fn compute_ephemerides_bodies(mut commands: Commands) {
     let min_steps = 1000;
 
-    commands.trigger(ExtendPredictionEvent::<FixedSegmentsBuilder<Forward>>::all(
-        target_forward - sim_time.current(),
+    commands.trigger(ExtendPredictionEvent::<NBodyPropagator<Forward>>::all(
+        Duration::from_days(365.0 * 2.0),
         min_steps,
     ));
-    commands.trigger(
-        ExtendPredictionEvent::<FixedSegmentsBuilder<Backward>>::all(
-            sim_time.current() - target_backward,
-            min_steps,
-        ),
-    );
+    commands.trigger(ExtendPredictionEvent::<NBodyPropagator<Backward>>::all(
+        Duration::from_days(365.0 * 2.0),
+        min_steps,
+    ));
 }
 
 fn ephemerides_bodies_progress(
-    mut state: ResMut<NextState<EphemeridesLoadingStage>>,
+    mut state: ResMut<NextState<SpawnStage>>,
     mut query: Query<&mut Text, With<LoadingText>>,
-    forward: Query<&PredictionTracker<FixedSegmentsBuilder<Forward>>>,
-    backward: Query<&PredictionTracker<FixedSegmentsBuilder<Backward>>>,
+    forward: Query<&PredictionTracker<NBodyPropagator<Forward>>>,
+    backward: Query<&PredictionTracker<NBodyPropagator<Backward>>>,
 ) {
     if forward.is_empty() && backward.is_empty() {
-        state.set(EphemeridesLoadingStage::Ships);
+        state.set(SpawnStage::Ships);
         return;
     }
 
@@ -679,8 +725,8 @@ fn ephemerides_ships_progress(
     mut state: ResMut<NextState<MainState>>,
     mut query: Query<&mut Text, With<LoadingText>>,
     query_tracker: Query<
-        Option<&PredictionTracker<DiscreteStatesBuilder>>,
-        With<DiscreteStatesBuilder>,
+        Option<&PredictionTracker<SpacecraftPropagator>>,
+        With<PredictionContext<SpacecraftPropagator>>,
     >,
 ) {
     if query_tracker.iter().all(|t| t.is_none()) {
@@ -692,8 +738,9 @@ fn ephemerides_ships_progress(
         .iter()
         .flatten()
         .map(PredictionTracker::progress)
-        .sum::<f32>()
-        / query_tracker.iter().len().max(1) as f32;
+        .min_by(f32::total_cmp)
+        .unwrap_or(1.0);
+
     for mut text in query.iter_mut() {
         **text = format!(
             "Computing ephemerides (2/2): {:.0}%",
