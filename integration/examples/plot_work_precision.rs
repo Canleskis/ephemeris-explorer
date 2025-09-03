@@ -298,7 +298,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ("Fehlberg45", clas.compute(Fehlberg45::idx)),
             ("Tsitouras75", clas.compute(Tsitouras75::idx)),
             ("Verner87", clas.compute(Verner87::idx)),
-            ("Tsitouras75N", nyst.compute(Tsitouras75NYstrom::idx)),
+            ("Tsitouras75N", nyst.compute(Tsitouras75Nystrom::idx)),
             ("Fine45", nystg.compute(Fine45::idx)),
         ],
     )?;
