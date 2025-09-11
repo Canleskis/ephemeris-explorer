@@ -5,6 +5,8 @@ use crate::{
 
 use hifitime::{Duration, Epoch, Unit};
 use integration::prelude::*;
+use num_traits::bounds::UpperBounded;
+use std::ops::Div;
 
 const TIME_UNIT: Unit = Unit::Second;
 
@@ -260,7 +262,7 @@ pub struct SpacecraftModel<C, V, F> {
     pub manoeuvres: ManoeuvreSchedule<V, F>,
 }
 
-impl<C, V, F> FirstOrderODE<[StateVector<V>; 1]> for SpacecraftModel<C, V, F>
+impl<C, V, F> FirstOrderODE<f64, [StateVector<V>; 1]> for SpacecraftModel<C, V, F>
 where
     C: AccelerationModel<Vector = V>,
     V: std::ops::Add<Output = V> + Default + Copy,
@@ -283,7 +285,8 @@ where
     }
 }
 
-pub type SpacecraftProblem<C, V, F> = ODEProblem<[StateVector<V>; 1], SpacecraftModel<C, V, F>>;
+pub type SpacecraftProblem<C, V, F> =
+    ODEProblem<f64, [StateVector<V>; 1], SpacecraftModel<C, V, F>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpacecraftPropagationError {
@@ -367,7 +370,7 @@ where
     #[inline]
     pub fn delta(&self) -> Duration
     where
-        M::Integrator: IntegratorState,
+        M::Integrator: IntegratorState<Time = f64>,
     {
         self.integration.step_size() * TIME_UNIT
     }
@@ -534,26 +537,29 @@ pub trait ResetIntegration {
     fn reset(&mut self);
 }
 
-impl<P, C, I> ResetIntegration for Integration<P, FixedRungeKutta<C>>
+impl<P, C, T, I> ResetIntegration for Integration<P, FixedRungeKutta<C, T>>
 where
-    FixedRungeKutta<C>: Method<P, Integrator = I>,
-    I: IntegratorState,
+    FixedRungeKutta<C, T>: Method<P, Integrator = I>,
+    I: IntegratorState<Time = T>,
 {
     #[inline]
     fn reset(&mut self) {
-        self.integrator = FixedRungeKutta::new(self.integrator.step_size()).init(&self.problem);
+        self.integrator = FixedRungeKutta::new(FixedMethodParams::new(self.integrator.step_size()))
+            .init(&self.problem);
     }
 }
 
-impl<P, C, T, I> ResetIntegration for Integration<P, AdaptiveRungeKutta<C, T>>
+impl<P, C, T, Tol, U, I> ResetIntegration for Integration<P, AdaptiveRungeKutta<C, T, Tol, U>>
 where
-    AdaptiveRungeKutta<C, T>: Method<P, Integrator = I>,
-    I: AdaptiveRKState<Tolerance = T> + IntegratorState,
-    T: Clone,
+    AdaptiveRungeKutta<C, T, Tol, U>: Method<P, Integrator = I>,
+    T: UpperBounded + Default,
+    Tol: Clone,
+    U: Div<Output = U> + From<u16>,
+    I: AdaptiveRKState<Tolerance = Tol> + IntegratorState<Time = T>,
 {
     #[inline]
     fn reset(&mut self) {
-        self.integrator = AdaptiveRungeKutta::new(AdaptiveRKParams::new(
+        self.integrator = AdaptiveRungeKutta::new(AdaptiveMethodParams::new(
             self.integrator.tolerance().clone(),
             self.integrator.n_max() - self.integrator.n(),
         ))
@@ -561,14 +567,16 @@ where
     }
 }
 
-impl<P, C, S, I> ResetIntegration for Integration<P, LinearMultistep<C, S>>
+impl<P, C, T, S, I> ResetIntegration for Integration<P, LinearMultistep<C, T, S>>
 where
-    LinearMultistep<C, S>: Method<P, Integrator = I>,
-    S: NewMethod<f64>,
-    I: IntegratorState,
+    LinearMultistep<C, T, S>: Method<P, Integrator = I>,
+    T: Copy,
+    S: NewMethod<FixedMethodParams<T>>,
+    I: IntegratorState<Time = T>,
 {
     #[inline]
     fn reset(&mut self) {
-        self.integrator = LinearMultistep::new(self.integrator.step_size()).init(&self.problem);
+        self.integrator = LinearMultistep::new(FixedMethodParams::new(self.integrator.step_size()))
+            .init(&self.problem);
     }
 }

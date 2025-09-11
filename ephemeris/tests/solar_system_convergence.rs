@@ -1,6 +1,6 @@
 use std::f64;
 use std::hash::{Hash, Hasher};
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use bevy_math::DVec3;
 use ephemeris::StateVector;
@@ -73,6 +73,14 @@ impl<T> Double<T> {
     }
 
     #[inline]
+    fn two_sub(a: T, b: T) -> Self
+    where
+        T: Add<Output = T> + Sub<Output = T> + Neg<Output = T> + Copy,
+    {
+        Self::two_sum(a, -b)
+    }
+
+    #[inline]
     fn fast_two_sum(a: T, b: T) -> Self
     where
         T: Add<Output = T> + Sub<Output = T> + Copy,
@@ -97,17 +105,51 @@ where
     }
 }
 
-impl<T> Mul<f64> for Double<T>
+impl<T> Sub for Double<T>
 where
-    T: Mul<f64, Output = T> + Copy,
+    T: Add<Output = T> + Sub<Output = T> + Neg<Output = T> + Copy,
 {
     type Output = Self;
 
     #[inline]
+    fn sub(self, other: Self) -> Self::Output {
+        let sum = Double::two_sub(self.value, other.value);
+        Double::fast_two_sum(sum.value, (sum.error + self.error) - other.error)
+    }
+}
+
+impl Mul<Double<DVec3>> for f64 {
+    type Output = Double<DVec3>;
+
+    #[inline]
+    fn mul(self, rhs: Double<DVec3>) -> Self::Output {
+        Double {
+            value: rhs.value * self,
+            error: rhs.error * self,
+        }
+    }
+}
+
+impl Mul<f64> for Double<DVec3> {
+    type Output = Double<DVec3>;
+
+    #[inline]
     fn mul(self, rhs: f64) -> Self::Output {
-        Self {
+        Double {
             value: self.value * rhs,
             error: self.error * rhs,
+        }
+    }
+}
+
+impl Div<f64> for Double<DVec3> {
+    type Output = Double<DVec3>;
+
+    #[inline]
+    fn div(self, rhs: f64) -> Self::Output {
+        Double {
+            value: self.value / rhs,
+            error: self.error / rhs,
         }
     }
 }
@@ -117,7 +159,7 @@ pub struct NewtonianGravity {
     pub gravitational_parameters: Vec<f64>,
 }
 
-impl SecondOrderODE<Vec<Double<DVec3>>> for NewtonianGravity {
+impl SecondOrderODE<f64, Vec<Double<DVec3>>> for NewtonianGravity {
     #[inline]
     fn eval(
         &mut self,
@@ -125,7 +167,7 @@ impl SecondOrderODE<Vec<Double<DVec3>>> for NewtonianGravity {
         y: &Vec<Double<DVec3>>,
         ddy: &mut Vec<Double<DVec3>>,
     ) -> Result<(), EvalFailed> {
-        ddy.fill_with(Double::new(DVec3::ZERO));
+        ddy.fill(Double::new(DVec3::ZERO));
         for i in 0..y.len() {
             let mut output_i = DVec3::ZERO;
             let p_i = (y[i].value, self.gravitational_parameters[i]);
@@ -144,7 +186,7 @@ impl SecondOrderODE<Vec<Double<DVec3>>> for NewtonianGravity {
     }
 }
 
-impl FirstOrderODE<Vec<StateVector<Double<DVec3>>>> for NewtonianGravity {
+impl FirstOrderODE<f64, Vec<StateVector<Double<DVec3>>>> for NewtonianGravity {
     #[inline]
     fn eval(
         &mut self,
@@ -174,7 +216,8 @@ impl FirstOrderODE<Vec<StateVector<Double<DVec3>>>> for NewtonianGravity {
     }
 }
 
-pub type NBodyProblem<V = Vec<Double<DVec3>>> = ODEProblem<SecondOrderState<V>, NewtonianGravity>;
+pub type NBodyProblem<V = Vec<Double<DVec3>>> =
+    ODEProblem<f64, SecondOrderState<V>, NewtonianGravity>;
 
 fn n_body_from_solar_system(system: &SolarSystem) -> NBodyProblem {
     let ((positions, velocities), mus): ((Vec<_>, Vec<_>), Vec<f64>) = system
@@ -226,7 +269,7 @@ impl From<StepError> for ConvergenceError {
 
 fn convergence<M>(problem: &NBodyProblem, h: Duration) -> Result<Duration, ConvergenceError>
 where
-    M: NewMethod<f64> + Method<NBodyProblem>,
+    M: NewMethod<FixedMethodParams<f64>> + Method<NBodyProblem>,
     M::Integrator: Integrator<NBodyProblem>,
 {
     fn convergence_results<M>(
@@ -234,18 +277,18 @@ where
         h: Duration,
     ) -> Result<Vec<(Duration, SecondOrderState<f64>)>, ConvergenceError>
     where
-        M: NewMethod<f64> + Method<NBodyProblem>,
+        M: NewMethod<FixedMethodParams<f64>> + Method<NBodyProblem>,
         M::Integrator: Integrator<NBodyProblem>,
     {
         let mut h = h.to_seconds();
         let n = problem.state.y.len();
-        let mut integrator = M::new(h / 2.0).integrate(problem.clone());
+        let mut integrator = M::new(FixedMethodParams::new(h / 2.0)).integrate(problem.clone());
         let truth = integrator.solve()?.1;
 
         let mut errors = vec![];
 
         loop {
-            let mut integrator = M::new(h).integrate(problem.clone());
+            let mut integrator = M::new(FixedMethodParams::new(h)).integrate(problem.clone());
             let (_, state) = integrator.solve()?;
 
             let mut max_error = SecondOrderState::new(0.0, 0.0);
@@ -340,17 +383,18 @@ fn solar_system_convergence() -> Result<(), Box<dyn std::error::Error>> {
     n_body_problem.bound = end.to_tai_seconds();
 
     use Unit::*;
+    type Starter<T> = Substepper<4, BlanesMoan6B<T>>;
 
     assert_eq!(
-        convergence::<QuinlanTremaine12>(&n_body_problem, 75 * Second)?,
+        convergence::<QuinlanTremaine12<_, Starter<_>>>(&n_body_problem, 75 * Second)?,
         10 * Minute
     );
     assert_eq!(
-        convergence::<Stormer13>(&n_body_problem, 75 * Second)?,
+        convergence::<Stormer13<_, Starter<_>>>(&n_body_problem, 75 * Second)?,
         5 * Minute
     );
     assert_eq!(
-        convergence::<BlanesMoan14A>(&n_body_problem, 75 * Second)?,
+        convergence::<BlanesMoan14A<_>>(&n_body_problem, 75 * Second)?,
         10 * Minute
     );
 

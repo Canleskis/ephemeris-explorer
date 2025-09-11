@@ -1,6 +1,10 @@
 use crate::{
-    EvalFailed, FixedIntegrator, Integrator, IntegratorState, Method, NewMethod, Problem, StepError,
+    DivCeil, FixedIntegrator, FixedMethodParams, Integrator, IntegratorState, Method, NewMethod,
+    StepError,
+    problem::{EvalFailed, Problem},
+    ratio::Ratio,
 };
+use std::ops::{Add, Mul, Sub};
 
 pub mod buffer;
 pub mod first_order;
@@ -17,12 +21,12 @@ pub trait LMState {
     fn step_count(&self) -> u32;
 }
 
-pub trait LMInstance<P>: LMState {
+pub trait LMInstance<P: Problem>: LMState {
     const ORDER: usize;
 
     fn from_problem(problem: &P) -> Self;
 
-    fn advance(&mut self, h: f64, problem: &mut P) -> Result<(), EvalFailed>;
+    fn advance(&mut self, h: P::Time, problem: &mut P) -> Result<(), EvalFailed>;
 
     fn advance_with<E, F>(&mut self, problem: &mut P, f: F) -> Result<(), E>
     where
@@ -41,13 +45,16 @@ pub trait LMInstance<P>: LMState {
 #[derive(Clone, Copy, Debug)]
 pub struct Substepper<const SUBSTEPS: u32, S>(pub S);
 
-impl<const SUBSTEPS: u32, S> NewMethod<f64> for Substepper<SUBSTEPS, S>
+impl<T, const SUBSTEPS: u32, S> NewMethod<FixedMethodParams<T>> for Substepper<SUBSTEPS, S>
 where
-    S: NewMethod<f64>,
+    T: Mul<Ratio, Output = T>,
+    S: NewMethod<FixedMethodParams<T>>,
 {
     #[inline]
-    fn new(h: f64) -> Self {
-        Substepper(S::new(h / SUBSTEPS as f64))
+    fn new(params: FixedMethodParams<T>) -> Self {
+        Substepper(S::new(FixedMethodParams::new(
+            params.h * Ratio::from_recip(SUBSTEPS as i128),
+        )))
     }
 }
 
@@ -62,7 +69,7 @@ where
     type Integrator = SubstepperIntegrator<SUBSTEPS, S::Integrator>;
 
     #[inline]
-    fn init(&self, problem: &P) -> Self::Integrator {
+    fn init(self, problem: &P) -> Self::Integrator {
         SubstepperIntegrator(self.0.init(problem))
     }
 }
@@ -70,10 +77,13 @@ where
 impl<const SUBSTEPS: u32, S> IntegratorState for SubstepperIntegrator<SUBSTEPS, S>
 where
     S: IntegratorState,
+    S::Time: Mul<Ratio, Output = S::Time>,
 {
+    type Time = S::Time;
+
     #[inline]
-    fn step_size(&self) -> f64 {
-        self.0.step_size() * SUBSTEPS as f64
+    fn step_size(&self) -> Self::Time {
+        self.0.step_size() * Ratio::from_int(SUBSTEPS as i128)
     }
 
     #[inline]
@@ -96,44 +106,45 @@ where
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct LinearMultistep<C, S> {
-    pub h: f64,
+pub struct LinearMultistep<C, T, S> {
+    pub h: T,
     pub starter: S,
     pub _phantom: std::marker::PhantomData<C>,
 }
 
-impl<C, S> NewMethod<f64> for LinearMultistep<C, S>
+impl<C, T, S> NewMethod<FixedMethodParams<T>> for LinearMultistep<C, T, S>
 where
-    S: NewMethod<f64>,
+    T: Copy,
+    S: NewMethod<FixedMethodParams<T>>,
 {
     #[inline]
-    fn new(h: f64) -> Self {
+    fn new(params: FixedMethodParams<T>) -> Self {
         Self {
-            h,
-            starter: S::new(h),
+            h: params.h,
+            starter: S::new(params),
             _phantom: std::marker::PhantomData,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct LinearMultistepIntegrator<L, S> {
-    h: f64,
+pub struct LinearMultistepIntegrator<L, T, S> {
+    h: T,
     lm: L,
     starter: S,
 }
 
-impl<P, C, S> Method<P> for LinearMultistep<C, S>
+impl<P, C, S> Method<P> for LinearMultistep<C, P::Time, S>
 where
     P: Problem,
     C: LMCoefficients<P>,
     C::Instance: LMInstance<P>,
     S: Method<P>,
 {
-    type Integrator = LinearMultistepIntegrator<C::Instance, S::Integrator>;
+    type Integrator = LinearMultistepIntegrator<C::Instance, P::Time, S::Integrator>;
 
     #[inline]
-    fn init(&self, problem: &P) -> Self::Integrator {
+    fn init(self, problem: &P) -> Self::Integrator {
         LinearMultistepIntegrator {
             h: self.h,
             lm: C::Instance::from_problem(problem),
@@ -142,13 +153,16 @@ where
     }
 }
 
-impl<L, S> IntegratorState for LinearMultistepIntegrator<L, S>
+impl<L, T, S> IntegratorState for LinearMultistepIntegrator<L, T, S>
 where
     L: LMState,
+    T: Sub<Output = T> + DivCeil + Copy,
     S: IntegratorState,
 {
+    type Time = T;
+
     #[inline]
-    fn step_size(&self) -> f64 {
+    fn step_size(&self) -> Self::Time {
         self.h
     }
 
@@ -158,18 +172,25 @@ where
     }
 
     #[inline]
-    fn step_count_until_bound_hint(&self, time: f64, bound: f64) -> (usize, Option<usize>) {
-        let step_count = self.step_count_until_bound(time, bound);
+    fn step_count_until_bound_hint(&self, duration: Self::Time) -> (usize, Option<usize>) {
+        let step_count = self.step_count_until_bound(duration);
 
         (step_count, Some(step_count))
     }
 }
 
-impl<L: LMState, S: IntegratorState> FixedIntegrator for LinearMultistepIntegrator<L, S> {}
+impl<L, T, S> FixedIntegrator for LinearMultistepIntegrator<L, T, S>
+where
+    L: LMState,
+    T: Sub<Output = T> + DivCeil + Copy,
+    S: IntegratorState,
+{
+}
 
-impl<P, L, S> Integrator<P> for LinearMultistepIntegrator<L, S>
+impl<P, L, S> Integrator<P> for LinearMultistepIntegrator<L, P::Time, S>
 where
     P: Problem,
+    P::Time: Add<Output = P::Time> + PartialOrd + Copy,
     L: LMInstance<P>,
     S: IntegratorState + Integrator<P>,
 {
@@ -179,7 +200,7 @@ where
             return Err(StepError::BoundReached);
         }
 
-        if self.h.abs() <= f64::EPSILON * 10.0 {
+        if problem.as_ref().time + self.h == problem.as_ref().time {
             return Err(StepError::StepSizeUnderflow);
         }
 

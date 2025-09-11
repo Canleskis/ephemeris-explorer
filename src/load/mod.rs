@@ -734,12 +734,14 @@ fn ephemerides_ships_progress(
         return;
     }
 
-    let total_progress = query_tracker
-        .iter()
-        .flatten()
-        .map(PredictionTracker::progress)
-        .min_by(f32::total_cmp)
-        .unwrap_or(1.0);
+    let mut total_progress = 1.0f32;
+    // Using flatten crashes the compiler randomly.
+    #[expect(clippy::manual_flatten)]
+    for tracker in query_tracker.iter() {
+        if let Some(tracker) = tracker {
+            total_progress = total_progress.min(tracker.progress());
+        }
+    }
 
     for mut text in query.iter_mut() {
         **text = format!(

@@ -133,7 +133,7 @@ impl Interpolation<DVec3> for LeastSquaresFit {
 }
 
 pub type NBodyPropagator<D> =
-    ephemeris::NBodyPropagator<D, DVec3, QuinlanTremaine12, LeastSquaresFit>;
+    ephemeris::NBodyPropagator<D, DVec3, QuinlanTremaine12<f64>, LeastSquaresFit>;
 
 pub use ephemeris::{Backward, Forward};
 
@@ -200,11 +200,13 @@ impl PropagationContext for Bodies {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct AbsoluteTolerance(pub StateVector);
+pub struct AbsTol(pub StateVector);
 
-impl ErrorCriterion<[StateVector; 1]> for AbsoluteTolerance {
+impl Tolerance<[StateVector; 1]> for AbsTol {
+    type Output = f64;
+    
     #[inline]
-    fn err_over_tol(&mut self, _: &[StateVector; 1], [e]: &[StateVector; 1]) -> f64 {
+    fn err_over_tol(&mut self, _: &[StateVector; 1], [e]: &[StateVector; 1]) -> Self::Output {
         let atol = self.0;
         (e.position / atol.position)
             .abs()
@@ -214,12 +216,21 @@ impl ErrorCriterion<[StateVector; 1]> for AbsoluteTolerance {
 }
 
 pub type SpacecraftPropagator =
-    ephemeris::SpacecraftPropagator<Bodies, DVec3, ReferenceFrame, Verner87<AbsoluteTolerance>>;
+    ephemeris::SpacecraftPropagator<Bodies, DVec3, ReferenceFrame, Verner87<f64, AbsTol, f64>>;
 
-pub const DEFAULT_PARAMS: AdaptiveRKParams<AbsoluteTolerance> = AdaptiveRKParams::new(
-    AbsoluteTolerance(StateVector {
+const fn ratio_f64(ratio: Ratio<u16>) -> f64 {
+    ratio.numerator() as f64 / ratio.denominator() as f64
+}
+
+pub const DEFAULT_PARAMS: AdaptiveMethodParams<f64, AbsTol, f64> = AdaptiveMethodParams::with(
+    f64::MAX,
+    f64::MAX,
+    AbsTol(StateVector {
         position: DVec3::splat(1e-7),
         velocity: DVec3::splat(1e-5),
     }),
+    ratio_f64(integration::FAC_MIN_DEFAULT),
+    ratio_f64(integration::FAC_MAX_DEFAULT),
+    ratio_f64(integration::FAC_DEFAULT),
     1_000_000,
 );

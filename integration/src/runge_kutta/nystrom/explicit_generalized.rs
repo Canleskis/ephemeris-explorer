@@ -1,7 +1,9 @@
 use crate::{
-    EvalFailed, Problem, SecondOrderODEGeneral, SecondOrderState, State,
+    problem::{EvalFailed, Problem, SecondOrderODEGeneral, SecondOrderState, State},
+    ratio::Ratio,
     runge_kutta::{RKEmbedded, RKInstance, RKState},
 };
+use std::ops::{Add, Mul};
 
 /// Coefficients for Explicit Runge-Kutta-Nyström Generalized (ERKNG) integrators, more commonly
 /// known as the Butcher tableau.
@@ -12,25 +14,25 @@ use crate::{
 pub trait ERKNGCoefficients {
     const FSAL: bool;
 
-    const ORDER: u32;
+    const ORDER: u16;
 
-    const AP: &'static [&'static [f64]];
+    const AP: &'static [&'static [Ratio]];
 
-    const AV: &'static [&'static [f64]];
+    const AV: &'static [&'static [Ratio]];
 
-    const BP: &'static [f64];
+    const BP: &'static [Ratio];
 
-    const BV: &'static [f64];
+    const BV: &'static [Ratio];
 
-    const C: &'static [f64];
+    const C: &'static [Ratio];
 }
 
 pub trait EERKNGCoefficients: ERKNGCoefficients {
-    const ORDER_EMBEDDED: u32;
+    const ORDER_EMBEDDED: u16;
 
-    const EP: &'static [f64];
+    const EP: &'static [Ratio];
 
-    const EV: &'static [f64];
+    const EV: &'static [Ratio];
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -49,12 +51,14 @@ impl<C, K, V> RKState for ERKNG<C, K, V> {
     }
 }
 
-impl<C, const STAGES: usize, P, V> RKInstance<P> for ERKNG<C, [V; STAGES], V>
+impl<C, const STAGES: usize, V, P> RKInstance<P> for ERKNG<C, [V; STAGES], V>
 where
     C: ERKNGCoefficients,
-    P: Problem<State = SecondOrderState<V>>,
-    P::ODE: SecondOrderODEGeneral<V>,
     V: State + Clone,
+    P: Problem<Variable = V::Variable, State = SecondOrderState<V>>,
+    P::Variable: Mul<P::Time, Output = P::Variable> + Add<Output = P::Variable> + Default + Copy,
+    P::Time: Mul<Ratio, Output = P::Time> + Add<Output = P::Time> + Mul<Output = P::Time> + Copy,
+    P::ODE: SecondOrderODEGeneral<P::Time, V>,
 {
     #[inline]
     fn from_problem(problem: &P) -> Self {
@@ -68,7 +72,7 @@ where
     }
 
     #[inline]
-    fn advance(&mut self, h: f64, problem: &mut P) -> Result<(), EvalFailed> {
+    fn advance(&mut self, h: P::Time, problem: &mut P) -> Result<(), EvalFailed> {
         let problem = problem.as_mut();
 
         // let mut yi = rk.y.clone();
@@ -80,12 +84,12 @@ where
             }
 
             // tᵢ = t₀ + hcᵢ
-            let ti = problem.time + C::C[s] * h;
+            let ti = problem.time + h * C::C[s];
             // yᵢ₊₁ = y₀ + hcᵢy₀' + h²∑ⱼāᵢⱼkⱼ'
             // yᵢ₊₁' = y₀' + h∑ⱼaᵢⱼkⱼ'
             self.yi.clone_from(&problem.state.y);
             for (yi, dy) in self.yi.iter_mut().zip(problem.state.dy.iter()) {
-                *yi = *yi + *dy * (C::C[s] * h);
+                *yi = *yi + *dy * (h * C::C[s]);
             }
             self.dyi.clone_from(&problem.state.dy);
             for j in 0..s {
@@ -95,18 +99,20 @@ where
                     .zip(self.dyi.iter_mut())
                     .zip(self.dk[j].iter())
                 {
-                    *yi = *yi + *kp * (C::AP[s][j] * h * h);
-                    *dyi = *dyi + *kp * (C::AV[s][j] * h);
+                    *yi = *yi + *kp * (h * h * C::AP[s][j]);
+                    *dyi = *dyi + *kp * (h * C::AV[s][j]);
                 }
             }
             // kᵢ' = f(tᵢ, yᵢ)
-            problem.ode.eval(ti, &self.yi, &self.dyi, &mut self.dk[s])?;
+            problem
+                .ode
+                .eval(ti, &self.yi, &self.dyi, self.dk[s].zero())?;
         }
 
         // yₙ₊₁ = yₙ + hyₙ' + h²∑ᵢb̄ᵢkᵢ'
         // yₙ₊₁' = yₙ' + h∑ᵢbᵢkᵢ'
         for (y, dy) in problem.state.y.iter_mut().zip(problem.state.dy.iter()) {
-            *y = *y + (*dy * h);
+            *y = *y + *dy * h;
         }
         for i in 0..STAGES {
             for ((y, dy), kp) in problem
@@ -116,32 +122,34 @@ where
                 .zip(problem.state.dy.iter_mut())
                 .zip(self.dk[i].iter())
             {
-                *y = *y + *kp * (C::BP[i] * h * h);
-                *dy = *dy + *kp * (C::BV[i] * h);
+                *y = *y + *kp * (h * h * C::BP[i]);
+                *dy = *dy + *kp * (h * C::BV[i]);
             }
         }
 
-        problem.time += h;
+        problem.time = problem.time + h;
         self.i += 1;
 
         Ok(())
     }
 }
 
-impl<C, const STAGES: usize, V> RKEmbedded for ERKNG<C, [V; STAGES], V>
+impl<C, const STAGES: usize, T, V> RKEmbedded<T> for ERKNG<C, [V; STAGES], V>
 where
     C: EERKNGCoefficients,
     V: State + Clone,
+    V::Variable: Mul<T, Output = V::Variable> + Add<Output = V::Variable> + Default + Copy,
+    T: Mul<Ratio, Output = T> + Mul<Output = T> + Copy,
 {
     type State = SecondOrderState<V>;
 
-    const LOWER_ORDER: u32 = match C::ORDER < C::ORDER_EMBEDDED {
+    const LOWER_ORDER: u16 = match C::ORDER < C::ORDER_EMBEDDED {
         true => C::ORDER,
         false => C::ORDER_EMBEDDED,
     };
 
     #[inline]
-    fn error(&self, h: f64, error: &mut SecondOrderState<V>) {
+    fn error(&self, h: T, error: &mut SecondOrderState<V>) {
         error.y.zero();
         error.dy.zero();
         // eₙ₊₁ = h²∑ᵢ(b̄ᵢ - b̄ᵢ*)kᵢ'
@@ -153,8 +161,8 @@ where
                 .zip(error.dy.iter_mut())
                 .zip(self.dk[i].iter())
             {
-                *ey = *ey + *kp * (C::EP[i] * h * h);
-                *edy = *edy + *kp * (C::EV[i] * h);
+                *ey = *ey + *kp * (h * h * C::EP[i]);
+                *edy = *edy + *kp * (h * C::EV[i]);
             }
         }
     }

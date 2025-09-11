@@ -132,7 +132,9 @@ fn jpl_comparison() -> Result<(), Box<dyn std::error::Error>> {
     let (initial_epoch, initial_state) = systems.first_key_value().unwrap();
     println!("Barycenter: {}", barycenter(initial_state));
 
-    let method: QuinlanTremaine12 = QuinlanTremaine12::new(delta.to_seconds());
+    type Starter<T> = Substepper<4, BlanesMoan6B<T>>;
+
+    let method: QuinlanTremaine12<_, Starter<_>> = QuinlanTremaine12::new(FixedMethodParams::new(delta.to_seconds()));
     let nbody = n_body_problem_from_solar_system(initial_state);
     let mut integrator = method.integrate(nbody);
 

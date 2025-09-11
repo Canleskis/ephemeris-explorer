@@ -5,8 +5,9 @@ version = "0.1.0"
 
 [dependencies]
 integration = { path = "../integration" }
+num-traits = "0.2.19"
 
-hifitime = "4.0.2"
+hifitime = "4.1.3"
 particular = { git = "https://github.com/Canleskis/particular.git", features = [
     "glam",
 ] }
@@ -19,6 +20,7 @@ particular = { git = "https://github.com/Canleskis/particular.git", features = [
 ] }
 bevy_math = { version = "0.15", default-features = false }
 hifitime = "4.0.2"
+twofloat = "0.8.4"
 
 horizons_solar_system = { path = "../horizons_solar_system" }
 bincode = { version = "2", features = ["serde"] }

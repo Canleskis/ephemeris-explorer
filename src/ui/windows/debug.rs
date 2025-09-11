@@ -85,12 +85,13 @@ impl EphemeridesDebugWindow {
                         },
                     };
 
-                    let method: QuinlanTremaine12 = QuinlanTremaine12::new(dt.to_seconds());
+                    let method: QuinlanTremaine12<f64> =
+                        QuinlanTremaine12::new(FixedMethodParams::new(dt.to_seconds()));
                     let mut integrator = method.integrate(nbody);
 
                     let mut errors = bevy::ecs::entity::EntityHashMap::<f64>::default();
                     while let Ok((t, state)) = integrator.advance() {
-                        let epoch = Epoch::from_tai_seconds(t);
+                        let epoch = Epoch::from_tai_seconds(*t);
                         for ((entity, _, traj), position) in query.iter().zip(&state.y) {
                             let traj_position = traj.position(epoch).unwrap();
 

@@ -1,4 +1,4 @@
-use bevy_math::DVec3;
+use glam::DVec3;
 use integration::prelude::*;
 use particular::gravity::newtonian::AccelerationAt;
 use particular::prelude::*;
@@ -74,17 +74,31 @@ impl std::ops::Add for StateVector {
     }
 }
 
-impl std::ops::Mul<f64> for StateVector {
+impl std::ops::Sub for StateVector {
     type Output = Self;
 
     #[inline]
-    fn mul(self, rhs: f64) -> Self::Output {
+    fn sub(self, rhs: Self) -> Self::Output {
         Self {
+            position: self.position - rhs.position,
+            velocity: self.velocity - rhs.velocity,
+        }
+    }
+}
+
+impl std::ops::Mul<f64> for StateVector {
+    type Output = StateVector;
+
+    #[inline]
+    fn mul(self, rhs: f64) -> Self::Output {
+        StateVector {
             position: self.position * rhs,
             velocity: self.velocity * rhs,
         }
     }
 }
+
+type Time = f64;
 
 #[derive(Clone, Copy, Mass)]
 pub struct Body {
@@ -94,8 +108,8 @@ pub struct Body {
 
 impl Body {
     #[inline]
-    pub fn motion_equation_order_1(&self) -> impl FirstOrderODE<[StateVector; 1]> + Clone {
-        move |_: f64, [y]: &[StateVector; 1], [dy]: &mut [StateVector; 1]| {
+    pub fn motion_equation_order_1(&self) -> impl FirstOrderODE<Time, [StateVector; 1]> + Clone {
+        move |_, [y]: &[StateVector; 1], [dy]: &mut [StateVector; 1]| {
             dy.position = y.velocity;
             dy.velocity = self.acceleration_at::<false>(&y.position, &0.0);
 
@@ -104,8 +118,8 @@ impl Body {
     }
 
     #[inline]
-    pub fn motion_equation_order_2(&self) -> impl SecondOrderODE<[DVec3; 1]> + Clone {
-        |_: f64, [y]: &[DVec3; 1], [ddy]: &mut [DVec3; 1]| {
+    pub fn motion_equation_order_2(&self) -> impl SecondOrderODE<Time, [DVec3; 1]> + Clone {
+        |_, [y]: &[DVec3; 1], [ddy]: &mut [DVec3; 1]| {
             *ddy = self.acceleration_at::<false>(y, &0.0);
 
             Ok(())
@@ -115,7 +129,7 @@ impl Body {
     #[inline]
     pub fn motion_equation_order_2_general(
         &self,
-    ) -> impl SecondOrderODEGeneral<[DVec3; 1]> + Clone {
+    ) -> impl SecondOrderODEGeneral<Time, [DVec3; 1]> + Clone {
         |_, [y]: &[DVec3; 1], _: &[DVec3; 1], [ddy]: &mut [DVec3; 1]| {
             *ddy = self.acceleration_at::<false>(y, &0.0);
 
@@ -259,7 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             [initial_state],
             Tracked::new(main.motion_equation_order_1()),
         ),
-        |t| [orbit.at(t)],
+        |t: Time| [orbit.at(t)],
         |[state]: &[StateVector; 1], [exact]: &[StateVector; 1]| {
             state.position.distance(exact.position)
         },
@@ -272,7 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             SecondOrderState::new([initial_position], [initial_velocity]),
             Tracked::new(main.motion_equation_order_2()),
         ),
-        |t| SecondOrderState::new([orbit.at(t).position], [orbit.at(t).velocity]),
+        |t: Time| SecondOrderState::new([orbit.at(t).position], [orbit.at(t).velocity]),
         |state: &SecondOrderState<[DVec3; 1]>, exact: &SecondOrderState<[DVec3; 1]>| {
             state.y[0].distance(exact.y[0])
         },
@@ -369,22 +383,34 @@ fn plot_work_precision<T: AsRef<std::path::Path>>(
     Ok(())
 }
 
-trait FromIndexFixed: NewMethod<f64> + Sized {
+trait FromIndexFixed: NewMethod<FixedMethodParams<Time>> + Sized {
     #[inline]
     fn idx(i: i32, n: i32) -> Self {
-        Self::new(1.0 * (1 << (n - i)) as f64)
+        Self::new(FixedMethodParams::new(1.0 * (1 << (n - i)) as f64))
     }
 }
-impl<M: NewMethod<f64>> FromIndexFixed for M {}
+impl<M: NewMethod<FixedMethodParams<Time>>> FromIndexFixed for M {}
 
-trait FromIndexAdaptive<V: Default>: NewMethod<AdaptiveRKParams<Tolerance<f64, V>>> + Sized {
+trait FromIndexAdaptive<V: Default>:
+    NewMethod<AdaptiveMethodParams<Time, AbsRelTol<f64, V>, f64>> + Sized
+where
+    V: std::fmt::Debug,
+{
     #[inline]
     fn idx(i: i32, _: i32) -> Self {
         let tol = 10f64.powi(3 - i);
-        Self::new(AdaptiveRKParams::new(Tolerance::absolute(tol), u32::MAX))
+        Self::new(AdaptiveMethodParams::new(
+            AbsRelTol::absolute(tol),
+            u32::MAX,
+        ))
     }
 }
-impl<V: Default, M: NewMethod<AdaptiveRKParams<Tolerance<f64, V>>>> FromIndexAdaptive<V> for M {}
+impl<V: Default, M: NewMethod<AdaptiveMethodParams<Time, AbsRelTol<f64, V>, f64>>>
+    FromIndexAdaptive<V> for M
+where
+    V: std::fmt::Debug,
+{
+}
 
 #[derive(Clone, Copy)]
 struct WPFramework<P, E, A> {
@@ -408,27 +434,27 @@ impl<ODE> Tracked<ODE> {
     }
 }
 
-impl<V, ODE: FirstOrderODE<V>> FirstOrderODE<V> for Tracked<ODE> {
+impl<T, V, ODE: FirstOrderODE<T, V>> FirstOrderODE<T, V> for Tracked<ODE> {
     #[inline]
-    fn eval(&mut self, t: f64, y: &V, dy: &mut V) -> Result<(), EvalFailed> {
+    fn eval(&mut self, t: T, y: &V, dy: &mut V) -> Result<(), EvalFailed> {
         self.ode.eval(t, y, dy)?;
         self.evaluations += 1;
         Ok(())
     }
 }
 
-impl<V, ODE: SecondOrderODE<V>> SecondOrderODE<V> for Tracked<ODE> {
+impl<T, V, ODE: SecondOrderODE<T, V>> SecondOrderODE<T, V> for Tracked<ODE> {
     #[inline]
-    fn eval(&mut self, t: f64, y: &V, ddy: &mut V) -> Result<(), EvalFailed> {
+    fn eval(&mut self, t: T, y: &V, ddy: &mut V) -> Result<(), EvalFailed> {
         self.ode.eval(t, y, ddy)?;
         self.evaluations += 1;
         Ok(())
     }
 }
 
-impl<V, ODE: SecondOrderODEGeneral<V>> SecondOrderODEGeneral<V> for Tracked<ODE> {
+impl<T, V, ODE: SecondOrderODEGeneral<T, V>> SecondOrderODEGeneral<T, V> for Tracked<ODE> {
     #[inline]
-    fn eval(&mut self, t: f64, y: &V, dy: &V, ddy: &mut V) -> Result<(), EvalFailed> {
+    fn eval(&mut self, t: T, y: &V, dy: &V, ddy: &mut V) -> Result<(), EvalFailed> {
         self.ode.eval(t, y, dy, ddy)?;
         self.evaluations += 1;
         Ok(())
@@ -451,12 +477,13 @@ where
     fn compute<S>(&self, fac: impl Fn(i32, i32) -> S) -> Vec<(f64, u32)>
     where
         P: Clone,
-        E: Fn(f64) -> P::State,
+        P::Time: PartialOrd + Copy,
+        E: Fn(P::Time) -> P::State,
         A: Fn(&P::State, &P::State) -> f64,
         S: Method<P>,
         S::Integrator: IntegratorState + Integrator<P>,
     {
-        let n = 16;
+        let n = 14;
         (0..n)
             .rev()
             .map(|i| {
@@ -494,14 +521,14 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Tolerance<T, V> {
+#[derive(Clone, Copy, Debug)]
+pub struct AbsRelTol<T, V> {
     pub absolute: T,
     pub relative: T,
     prev_state: V,
 }
 
-impl<T, V> Tolerance<T, V> {
+impl<T, V> AbsRelTol<T, V> {
     #[inline]
     pub fn new(absolute: T, relative: T, prev_state: V) -> Self {
         Self {
@@ -537,7 +564,8 @@ impl<T, V> Tolerance<T, V> {
     }
 }
 
-impl ErrorCriterion<StateVector> for Tolerance<StateVector, StateVector> {
+impl Tolerance<StateVector> for AbsRelTol<StateVector, StateVector> {
+    type Output = f64;
     #[inline]
     fn err_over_tol(&mut self, state: &StateVector, error: &StateVector) -> f64 {
         let max = state.abs().max(&self.prev_state.abs());
@@ -548,12 +576,14 @@ impl ErrorCriterion<StateVector> for Tolerance<StateVector, StateVector> {
     }
 }
 
-impl ErrorCriterion<[StateVector; 1]> for Tolerance<f64, [StateVector; 1]> {
+impl Tolerance<[StateVector; 1]> for AbsRelTol<f64, [StateVector; 1]> {
+    type Output = f64;
+
     #[inline]
     fn err_over_tol(&mut self, [state]: &[StateVector; 1], [error]: &[StateVector; 1]) -> f64 {
         let prev_state = self.prev_state[0];
         self.prev_state[0] = *state;
-        Tolerance::new(
+        AbsRelTol::new(
             StateVector::splat(DVec3::splat(self.absolute)),
             StateVector::splat(DVec3::splat(self.relative)),
             prev_state,
@@ -562,7 +592,9 @@ impl ErrorCriterion<[StateVector; 1]> for Tolerance<f64, [StateVector; 1]> {
     }
 }
 
-impl ErrorCriterion<SecondOrderState<[DVec3; 1]>> for Tolerance<f64, SecondOrderState<[DVec3; 1]>> {
+impl Tolerance<SecondOrderState<[DVec3; 1]>> for AbsRelTol<f64, SecondOrderState<[DVec3; 1]>> {
+    type Output = f64;
+
     #[inline]
     fn err_over_tol(
         &mut self,
@@ -571,7 +603,7 @@ impl ErrorCriterion<SecondOrderState<[DVec3; 1]>> for Tolerance<f64, SecondOrder
     ) -> f64 {
         let prev_state = StateVector::new(self.prev_state.y[0], self.prev_state.dy[0]);
         self.prev_state = *state;
-        Tolerance::new(
+        AbsRelTol::new(
             StateVector::splat(DVec3::splat(self.absolute)),
             StateVector::splat(DVec3::splat(self.relative)),
             prev_state,

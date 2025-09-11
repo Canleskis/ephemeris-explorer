@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+num-traits = "0.2.19"
 
 [dev-dependencies]
+num-traits = "0.2.19"
 particular = { git = "https://github.com/Canleskis/particular.git", features = [
     "glam",
 ] }
-bevy_math = { version = "0.15", default-features = false }
+glam = "0.29"
 plotters = "0.3.7"

@@ -64,7 +64,7 @@ impl Trajectory {
     }
 
     #[inline]
-    pub fn read(&self) -> std::sync::RwLockReadGuard<dyn PredictionTrajectory> {
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, dyn PredictionTrajectory> {
         self.0.read().unwrap()
     }
 

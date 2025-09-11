@@ -15,7 +15,7 @@ pub struct NewtonianGravity {
     pub gravitational_parameters: Vec<f64>,
 }
 
-impl<V> SecondOrderODE<Vec<V>> for NewtonianGravity
+impl<V> SecondOrderODE<f64, Vec<V>> for NewtonianGravity
 where
     V: std::ops::AddAssign + Default + Copy,
     (V, f64): AccelerationPaired<Softening = f64, Output = V>,
@@ -41,7 +41,7 @@ where
     }
 }
 
-pub type NBodyProblem<V> = ODEProblem<SecondOrderState<Vec<V>>, NewtonianGravity>;
+pub type NBodyProblem<V> = ODEProblem<f64, SecondOrderState<Vec<V>>, NewtonianGravity>;
 
 pub trait Interpolation<T> {
     fn interpolate(&self, ts: &[f64], xs: &[T]) -> Option<Polynomial<T>>;
@@ -220,7 +220,7 @@ where
     where
         V: Copy,
         D: Direction,
-        M: NewMethod<f64>,
+        M: NewMethod<FixedMethodParams<f64>>,
         M::Integrator: Integrator<NBodyProblem<V>>,
     {
         let (positions, velocities, gravitational_parameters, interpolation) = initial_state
@@ -242,16 +242,17 @@ where
 
         Self {
             time: initial_time,
-            integration: M::new(direction.signed_delta().to_unit(TIME_UNIT)).integrate(
-                NBodyProblem {
-                    time: initial_time.to_tai_duration().to_unit(TIME_UNIT),
-                    bound: f64::INFINITY,
-                    state: SecondOrderState::new(positions, velocities),
-                    ode: NewtonianGravity {
-                        gravitational_parameters,
-                    },
+            integration: M::new(FixedMethodParams::new(
+                direction.signed_delta().to_unit(TIME_UNIT),
+            ))
+            .integrate(NBodyProblem {
+                time: initial_time.to_tai_duration().to_unit(TIME_UNIT),
+                bound: f64::INFINITY,
+                state: SecondOrderState::new(positions, velocities),
+                ode: NewtonianGravity {
+                    gravitational_parameters,
                 },
-            ),
+            }),
             interpolation,
             _marker: std::marker::PhantomData,
         }
@@ -265,7 +266,7 @@ where
     #[inline]
     pub fn delta(&self) -> Duration
     where
-        M::Integrator: IntegratorState,
+        M::Integrator: IntegratorState<Time = f64>,
     {
         self.integration.step_size() * TIME_UNIT
     }
@@ -278,7 +279,7 @@ where
     ) -> Result<(), NBodyPropagationError>
     where
         V: Copy,
-        M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
+        M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
         F: Fn(&mut UniformSpline<V>, &InterpolationSamples<{ DIV + 1 }, V, A>) -> Result<(), ()>,
     {
         self.integration.step()?;
@@ -326,7 +327,7 @@ where
     V: Copy,
     A: Interpolation<V>,
     M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
+    M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
 {
     type Error = NBodyPropagationError;
 
@@ -398,7 +399,7 @@ where
     V: Copy,
     A: Interpolation<V>,
     M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
+    M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
 {
     type Error = NBodyPropagationError;
 

@@ -1,7 +1,9 @@
 use crate::{
-    EvalFailed, Problem, SecondOrderODE, SecondOrderState, State,
+    problem::{EvalFailed, Problem, SecondOrderODE, SecondOrderState, State},
+    ratio::Ratio,
     runge_kutta::{RKInstance, RKState},
 };
+use std::ops::{Add, Mul};
 
 /// Coefficients for Symplectic Runge-Kutta-Nyström (SRKN) integrators.
 ///
@@ -18,13 +20,15 @@ use crate::{
 pub trait SRKNCoefficients {
     const FSAL: bool;
 
-    const A: &[f64];
+    const A: &[Ratio];
 
-    const B: &[f64];
+    const B: &[Ratio];
 
     #[inline]
-    fn c(i: usize) -> f64 {
-        Self::A[..i].iter().sum()
+    fn c(i: usize) -> Ratio {
+        Self::A[..i]
+            .iter()
+            .fold(Ratio::ZERO, |acc, b| acc.const_add(*b))
     }
 }
 
@@ -42,12 +46,14 @@ impl<C, V> RKState for SRKN<C, V> {
     }
 }
 
-impl<C, P, V> RKInstance<P> for SRKN<C, V>
+impl<C, V, P> RKInstance<P> for SRKN<C, V>
 where
     C: SRKNCoefficients,
-    P: Problem<State = SecondOrderState<V>>,
-    P::ODE: SecondOrderODE<V>,
     V: State + Clone,
+    P: Problem<Variable = V::Variable, State = SecondOrderState<V>>,
+    P::Variable: Mul<P::Time, Output = P::Variable> + Add<Output = P::Variable> + Default + Copy,
+    P::Time: Mul<Ratio, Output = P::Time> + Add<Output = P::Time> + Copy,
+    P::ODE: SecondOrderODE<P::Time, V>,
 {
     #[inline]
     fn from_problem(problem: &P) -> Self {
@@ -59,16 +65,18 @@ where
     }
 
     #[inline]
-    fn advance(&mut self, h: f64, problem: &mut P) -> Result<(), EvalFailed> {
+    fn advance(&mut self, h: P::Time, problem: &mut P) -> Result<(), EvalFailed> {
         let problem = problem.as_mut();
         // Detailed source and proof for the formulas used can be found here:
         // https://en.wikipedia.org/wiki/Symplectic_integrator#Methods_for_constructing_symplectic_algorithms
         for s in 0..C::A.len() {
             if !C::FSAL || s > 0 || self.i == 0 {
                 // tᵢ = t₀ + cᵢ * h
-                let t_stage = problem.time + C::c(s) * h;
+                let t_stage = problem.time + h * C::c(s);
                 // yᵢ'' = f(tᵢ, yᵢ)
-                problem.ode.eval(t_stage, &problem.state.y, &mut self.ddy)?;
+                problem
+                    .ode
+                    .eval(t_stage, &problem.state.y, self.ddy.zero())?;
             }
 
             // yᵢ₊₁' = yᵢ' + bᵢ * h * yᵢ₊₁''
@@ -80,12 +88,12 @@ where
                 .zip(problem.state.dy.iter_mut())
                 .zip(self.ddy.iter())
             {
-                *dy = *dy + *ddy * (C::B[s] * h);
-                *y = *y + *dy * (C::A[s] * h);
+                *dy = *dy + *ddy * (h * C::B[s]);
+                *y = *y + *dy * (h * C::A[s]);
             }
         }
 
-        problem.time += h;
+        problem.time = problem.time + h;
         self.i += 1;
 
         Ok(())

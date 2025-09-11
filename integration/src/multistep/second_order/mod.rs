@@ -1,17 +1,21 @@
 mod cowell;
+
 use cowell::{Cowell, CowellVelocityCoefficients};
 
 use crate::{
-    EvalFailed, Problem, SecondOrderODE, SecondOrderState, State,
     multistep::{LMInstance, LMState, buffer::LMBuffer},
+    problem::{EvalFailed, Problem, SecondOrderODE, SecondOrderState, State},
+    ratio::Ratio,
 };
+use num_traits::One;
+use std::ops::{Add, Div, Mul, Sub};
 
 pub trait ELM2Coefficients {
-    const ALPHA: &'static [f64];
+    const ALPHA: &'static [i128];
 
-    const BETA_N: &'static [f64];
+    const BETA_N: &'static [i128];
 
-    const BETA_D: f64;
+    const BETA_D: i128;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -31,7 +35,7 @@ pub struct ELM2<C, const ORDER: usize, V> {
 }
 
 impl<C, const ORDER: usize, V> ELM2<C, ORDER, V> {
-    /// Sets up the front of the buffer to be the last ste
+    /// Sets up the front of the buffer to be the last step
     #[inline]
     fn prepare_next_step(&mut self) {
         self.steps.rotate_right();
@@ -49,9 +53,17 @@ impl<C, const ORDER: usize, V> LMState for ELM2<C, ORDER, V> {
 impl<C, const ORDER: usize, P, V> LMInstance<P> for ELM2<C, ORDER, V>
 where
     C: ELM2Coefficients,
-    P: Problem<State = SecondOrderState<V>>,
-    P::ODE: SecondOrderODE<V>,
     V: State + Clone,
+    P: Problem<Variable = V::Variable, State = SecondOrderState<V>>,
+    P::Variable: Mul<P::Time, Output = P::Variable>
+        + Div<P::Time, Output = P::Variable>
+        + Add<Output = P::Variable>
+        + Sub<Output = P::Variable>
+        + Default
+        + Copy,
+    P::Time:
+        Mul<Ratio, Output = P::Time> + Add<Output = P::Time> + Mul<Output = P::Time> + One + Copy,
+    P::ODE: SecondOrderODE<P::Time, V>,
     Cowell<ORDER>: CowellVelocityCoefficients,
 {
     const ORDER: usize = ORDER;
@@ -74,7 +86,7 @@ where
     }
 
     #[inline]
-    fn advance(&mut self, h: f64, problem: &mut P) -> Result<(), EvalFailed> {
+    fn advance(&mut self, h: P::Time, problem: &mut P) -> Result<(), EvalFailed> {
         let problem = problem.as_mut();
         self.sum1.zero();
         self.sum2.zero();
@@ -89,8 +101,8 @@ where
                 .zip(self.sum2.iter_mut())
                 .zip(y.iter().zip(ddy.iter()))
             {
-                *sum1 = *sum1 + *y * -C::ALPHA[j + 1];
-                *sum2 = *sum2 + *ddy * C::BETA_N[j + 1];
+                *sum1 = *sum1 + *y * (P::Time::one() * Ratio::from_int(-C::ALPHA[j + 1]));
+                *sum2 = *sum2 + *ddy * (P::Time::one() * Ratio::from_int(C::BETA_N[j + 1]));
             }
         }
 
@@ -103,9 +115,9 @@ where
             .iter_mut()
             .zip(self.sum1.iter().zip(self.sum2.iter()))
         {
-            *y = *sum1 + *sum2 * (C::BETA_D.recip() * h * h);
+            *y = *sum1 + *sum2 * (h * h * Ratio::from_recip(C::BETA_D));
         }
-        problem.time += h;
+        problem.time = problem.time + h;
         problem
             .ode
             .eval(problem.time, &problem.state.y, self.current_ddy.zero())?;
