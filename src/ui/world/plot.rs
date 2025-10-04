@@ -4,7 +4,7 @@ use crate::{
     floating_origin::{BigSpace, Grid},
     prediction::Trajectory,
     selection::Selectable,
-    time::SimulationTime,
+    simulation::SimulationTime,
     ui::WorldUiSet,
     MainState,
 };
@@ -14,7 +14,7 @@ use bevy::{math::DVec3, picking::backend::ray::RayMap};
 use ephemeris::{
     BoundedTrajectory, EvaluateTrajectory, ManoeuvreFrame, RelativeTrajectory, StateVector,
 };
-use hifitime::Epoch;
+use ftime::Epoch;
 
 #[derive(Component)]
 #[require(PlotPoints)]
@@ -127,7 +127,7 @@ impl PlotPoints {
         let mut previous_time = min;
 
         let mut previous = eval(previous_time);
-        let mut delta = (final_time - previous_time).to_seconds();
+        let mut delta = final_time - previous_time;
 
         let mut points = Vec::new();
         points.push((previous_time, previous.position.as_vec3()));
@@ -139,7 +139,8 @@ impl PlotPoints {
         while points.len() < max_points && previous_time < final_time {
             loop {
                 if let Some(estimated_tan2_error) = estimated_tan2_error {
-                    delta *= 0.9
+                    delta = delta
+                        * 0.9
                         * (tan2_angular_resolution / estimated_tan2_error)
                             .sqrt()
                             .sqrt();
@@ -149,10 +150,11 @@ impl PlotPoints {
 
                 if t > final_time {
                     t = final_time;
-                    delta = (t - previous_time).to_seconds();
+                    delta = t - previous_time;
                 }
 
-                let extrapolated_position = previous.position + previous.velocity * delta;
+                let extrapolated_position =
+                    previous.position + previous.velocity * delta.as_seconds();
                 current = eval(t);
 
                 // Prevent catastrophic retries
@@ -184,7 +186,7 @@ impl PlotPoints {
             Err(i) => {
                 let &(t1, p1) = self.get(i.checked_sub(1)?)?;
                 let &(t2, p2) = self.get(i)?;
-                let t = ((at - t1).to_seconds() / (t2 - t1).to_seconds()) as f32;
+                let t = ((at - t1).as_seconds() / (t2 - t1).as_seconds()) as f32;
 
                 Some(p1.lerp(p2, t))
             }
@@ -228,8 +230,17 @@ pub fn compute_plot_points_parallel(
                         .unwrap_or_default(),
                 );
 
+                // TODO: Make new fallible
                 let new_points = PlotPoints::new(
-                    |at| to_global_sv(relative.state_vector(at).unwrap() + translation, *root),
+                    |at| {
+                        to_global_sv(
+                            relative
+                                .state_vector(at)
+                                .unwrap_or_else(|| panic!("No state vector at {at}"))
+                                + translation,
+                            *root,
+                        )
+                    },
                     min,
                     max,
                     camera.0,
@@ -418,7 +429,7 @@ fn plot_knots(
         };
 
         if let Some(traj) = traj.as_any().downcast_ref::<UniformSpline>() {
-            let knots = (0..traj.len()).map(|i| traj.start() + traj.interval() * i as i64);
+            let knots = (0..traj.len()).map(|i| traj.start() + traj.interval() * i as f64);
             plot_knots(&mut gizmos, *camera, knots, plot_points);
         }
     }

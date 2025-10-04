@@ -1,7 +1,7 @@
 use crate::{
     hierarchy::{AddOrbit, Orbiting},
     prediction::Trajectory,
-    time::SimulationTime,
+    simulation::SimulationTime,
     MainState,
 };
 

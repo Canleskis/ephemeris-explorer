@@ -10,8 +10,9 @@ too_many_arguments = "allow"
 embed-resource = "1"
 
 [dependencies]
-ephemeris = { path = "ephemeris" }
 integration = { path = "integration" }
+ftime = { path = "ftime", features = ["serde"] }
+ephemeris = { path = "ephemeris" }
 
 bevy = { version = "=0.15.2", default-features = false, features = [
     "bevy_asset",
@@ -54,7 +55,6 @@ winit = { version = "0.30", default-features = false }
 particular = { git = "https://github.com/Canleskis/particular.git", features = [
     "glam",
 ] }
-hifitime = "4.1.3"
 smallvec = { version = "1.13.2", features = ["serde"] }
 uuid = { version = "1.1", features = ["v4"] }
 

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ftime = { path = "../ftime" }
 horizons_solar_system = { path = "../horizons_solar_system" }
-hifitime = "4"
 serde_json = { version = "1", features = ["preserve_order"] }
 clap = { version = "4.5" }

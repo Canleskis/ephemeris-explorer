@@ -6,7 +6,7 @@ use crate::{
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use ephemeris::BoundedTrajectory;
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BurnFrame {
@@ -90,7 +90,7 @@ impl Burn {
 
     #[inline]
     pub fn delta_v(&self) -> f64 {
-        self.acceleration.length() * self.duration.to_seconds()
+        self.acceleration.length() * self.duration.as_seconds()
     }
 
     #[inline]
@@ -153,6 +153,24 @@ impl FlightPlan {
 #[derive(Clone, Copy, Event)]
 pub struct FlightPlanChanged;
 
+#[derive(Clone, Copy, Debug)]
+pub enum BurnChange {
+    SetEnabled(bool),
+    SetStart(Epoch),
+    SetDuration(Duration),
+    SetAcceleration(DVec3),
+    SetReferenceFrame(Entity, BurnFrame),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FlightPlanChange {
+    AddBurn(Burn),
+    RemoveBurn(uuid::Uuid),
+    UpdateBurn(uuid::Uuid, BurnChange),
+    SetEnd(Epoch),
+    SetMaxIterations(usize),
+}
+
 #[derive(Default)]
 pub struct FlightPlanPlugin;
 
@@ -162,12 +180,52 @@ impl Plugin for FlightPlanPlugin {
     }
 }
 
-fn first_missing(b1: &[Burn], b2: &[Burn]) -> Option<Epoch> {
+fn first_missing(b1: &[Burn], b2: &[Burn]) -> Option<RestartBound> {
     b1.iter()
-        .filter(|previous| !b2.iter().any(|burn| burn.id == previous.id))
-        .map(|previous| previous.start)
+        .filter(|burn1| b2.iter().all(|burn2| burn2.id != burn1.id))
+        .map(|previous| RestartBound::Excluded(previous.start))
         .min()
-        .map(|t| t - Duration::EPSILON)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestartBound {
+    Excluded(Epoch),
+    Included(Epoch),
+}
+
+impl std::fmt::Display for RestartBound {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            RestartBound::Excluded(t) => write!(f, "Excluded({t})"),
+            RestartBound::Included(t) => write!(f, "Included({t})"),
+        }
+    }
+}
+
+impl PartialOrd for RestartBound {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RestartBound {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (RestartBound::Excluded(t1), RestartBound::Included(t2)) => match t1.cmp(t2) {
+                std::cmp::Ordering::Equal => std::cmp::Ordering::Greater,
+                ord => ord,
+            },
+            (RestartBound::Included(t1), RestartBound::Excluded(t2)) => match t1.cmp(t2) {
+                std::cmp::Ordering::Equal => std::cmp::Ordering::Less,
+                ord => ord,
+            },
+            (RestartBound::Excluded(t1), RestartBound::Excluded(t2))
+            | (RestartBound::Included(t1), RestartBound::Included(t2)) => t1.cmp(t2),
+        }
+    }
 }
 
 fn apply_flight_plan(
@@ -185,8 +243,8 @@ fn apply_flight_plan(
     let Ok((mut flight_plan, mut last, mut prediction, trajectory)) = query.get_mut(entity) else {
         return;
     };
-    let binding = trajectory.read();
-    let trajectory = binding
+    let trajectory = trajectory.read();
+    let trajectory = trajectory
         .as_any()
         .downcast_ref::<CubicHermiteSplineSamples>()
         .unwrap();
@@ -198,37 +256,39 @@ fn apply_flight_plan(
     let last = last.replace(flight_plan.clone());
     // Restart from the last point which would result in the same integrator steps.
     let last_valid = last
-        .map(|previous| {
-            let end = (flight_plan.end != previous.end).then_some(flight_plan.end);
-            let iterations = (flight_plan.max_iterations != previous.max_iterations).then_some(min);
-            let added = first_missing(&flight_plan.burns, &previous.burns);
-            let removed = first_missing(&previous.burns, &flight_plan.burns);
+        .map(|last| {
+            let end =
+                (flight_plan.end != last.end).then_some(RestartBound::Included(flight_plan.end));
+            let iterations = (flight_plan.max_iterations != last.max_iterations)
+                .then_some(RestartBound::Included(min));
+            let added = first_missing(&flight_plan.burns, &last.burns);
+            let removed = first_missing(&last.burns, &flight_plan.burns);
             let burns = flight_plan
                 .burns
                 .iter()
-                .zip(previous.burns.iter())
-                .filter_map(|(burn, previous)| {
-                    let start = burn.start.min(previous.start);
+                .zip(last.burns.iter())
+                .filter_map(|(burn, last)| {
+                    let start = burn.start.min(last.start);
 
-                    if (burn.start < min && previous.start < min)
-                        || (burn.start > max && previous.start > max)
+                    if (burn.start < min && last.start < min)
+                        || (burn.start > max && last.start > max)
                     {
                         None
-                    } else if (burn.start != previous.start
-                        || burn.enabled != previous.enabled
-                        || burn.overlaps != previous.overlaps)
-                        && (burn.enabled || previous.enabled)
-                        && (!burn.overlaps || !previous.overlaps)
+                    } else if (burn.start != last.start
+                        || burn.enabled != last.enabled
+                        || burn.overlaps != last.overlaps)
+                        && (burn.enabled || last.enabled)
+                        && (!burn.overlaps || !last.overlaps)
                     {
-                        Some(start - Duration::EPSILON)
-                    } else if (burn.duration != previous.duration
-                        || burn.acceleration != previous.acceleration
-                        || burn.reference != previous.reference
-                        || burn.frame != previous.frame)
+                        Some(RestartBound::Excluded(start))
+                    } else if (burn.duration != last.duration
+                        || burn.acceleration != last.acceleration
+                        || burn.reference != last.reference
+                        || burn.frame != last.frame)
                         && burn.enabled
                         && !burn.overlaps
                     {
-                        Some(start)
+                        Some(RestartBound::Included(start))
                     } else {
                         None
                     }
@@ -240,7 +300,9 @@ fn apply_flight_plan(
                 .flatten()
                 .min()
         })
-        .map_or(Some(min), |last_valid| last_valid.min(Some(max)));
+        .map_or(Some(RestartBound::Included(min)), |last_valid| {
+            last_valid.min(Some(RestartBound::Included(max)))
+        });
 
     let Some(last_valid) = last_valid else {
         return;
@@ -248,20 +310,12 @@ fn apply_flight_plan(
 
     let propagator = &mut prediction.propagator;
 
-    // TODO: This comment on the error calculation might not be accurate anymore
-    //
-    // We could theoretically restart from the point before the new start time in some cases, but
-    // the controller needs the previous error of that point to calculate the new step size, which
-    // we don't store. So for now we just restart from the previous integrator reset, which is the
-    // end of the previous burn.
-    // We could fix this by changing how the integrator computes the error.
-    //
-    // Note: Each key in the manoeuvres map is an integrator reset.
-    let restart_epoch = propagator
-        .schedule()
-        .last_event_at(last_valid)
-        .time()
-        .max(min);
+    let restart_epoch = match last_valid {
+        RestartBound::Excluded(t) => propagator.schedule().last_event_at_exclusive(t),
+        RestartBound::Included(t) => propagator.schedule().last_event_at(t),
+    }
+    .time()
+    .max(min);
 
     let Some(&restart_sv) = trajectory.get(restart_epoch) else {
         bevy::log::error!(
@@ -290,8 +344,8 @@ fn apply_flight_plan(
     if flight_plan.end >= restart_epoch {
         commands.trigger(ExtendPredictionEvent::<SpacecraftPropagator>::with(
             [entity],
-            Duration::EPSILON.max(flight_plan.end - restart_epoch),
-            100,
+            Duration::from_seconds(0.001).max(flight_plan.end - restart_epoch),
+            200,
         ));
     }
 }

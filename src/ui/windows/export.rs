@@ -4,8 +4,8 @@ use crate::{
     hierarchy::OrbitedBy,
     load::SystemRoot,
     prediction::Trajectory,
-    time::SimulationTime,
-    ui::{epoch_clamped_parser, precision, show_tree, WindowsUiSet},
+    simulation::SimulationTime,
+    ui::{epoch_clamped_parser, show_tree, WindowsUiSet},
     MainState,
 };
 
@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_file_dialog::prelude::*;
 use ephemeris::EvaluateTrajectory;
-use hifitime::Epoch;
+use ftime::{Duration, Epoch};
 
 pub struct ExportPlugin;
 
@@ -30,7 +30,7 @@ impl Plugin for ExportPlugin {
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 pub enum ExportType {
-    State { epoch: hifitime::Epoch },
+    State { epoch: Epoch },
 }
 
 impl std::fmt::Display for ExportType {
@@ -72,7 +72,7 @@ impl ExportWindow {
         egui::Window::new("Export").open(&mut open).show(ctx, |ui| {
             let export = cached_exports.get_or_insert_with(|| {
                 [ExportType::State {
-                    epoch: sim_time.current().round(precision()),
+                    epoch: sim_time.current().floor(Duration::from_seconds(1.0)),
                 }]
             });
             let bodies = bodies.get_or_insert_with(|| query_trajectory.iter().collect());
@@ -99,23 +99,17 @@ impl ExportWindow {
                 ExportType::State { epoch } => {
                     ui.horizontal(|ui| {
                         ui.label("Epoch:");
-                        let mut epoch_s = epoch.to_tai_seconds();
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut epoch_s)
-                                    .custom_formatter(|value, _| {
-                                        Epoch::from_tai_seconds(value).to_string()
-                                    })
-                                    .custom_parser(|text| {
-                                        epoch_clamped_parser(sim_time.start(), sim_time.end())(text)
-                                            .map(|t| t.to_tai_seconds())
-                                    })
-                                    .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
-                            )
-                            .changed()
-                        {
-                            *epoch = Epoch::from_tai_seconds(epoch_s).round(precision());
-                        }
+                        ui.add(
+                            egui::DragValue::new(epoch.mut_offset().mut_seconds())
+                                .custom_formatter(|value, _| {
+                                    Epoch::from_offset(Duration::from_seconds(value)).to_string()
+                                })
+                                .custom_parser(|text| {
+                                    epoch_clamped_parser(sim_time.start(), sim_time.end())(text)
+                                        .map(|t| t.as_offset_seconds())
+                                })
+                                .speed(Duration::from_hours(1.0).as_seconds()),
+                        )
                     });
                 }
             }

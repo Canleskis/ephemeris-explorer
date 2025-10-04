@@ -29,7 +29,7 @@ use ephemeris::{
     BoundedTrajectory, BranchingPropagator, DirectionalPropagator, EvaluateTrajectory,
     IncrementalPropagator, Iterable, Propagation, Propagator, StateVector,
 };
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 
 pub trait PredictionTrajectory:
     BoundedTrajectory + EvaluateTrajectory<Vector = DVec3> + DeepSizeOf + Send + Sync
@@ -76,11 +76,6 @@ impl Trajectory {
     #[inline]
     pub fn heap_size(&self) -> usize {
         self.read().deep_size_of()
-    }
-
-    #[inline]
-    pub fn distance_squared(&self, other: &Self, at: Epoch) -> Option<f64> {
-        Some(self.position(at)?.distance_squared(other.position(at)?))
     }
 }
 
@@ -258,7 +253,7 @@ pub struct PredictionTracker<P: Propagator> {
 impl<P: Propagator> PredictionTracker<P> {
     #[inline]
     pub fn progress(&self) -> f32 {
-        ((self.current - self.start).to_seconds() / (self.target - self.start).to_seconds())
+        ((self.current - self.start).as_seconds() / (self.target - self.start).as_seconds())
             .abs()
             .min(1.0) as f32
     }
@@ -344,15 +339,13 @@ fn dispatch_predictions<P, const EXTEND: bool>(
                     remaining = remaining.saturating_sub(1);
 
                     let reached_end = propagation.reached(end);
-                    if (remaining > 0 || sender.is_full()) && !sender.is_closed() && !reached_end {
-                        continue;
+                    if (remaining == 0 && sender.is_empty()) || reached_end || sender.is_closed() {
+                        let completed = std::mem::replace(propagation, propagation.branch());
+                        if sender.send(completed).await.is_err() || reached_end {
+                            break;
+                        }
+                        remaining = min_steps;
                     }
-
-                    let completed = std::mem::replace(propagation, propagation.branch());
-                    if sender.send(completed).await.is_err() || reached_end {
-                        break;
-                    }
-                    remaining = min_steps;
                 }
 
                 bevy::log::debug!("Stopping {} prediction thread", name);

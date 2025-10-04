@@ -1,7 +1,7 @@
 {
     "name": "Mars Transfer Ship",
-    "start": "1950-01-01 00:00:00 TAI",
-    "end": "1950-08-20 00:00:00 TAI",
+    "start": "1950-01-01 00:00:00",
+    "end": "1950-08-20 00:00:00",
     "position": [
         -27204249.668775786,
         132947582.43848978,
@@ -14,7 +14,7 @@
     ],
     "burns": [
         {
-            "start": "1950-01-01T00:15:15 TAI",
+            "start": "1950-01-01 00:15:15",
             "duration": "5 min 15 s",
             "acceleration": [
                 0.0,
@@ -24,7 +24,7 @@
             "reference": "Earth"
         },
         {
-            "start": "1950-01-01T00:43:10 TAI",
+            "start": "1950-01-01 00:43:10",
             "duration": "6 min 30 s",
             "acceleration": [
                 9.97,
@@ -34,7 +34,7 @@
             "reference": "Sun"
         },
         {
-            "start": "1950-02-28T04:12:25 TAI",
+            "start": "1950-02-28 04:12:25",
             "duration": "1 min",
             "acceleration": [
                 0.51,
@@ -44,7 +44,7 @@
             "reference": "Mars"
         },
         {
-            "start": "1950-07-27T15:44:05 TAI",
+            "start": "1950-07-27 15:44:05",
             "duration": "5 min 10 s",
             "acceleration": [
                 -10.0,

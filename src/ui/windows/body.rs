@@ -6,10 +6,10 @@ use crate::{
     load::SystemRoot,
     prediction::{PredictionContext, Trajectory},
     selection::Selected,
-    time::SimulationTime,
+    simulation::SimulationTime,
     ui::{
-        get_name, nformat, precision, show_tree, IdentedInfo, SeparationPlot, SourceOf,
-        TrajectoryPlot, WindowsUiSet,
+        get_name, nformat, show_tree, IdentedInfo, SeparationPlot, SourceOf, TrajectoryPlot,
+        WindowsUiSet,
     },
     MainState,
 };
@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use bevy_file_dialog::prelude::*;
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 use std::str::FromStr;
 
 pub struct BodyInfoPlugin;
@@ -405,22 +405,12 @@ impl BodyInfoWindow {
                         }
 
                         ui.add_enabled_ui(info.plot_start_overwrite.is_none(), |ui| {
-                            let mut plot_start = plot.start.to_tai_seconds();
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut plot_start)
-                                        .custom_formatter(|value, _| {
-                                            Epoch::from_tai_seconds(value).to_string()
-                                        })
-                                        .custom_parser(|text| {
-                                            Epoch::from_str(text).ok().map(|t| t.to_tai_seconds())
-                                        })
-                                        .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
-                                )
-                                .changed()
-                            {
-                                plot.start = Epoch::from_tai_seconds(plot_start).round(precision());
-                            }
+                            ui.add(
+                                egui::DragValue::new(plot.start.mut_offset().mut_seconds())
+                                    .speed(Duration::from_hours(1.0).as_seconds())
+                                    .custom_formatter(epoch_formatter)
+                                    .custom_parser(epoch_parser),
+                            )
                         })
                         .response
                         .on_disabled_hover_text("Overwritten with current time");
@@ -444,22 +434,12 @@ impl BodyInfoWindow {
                             }
                         }
                         ui.add_enabled_ui(info.plot_end_overwrite.is_none(), |ui| {
-                            let mut plot_end = plot.end.to_tai_seconds();
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut plot_end)
-                                        .custom_formatter(|value, _| {
-                                            Epoch::from_tai_seconds(value).to_string()
-                                        })
-                                        .custom_parser(|text| {
-                                            Epoch::from_str(text).ok().map(|t| t.to_tai_seconds())
-                                        })
-                                        .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
-                                )
-                                .changed()
-                            {
-                                plot.end = Epoch::from_tai_seconds(plot_end).round(precision());
-                            }
+                            ui.add(
+                                egui::DragValue::new(plot.end.mut_offset().mut_seconds())
+                                    .speed(Duration::from_hours(1.0).as_seconds())
+                                    .custom_formatter(epoch_formatter)
+                                    .custom_parser(epoch_parser),
+                            )
                         })
                         .response
                         .on_disabled_hover_text("Overwritten with current time");
@@ -602,7 +582,7 @@ impl BodyInfoWindow {
                         return;
                     };
                     let min_time = trajectory.start();
-                    let max_time = Epoch::from_tai_duration(Duration::MAX);
+                    let max_time = Epoch::from_offset(Duration::MAX);
 
                     ui.horizontal(|ui| {
                         ui.label("Max iterations:");
@@ -623,27 +603,20 @@ impl BodyInfoWindow {
 
                     ui.horizontal(|ui| {
                         ui.spacing_mut().interact_size.x = 240.0;
-                        ui.label("End:").changed();
+                        ui.label("End:");
 
-                        let mut end = flight_plan.end.to_tai_seconds();
                         if ui
                             .add(
-                                egui::DragValue::new(&mut end)
-                                    .custom_formatter(|value, _| {
-                                        Epoch::from_tai_seconds(value).to_string()
-                                    })
-                                    .custom_parser(|text| {
-                                        Epoch::from_str(text).ok().map(|t| {
-                                            t.clamp(min_time, max_time)
-                                                .round(precision())
-                                                .to_tai_seconds()
-                                        })
-                                    })
-                                    .speed(hifitime::Duration::from_hours(1.0).to_seconds()),
+                                egui::DragValue::new(flight_plan.end.mut_offset().mut_seconds())
+                                    .speed(Duration::from_hours(1.0).as_seconds())
+                                    .range(
+                                        min_time.as_offset_seconds()..=max_time.as_offset_seconds(),
+                                    )
+                                    .custom_formatter(epoch_formatter)
+                                    .custom_parser(epoch_parser),
                             )
                             .changed()
                         {
-                            flight_plan.end = Epoch::from_tai_seconds(end).round(precision());
                             changed = true;
                         }
                     });
@@ -769,7 +742,8 @@ impl BodyInfoWindow {
                 if burn.overlaps {
                     text.push_str(" ⚠ overlaps with another burn");
                 }
-                if ui.toggle_value(&mut burn.enabled, text).changed() {
+                if ui.selectable_label(burn.enabled, text).clicked() {
+                    burn.enabled = !burn.enabled;
                     changed = true;
                 }
             })
@@ -779,25 +753,15 @@ impl BodyInfoWindow {
                     ui.label("Start time:");
                     ui.add_space(5.0);
 
-                    let mut start = burn.start.to_tai_seconds();
                     if ui
                         .add(
-                            egui::DragValue::new(&mut start)
-                                .custom_formatter(|value, _| {
-                                    Epoch::from_tai_seconds(value).to_string()
-                                })
-                                .custom_parser(|text| {
-                                    Epoch::from_str(text)
-                                        .ok()
-                                        .filter(|t| *t >= min_time)
-                                        .map(|t| t.to_tai_seconds())
-                                }),
+                            egui::DragValue::new(burn.start.mut_offset().mut_seconds())
+                                .range(min_time.as_offset_seconds()..=f64::INFINITY)
+                                .custom_formatter(epoch_formatter)
+                                .custom_parser(epoch_parser),
                         )
                         .changed()
                     {
-                        burn.start = Epoch::from_tai_seconds(start)
-                            .round(precision())
-                            .max(min_time);
                         changed = true;
                     }
                 });
@@ -805,29 +769,23 @@ impl BodyInfoWindow {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().interact_size.x = 150.0;
 
-                    let speed =
-                        (burn.duration.max(precision()) * 1e-3).min(Duration::from_seconds(60.0));
+                    let speed = (burn.duration.max(Duration::from_seconds(0.1)) * 1e-3)
+                        .min(Duration::from_seconds(60.0));
 
-                    let mut duration = burn.duration.to_seconds();
                     ui.label("Length:");
                     ui.add_space(22.0);
                     if ui
                         .add(
-                            egui::DragValue::new(&mut duration)
-                                .speed(speed.to_seconds())
+                            egui::DragValue::new(burn.duration.mut_seconds())
+                                .speed(speed.as_seconds())
                                 .range(0.0..=f64::INFINITY)
-                                .custom_formatter(|value, _| {
-                                    Duration::from_seconds(value).to_string()
-                                })
-                                .custom_parser(|text| {
-                                    Duration::from_str(text).ok().map(|d| d.to_seconds())
-                                }),
+                                .custom_formatter(duration_formatter)
+                                .custom_parser(duration_parser),
                         )
                         .changed()
                     {
                         changed = true;
                     }
-                    burn.duration = Duration::from_seconds(duration).round(precision());
                 });
 
                 ui.horizontal(|ui| {
@@ -960,4 +918,20 @@ fn burn_to_value(burn: &Burn, query: Query<&Name>) -> serde_json::Value {
     }
 
     json
+}
+
+fn duration_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
+    Duration::from_seconds(value).to_string()
+}
+
+fn duration_parser(text: &str) -> Option<f64> {
+    Duration::from_str(text).ok().map(|d| d.as_seconds())
+}
+
+fn epoch_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
+    Epoch::from_offset(Duration::from_seconds(value)).to_string()
+}
+
+fn epoch_parser(text: &str) -> Option<f64> {
+    Epoch::from_str(text).ok().map(|t| t.as_offset_seconds())
 }

@@ -12,8 +12,8 @@ pub mod prediction;
 pub mod rotation;
 pub mod selection;
 pub mod settings;
+pub mod simulation;
 pub mod starlight;
-pub mod time;
 pub mod ui;
 
 use crate::{
@@ -27,8 +27,8 @@ use crate::{
     prediction::PredictionPlugin,
     selection::SelectionPlugin,
     settings::{AppSettings, PersistentSettingsPlugin},
+    simulation::SimulationTimePlugin,
     starlight::StarLightPlugin,
-    time::SimulationTimePlugin,
     ui::UiPlugin,
 };
 
@@ -61,6 +61,7 @@ impl PluginGroup for MainPlugins {
                     visible: false,
                     title: "Ephemeris Explorer".to_owned(),
                     position: WindowPosition::At(IVec2::new(320, 180)),
+                    present_mode: bevy::window::PresentMode::Immediate,
                     ..default()
                 }),
                 ..default()

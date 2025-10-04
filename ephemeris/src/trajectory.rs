@@ -1,5 +1,5 @@
 use deepsize::DeepSizeOf;
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 use std::collections::VecDeque;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, PartialOrd)]
@@ -234,12 +234,12 @@ where
         loop {
             i += 1;
             let total_secs = right - left;
-            let mid1 = left + total_secs / 3;
-            let mid2 = right - total_secs / 3;
+            let mid1 = left + total_secs / 3.0;
+            let mid2 = right - total_secs / 3.0;
 
             match distance(mid1) - distance(mid2) {
                 d if d.abs() < precision || i > max_iterations => {
-                    return Some(mid1 + (mid2 - mid1) / 2);
+                    return Some(mid1 + (mid2 - mid1) / 2.0);
                 }
                 d if d.is_sign_positive() => left = mid1,
                 _ => right = mid2,
@@ -281,27 +281,26 @@ where
 {
     #[inline]
     fn start(&self) -> Epoch {
-        self.trajectory.start().max(
-            self.reference
-                .as_ref()
-                .map_or(Epoch::from_tai_duration(Duration::MIN), T2::start),
-        )
+        match self.reference.as_ref() {
+            Some(reference) => self.trajectory.start().max(reference.start()),
+            None => self.trajectory.start(),
+        }
     }
 
     #[inline]
     fn end(&self) -> Epoch {
-        self.trajectory.end().min(
-            self.reference
-                .as_ref()
-                .map_or(Epoch::from_tai_duration(Duration::MAX), T2::end),
-        )
+        match self.reference.as_ref() {
+            Some(reference) => self.trajectory.end().min(reference.end()),
+            None => self.trajectory.end(),
+        }
     }
 
     #[inline]
     fn len(&self) -> usize {
-        self.trajectory
-            .len()
-            .min(self.reference.as_ref().map_or(usize::MAX, T2::len))
+        match self.reference.as_ref() {
+            Some(reference) => self.trajectory.len().min(reference.len()),
+            None => self.trajectory.len(),
+        }
     }
 }
 
@@ -463,7 +462,7 @@ where
             .map(|(position, velocity)| {
                 // Segment are normalised to τ = t / interval so the derivative is dx/dτ.
                 // As such, dx/dt = dx/dτ * dτ/dt = dx/dτ * d(t / interval)/dt = dx/dτ / interval.
-                StateVector::new(position, velocity / self.interval.to_seconds())
+                StateVector::new(position, velocity / self.interval.as_seconds())
             })
     }
 }
@@ -490,7 +489,7 @@ impl<V> UniformSpline<V> {
         let end = self.index_local_exclusive(end - self.start)?;
 
         Some(Self {
-            start: self.start + self.interval * start as i64,
+            start: self.start + self.interval.scaled(start as f64),
             interval: self.interval,
             segments: (start..end + 1)
                 .filter_map(|i| self.segments.get(i).cloned())
@@ -533,7 +532,7 @@ impl<V> UniformSpline<V> {
     #[inline]
     pub fn clear_before(&mut self, at: Epoch) {
         if let Some(idx) = self.index_exclusive(at + self.interval) {
-            self.start += self.interval * idx as i64;
+            self.start += self.interval.scaled(idx as f64);
             self.segments.drain(0..idx);
         }
     }
@@ -551,10 +550,10 @@ impl<V> UniformSpline<V> {
         F: Fn(&Polynomial<V>, f64) -> T,
     {
         let local = at - self.start;
-        // Evaluate "previous" segment at a knot.
+        // Evaluate "previous" segment when at a knot.
         let local_index = self.index_local_exclusive(local)?;
-        let local_segment = local - self.interval * local_index as i64;
-        let normalised = local_segment.to_seconds() / self.interval.to_seconds();
+        let local_segment = local - self.interval.scaled(local_index as f64);
+        let normalised = local_segment.as_seconds() / self.interval.as_seconds();
 
         Some(eval(self.segments.get(local_index)?, normalised))
     }
@@ -575,7 +574,7 @@ impl<V> UniformSpline<V> {
             return None;
         }
 
-        Some((time.total_nanoseconds() / self.interval.total_nanoseconds()) as usize)
+        Some((time.as_seconds() / self.interval.as_seconds()) as usize)
     }
 
     #[inline]
@@ -584,9 +583,11 @@ impl<V> UniformSpline<V> {
             return None;
         }
 
+        // This simply computes the previous representable f64. If the value is an integer, the
+        // dividing will return the previous integer, effectively making the index exclusive.
         Some(
-            (time.total_nanoseconds().saturating_sub(1) / self.interval.total_nanoseconds())
-                as usize,
+            (f64::from_bits(time.as_seconds().to_bits().saturating_sub(1))
+                / self.interval.as_seconds()) as usize,
         )
     }
 
@@ -597,7 +598,7 @@ impl<V> UniformSpline<V> {
 
     #[inline]
     pub fn span(&self) -> Duration {
-        self.interval * self.segments.len() as i64
+        self.interval.scaled(self.segments.len() as f64)
     }
 
     #[inline]
@@ -724,12 +725,12 @@ where
                 let &(t1, sv1) = self.0.get(i.checked_sub(1)?)?;
                 let &(t2, sv2) = self.0.get(i)?;
                 let hermite = CubicHermite::new(
-                    (t1.to_tai_seconds(), t2.to_tai_seconds()),
+                    (t1.as_offset_seconds(), t2.as_offset_seconds()),
                     (sv1.position, sv2.position),
                     (sv1.velocity, sv2.velocity),
                 );
 
-                Some(hermite.eval(at.to_tai_seconds()))
+                Some(hermite.eval(at.as_offset_seconds()))
             }
         }
     }
@@ -742,8 +743,8 @@ where
                 let hermite = self.hermite3(i.checked_sub(1)?)?;
 
                 Some(StateVector {
-                    position: hermite.eval(at.to_tai_seconds()),
-                    velocity: hermite.eval_derivative(at.to_tai_seconds()),
+                    position: hermite.eval(at.as_offset_seconds()),
+                    velocity: hermite.eval_derivative(at.as_offset_seconds()),
                 })
             }
         }
@@ -779,7 +780,7 @@ impl<V> CubicHermiteSplineSamples<V> {
         let (t1, sv1) = self.0.get(i)?;
         let (t2, sv2) = self.0.get(i + 1)?;
         Some(CubicHermite::new(
-            (t1.to_tai_seconds(), t2.to_tai_seconds()),
+            (t1.as_offset_seconds(), t2.as_offset_seconds()),
             (sv1.position, sv2.position),
             (sv1.velocity, sv2.velocity),
         ))
@@ -787,7 +788,7 @@ impl<V> CubicHermiteSplineSamples<V> {
 
     #[inline]
     pub fn clear_after(&mut self, at: Epoch) {
-        self.0.retain(|(k, _)| &at >= k);
+        self.0.retain(|(k, _)| &at > k);
     }
 
     #[inline]

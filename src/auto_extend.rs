@@ -2,12 +2,12 @@ use crate::{
     prediction::{
         ExtendPredictionEvent, PredictionContext, PredictionPropagator, PredictionTracker,
     },
-    time::SimulationTime,
+    simulation::SimulationTime,
     MainState,
 };
 
 use bevy::prelude::*;
-use hifitime::Duration;
+use ftime::Duration;
 
 #[derive(Resource)]
 pub struct AutoExtendSettings<P> {
@@ -70,7 +70,7 @@ fn auto_extend<P>(
     }
 
     let boundary = std::cmp::max_by(sim_time.start(), sim_time.end(), P::cmp);
-    let delta = sim_time.time_scale * Duration::from_seconds(1.0);
+    let delta = Duration::from_seconds(1.0) * sim_time.time_scale;
     let next = sim_time.current() + delta;
     if !P::cmp(&next, &boundary).is_ge() {
         return;

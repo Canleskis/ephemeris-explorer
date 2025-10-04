@@ -4,24 +4,22 @@ use crate::{
     trajectory::{BoundedTrajectory, DIV, StateVector, UniformSpline},
 };
 
-use hifitime::{Duration, Epoch, Unit};
+use ftime::{Duration, Epoch};
 use integration::prelude::*;
 use particular::gravity::newtonian::AccelerationPaired;
-
-const TIME_UNIT: Unit = Unit::Second;
 
 #[derive(Clone, Debug)]
 pub struct NewtonianGravity {
     pub gravitational_parameters: Vec<f64>,
 }
 
-impl<V> SecondOrderODE<f64, Vec<V>> for NewtonianGravity
+impl<T, V> SecondOrderODE<T, Vec<V>> for NewtonianGravity
 where
     V: std::ops::AddAssign + Default + Copy,
     (V, f64): AccelerationPaired<Softening = f64, Output = V>,
 {
     #[inline]
-    fn eval(&mut self, _: f64, y: &Vec<V>, ddy: &mut Vec<V>) -> Result<(), EvalFailed> {
+    fn eval(&mut self, _: T, y: &Vec<V>, ddy: &mut Vec<V>) -> Result<(), EvalFailed> {
         ddy.fill(V::default());
         for i in 0..y.len() {
             let mut output_i = V::default();
@@ -43,21 +41,21 @@ where
 
 pub type NBodyProblem<V> = ODEProblem<f64, SecondOrderState<Vec<V>>, NewtonianGravity>;
 
-pub trait Interpolation<T> {
-    fn interpolate(&self, ts: &[f64], xs: &[T]) -> Option<Polynomial<T>>;
+pub trait Interpolation<V> {
+    fn interpolate(&self, ts: &[f64], xs: &[V]) -> Option<Polynomial<V>>;
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SegmentSamples<const LEN: usize, T> {
+pub struct SegmentSamples<const LEN: usize, V> {
     index: usize,
-    samples: [T; LEN],
+    samples: [V; LEN],
 }
 
-impl<const LEN: usize, T> SegmentSamples<LEN, T> {
+impl<const LEN: usize, V> SegmentSamples<LEN, V> {
     #[inline]
-    pub fn with(sample: &T) -> Self
+    pub fn with(sample: &V) -> Self
     where
-        T: Copy,
+        V: Copy,
     {
         Self {
             index: 1,
@@ -66,9 +64,9 @@ impl<const LEN: usize, T> SegmentSamples<LEN, T> {
     }
 
     #[inline]
-    pub fn push(&mut self, sample: &T)
+    pub fn push(&mut self, sample: &V)
     where
-        T: Copy,
+        V: Copy,
     {
         assert!(self.index < LEN, "too many points for segment");
         self.samples[self.index] = *sample;
@@ -91,9 +89,9 @@ impl<const LEN: usize, T> SegmentSamples<LEN, T> {
     }
 
     #[inline]
-    fn try_to_polynomial<A>(&self, ts: [f64; LEN], algorithm: &A) -> Option<Polynomial<T>>
+    fn try_to_polynomial<A>(&self, ts: [f64; LEN], algorithm: &A) -> Option<Polynomial<V>>
     where
-        A: Interpolation<T>,
+        A: Interpolation<V>,
     {
         algorithm.interpolate(&ts, &self.samples)
     }
@@ -110,7 +108,10 @@ pub struct InterpolationSamples<const LEN: usize, V, A> {
 impl<const LEN: usize, V, A> InterpolationSamples<LEN, V, A> {
     #[inline]
     pub fn time(&self) -> Duration {
-        self.last_sample_time + self.sample_period * (self.samples.len().saturating_sub(1)) as i64
+        self.last_sample_time
+            + self
+                .sample_period
+                .scaled((self.samples.len().saturating_sub(1)) as f64)
     }
 }
 
@@ -181,10 +182,6 @@ impl From<StepError> for NBodyPropagationError {
 }
 
 pub struct NBodyPropagator<D, V, M: Method<NBodyProblem<V>>, A> {
-    // The propagator keeps track of time for the integration problem with an Epoch for better
-    // precision since accumulating step sizes in a f64 leads to floating point errors for large
-    // integration time spans.
-    time: Epoch,
     integration: Integration<NBodyProblem<V>, M>,
     interpolation: Vec<InterpolationSamples<{ DIV + 1 }, V, A>>,
     _marker: std::marker::PhantomData<D>,
@@ -241,12 +238,11 @@ where
             .collect();
 
         Self {
-            time: initial_time,
             integration: M::new(FixedMethodParams::new(
-                direction.signed_delta().to_unit(TIME_UNIT),
+                direction.signed_delta().as_seconds(),
             ))
             .integrate(NBodyProblem {
-                time: initial_time.to_tai_duration().to_unit(TIME_UNIT),
+                time: initial_time.as_offset_seconds(),
                 bound: f64::INFINITY,
                 state: SecondOrderState::new(positions, velocities),
                 ode: NewtonianGravity {
@@ -260,7 +256,7 @@ where
 
     #[inline]
     pub fn time(&self) -> Epoch {
-        self.time
+        Epoch::from_offset(Duration::from_seconds(self.integration.problem.time))
     }
 
     #[inline]
@@ -268,7 +264,7 @@ where
     where
         M::Integrator: IntegratorState<Time = f64>,
     {
-        self.integration.step_size() * TIME_UNIT
+        Duration::from_seconds(self.integration.step_size())
     }
 
     #[inline]
@@ -283,8 +279,6 @@ where
         F: Fn(&mut UniformSpline<V>, &InterpolationSamples<{ DIV + 1 }, V, A>) -> Result<(), ()>,
     {
         self.integration.step()?;
-        self.time += self.delta();
-        self.integration.problem.time = self.time.to_tai_duration().to_unit(TIME_UNIT);
 
         let delta_abs = self.delta().abs();
         for ((position, interp), trajectory) in self
@@ -381,7 +375,7 @@ where
             .map(|interpolation| {
                 UniformSpline::new(
                     self.time() - interpolation.time(),
-                    interpolation.sample_period * DIV as i64,
+                    interpolation.sample_period.scaled(DIV as f64),
                 )
             })
             .collect()
@@ -453,7 +447,7 @@ where
             .map(|interpolation| {
                 UniformSpline::new(
                     self.time() + interpolation.time(),
-                    interpolation.sample_period * DIV as i64,
+                    interpolation.sample_period.scaled(DIV as f64),
                 )
             })
             .collect()

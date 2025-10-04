@@ -1,0 +1,57 @@
+{
+    "name": "Voyager Style Ship",
+    "start": "1977-09-05 00:00:00",
+    "end": "1990-01-01 00:00:00",
+    "position": [
+        144314631.9806745,
+        -41893277.312932335,
+        -18174635.2856085
+    ],
+    "velocity": [
+        8.428787777976437,
+        31.74887583199032,
+        13.890126792463144
+    ],
+    "burns": [
+        {
+            "start": "1977-09-05 02:20:07",
+            "duration": "11 min 1 s",
+            "acceleration": [
+                10.06,
+                -1.3,
+                3.35
+            ],
+            "reference": "Earth"
+        },
+        {
+            "start": "1979-10-11 23:00:09",
+            "duration": "1 min",
+            "acceleration": [
+                -2.48,
+                0.01,
+                12.329
+            ],
+            "reference": "Jupiter"
+        },
+        {
+            "start": "1982-05-29 07:59:00",
+            "duration": "20 s",
+            "acceleration": [
+                0.15,
+                0.1,
+                -0.895
+            ],
+            "reference": "Saturn"
+        },
+        {
+            "start": "1987-09-15 09:43:28",
+            "duration": "20 s",
+            "acceleration": [
+                -1.25,
+                -1.35,
+                0.18
+            ],
+            "reference": "Uranus"
+        }
+    ]
+}

@@ -7,7 +7,7 @@ use crate::{
 
 use bevy::prelude::*;
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 
 #[derive(Component)]
 pub struct BoundsTime;
@@ -84,12 +84,12 @@ fn sync_bounds(mut sim_time: ResMut<SimulationTime>, query: Query<&Trajectory, W
         .iter()
         .map(|e| e.start())
         .max()
-        .unwrap_or_else(|| Epoch::from_tai_duration(Duration::MIN));
+        .unwrap_or_else(|| Epoch::from_offset(Duration::MIN));
     sim_time.end = query
         .iter()
         .map(|e| e.end())
         .min()
-        .unwrap_or_else(|| Epoch::from_tai_duration(Duration::MAX));
+        .unwrap_or_else(|| Epoch::from_offset(Duration::MAX));
 }
 
 fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {
@@ -97,12 +97,11 @@ fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {
     let previous = sim_time.current;
 
     if !sim_time.paused {
-        let scaled_delta = sim_time.time_scale * delta;
+        let scaled_delta = delta * sim_time.time_scale;
         sim_time.set_current_clamped(previous + scaled_delta);
     }
 
-    sim_time.real_time_scale =
-        (sim_time.current - previous).total_nanoseconds() as f64 / delta.total_nanoseconds() as f64;
+    sim_time.real_time_scale = (sim_time.current - previous).as_seconds() / delta.as_seconds();
 }
 
 fn sync_position_to_time(

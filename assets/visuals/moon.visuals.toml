@@ -1,6 +1,6 @@
 [physical]
 radii = [1737.4, 1737.4, 1737.4]
-rotation_reference_epoch = "2000-01-01 12:00:00 TDB"
+rotation_reference_epoch = "2000-01-01 12:00:00"
 rotation_reference = -2.4727597949 # 0.6688328586 - π
 rotation_rate = 0.22997083313892
 right_ascension = 4.7122999686

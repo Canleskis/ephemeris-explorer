@@ -4,7 +4,7 @@ pub mod trajectory;
 pub use propagators::*;
 pub use trajectory::*;
 
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 
 pub trait Iterable: Sized {
     type Item;

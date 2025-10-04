@@ -1,12 +1,17 @@
 use std::hash::{Hash, Hasher};
 
-use bevy_math::DVec3;
 use ephemeris::{NBodyProblem, NewtonianGravity};
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
+use glam::DVec3;
 use horizons_solar_system::{SolarSystem, SolarSystemObject};
 use integration::prelude::*;
 
 const CACHE_PATH: &str = "fetch_cache";
+
+fn to_jde_tai_days(epoch: Epoch) -> f64 {
+    const JD_TAI_EPOCH: f64 = 2436204.5;
+    epoch.as_offset_seconds() / ftime::SEC_PER_DAY + JD_TAI_EPOCH
+}
 
 fn fetch_solar_systems_cached(
     bodies: &[SolarSystemObject],
@@ -35,22 +40,6 @@ fn fetch_solar_systems_cached(
     }
 
     println!("Fetching data from JPL Horizons...");
-    // for &body in bodies {
-    //     let data = horizons_solar_system::fetch_body(body, start, end, step)
-    //         .expect("Failed to fetch data");
-
-    //     println!("Successfully fetched data for {body:?}");
-    //     for (epoch, body) in data {
-    //         systems
-    //             .entry(epoch)
-    //             .or_insert_with(|| SolarSystem {
-    //                 epoch,
-    //                 bodies: Vec::new(),
-    //             })
-    //             .bodies
-    //             .push(body);
-    //     }
-    // }
     systems = horizons_solar_system::fetch_solar_system(BODIES, start, end, step)
         .unwrap()
         .into_iter()
@@ -61,7 +50,7 @@ fn fetch_solar_systems_cached(
     let cache_path = std::path::Path::new(CACHE_PATH).join(hash.to_string());
     _ = std::fs::create_dir_all(&cache_path).ok();
     for system in systems.values() {
-        let jd = system.epoch.to_jde_tt_days();
+        let jd = to_jde_tai_days(system.epoch);
         let mut file = std::fs::File::create(cache_path.join(jd.to_string()))
             .expect("Failed to create cache file");
         bincode::serde::encode_into_std_write(system, &mut file, bincode::config::standard())
@@ -89,7 +78,7 @@ fn n_body_problem_from_solar_system(system: &SolarSystem) -> NBodyProblem<DVec3>
         .collect();
 
     NBodyProblem {
-        time: system.epoch.to_tai_seconds(),
+        time: system.epoch.as_offset_seconds(),
         bound: f64::INFINITY,
         state: SecondOrderState {
             y: positions,
@@ -120,11 +109,11 @@ const BODIES: &[SolarSystemObject] = {
 
 #[test]
 fn jpl_comparison() -> Result<(), Box<dyn std::error::Error>> {
-    let start = Epoch::from_gregorian_str("2000-01-01T00:00:00 TAI")?;
-    let end = Epoch::from_gregorian_str("2001-01-01T00:00:00 TAI")?;
+    let start = "2000-01-01 00:00:00".parse()?;
+    let end = "2001-01-01 00:00:00".parse()?;
     let compare_step = Duration::from_hours(12.0);
 
-    let delta = Duration::from_hours(6.0);
+    let h = Duration::from_hours(6.0);
 
     let systems = fetch_solar_systems_cached(BODIES, start, end, compare_step);
     let end = *systems.last_key_value().unwrap().0;
@@ -132,9 +121,8 @@ fn jpl_comparison() -> Result<(), Box<dyn std::error::Error>> {
     let (initial_epoch, initial_state) = systems.first_key_value().unwrap();
     println!("Barycenter: {}", barycenter(initial_state));
 
-    type Starter<T> = Substepper<4, BlanesMoan6B<T>>;
-
-    let method: QuinlanTremaine12<_, Starter<_>> = QuinlanTremaine12::new(FixedMethodParams::new(delta.to_seconds()));
+    let method: QuinlanTremaine12<_> =
+        QuinlanTremaine12::new(FixedMethodParams::new(h.as_seconds()));
     let nbody = n_body_problem_from_solar_system(initial_state);
     let mut integrator = method.integrate(nbody);
 
@@ -143,7 +131,7 @@ fn jpl_comparison() -> Result<(), Box<dyn std::error::Error>> {
     let mut t = *initial_epoch;
     loop {
         integrator.step()?;
-        t += delta;
+        t += h;
 
         if let Some(real_system) = systems.get(&t) {
             println!("{t}:");

@@ -6,7 +6,7 @@ use crate::MainState;
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 
 #[derive(Resource)]
 pub struct UniqueAssetHandle<T: Asset>(pub Handle<T>);
@@ -277,8 +277,8 @@ impl Ship {
     ) -> Self {
         Ship {
             name,
-            start: start.floor(Duration::from_seconds(1.0)),
-            end: end.ceil(Duration::from_seconds(1.0)),
+            start,
+            end,
             position,
             velocity,
             burns,

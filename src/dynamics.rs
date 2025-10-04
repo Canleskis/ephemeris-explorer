@@ -6,7 +6,7 @@ use ephemeris::{
     eval_slice_horner, AccelerationModel, BoundedTrajectory, EvaluateTrajectory, Interpolation,
     Polynomial, PropagationContext, Transform,
 };
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 use integration::prelude::*;
 use particular::gravity::newtonian::AccelerationAt;
 
@@ -193,7 +193,7 @@ impl PropagationContext for Bodies {
     fn max_time(&self) -> Epoch {
         self.0
             .values()
-            .fold(Epoch::from_tai_duration(Duration::MAX), |end, (traj, _)| {
+            .fold(Epoch::from_offset(Duration::MAX), |end, (traj, _)| {
                 end.min(traj.end())
             })
     }
@@ -204,7 +204,7 @@ pub struct AbsTol(pub StateVector);
 
 impl Tolerance<[StateVector; 1]> for AbsTol {
     type Output = f64;
-    
+
     #[inline]
     fn err_over_tol(&mut self, _: &[StateVector; 1], [e]: &[StateVector; 1]) -> Self::Output {
         let atol = self.0;

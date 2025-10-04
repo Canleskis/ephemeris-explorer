@@ -6,7 +6,7 @@ use super::{
 use bevy::asset::AssetPath;
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -59,15 +59,7 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
                     radii: DVec3::splat(100.0),
                     right_ascension: 0.0,
                     declination: 0.0,
-                    rotation_reference_epoch: Epoch::from_gregorian_hms(
-                        2000,
-                        1,
-                        1,
-                        12,
-                        0,
-                        0,
-                        hifitime::TimeScale::TDB,
-                    ),
+                    rotation_reference_epoch: "2000-01-01 12:00:00".parse().unwrap(),
                     rotation_reference: 0.0,
                     rotation_rate: 0.0,
                 }
@@ -227,17 +219,17 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
         ctx: &mut bevy::asset::LoadContext,
     ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         #[derive(Deserialize)]
-        pub struct BodyJson {
-            pub name: String,
-            pub mu: f64,
-            pub position: DVec3,
-            pub velocity: DVec3,
+        struct BodyJson {
+            name: String,
+            mu: f64,
+            position: DVec3,
+            velocity: DVec3,
         }
 
         #[derive(Deserialize)]
-        pub struct SolarSytemJson {
+        struct SolarSytemJson {
             epoch: Epoch,
-            pub bodies: Vec<BodyJson>,
+            bodies: Vec<BodyJson>,
         }
 
         async move {
@@ -418,7 +410,6 @@ impl bevy::asset::AssetLoader for ShipLoader {
                 .filter(|c| c.is_alphanumeric() || *c == ' ')
                 .take(24)
                 .collect();
-            ship.start = ship.start.floor(Duration::from_seconds(1.0));
 
             Ok(ship)
         }

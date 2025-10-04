@@ -1,5 +1,5 @@
 {
-  "epoch": "1950-01-01T00:00:00 TAI",
+  "epoch": "1950-01-01 00:00:00",
   "bodies": [
     {
       "name": "Sun",
@@ -86,7 +86,7 @@
       ]
     },
     {
-      "name": "JupiterBarycenter",
+      "name": "Jupiter",
       "mu": 126712764.09999998,
       "position": [
         509752196.3414811,
@@ -100,7 +100,7 @@
       ]
     },
     {
-      "name": "SaturnBarycenter",
+      "name": "Saturn",
       "mu": 37940584.8418,
       "position": [
         -1347351964.270596,
@@ -114,7 +114,7 @@
       ]
     },
     {
-      "name": "UranusBarycenter",
+      "name": "Uranus",
       "mu": 5794556.3999999985,
       "position": [
         -185586918.6536981,
@@ -128,7 +128,7 @@
       ]
     },
     {
-      "name": "NeptuneBarycenter",
+      "name": "Neptune",
       "mu": 6836527.100580399,
       "position": [
         -4352063774.898198,

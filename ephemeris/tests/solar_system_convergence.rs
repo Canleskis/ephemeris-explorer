@@ -2,9 +2,9 @@ use std::f64;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
-use bevy_math::DVec3;
 use ephemeris::StateVector;
-use hifitime::{Duration, Epoch, Unit};
+use ftime::{Duration, Epoch, Unit};
+use glam::DVec3;
 use horizons_solar_system::{SolarSystem, SolarSystemObject};
 use integration::prelude::*;
 use particular::gravity::newtonian::AccelerationPaired;
@@ -232,7 +232,7 @@ fn n_body_from_solar_system(system: &SolarSystem) -> NBodyProblem {
         .collect();
 
     NBodyProblem {
-        time: system.epoch.to_tai_seconds(),
+        time: system.epoch.as_offset_seconds(),
         bound: f64::INFINITY,
         state: SecondOrderState {
             y: positions,
@@ -280,7 +280,7 @@ where
         M: NewMethod<FixedMethodParams<f64>> + Method<NBodyProblem>,
         M::Integrator: Integrator<NBodyProblem>,
     {
-        let mut h = h.to_seconds();
+        let mut h = h.as_seconds();
         let n = problem.state.y.len();
         let mut integrator = M::new(FixedMethodParams::new(h / 2.0)).integrate(problem.clone());
         let truth = integrator.solve()?.1;
@@ -376,26 +376,25 @@ const BODIES: &[SolarSystemObject] = {
 /// below 10 meters for all bodies.
 #[test]
 fn solar_system_convergence() -> Result<(), Box<dyn std::error::Error>> {
-    let start = Epoch::from_gregorian_str("2000-01-01T00:00:00 TAI")?;
-    let end = Epoch::from_gregorian_str("2001-01-01T00:00:00 TAI")?;
+    let start = "2000-01-01 00:00:00".parse()?;
+    let end = "2001-01-01 00:00:00".parse::<Epoch>()?;
 
     let mut n_body_problem = n_body_from_solar_system(&fetch_solar_system_cached(BODIES, start));
-    n_body_problem.bound = end.to_tai_seconds();
+    n_body_problem.bound = end.as_offset_seconds();
 
     use Unit::*;
-    type Starter<T> = Substepper<4, BlanesMoan6B<T>>;
 
     assert_eq!(
-        convergence::<QuinlanTremaine12<_, Starter<_>>>(&n_body_problem, 75 * Second)?,
-        10 * Minute
+        convergence::<QuinlanTremaine12<_>>(&n_body_problem, 75.0 * Second)?,
+        10.0 * Minute
     );
     assert_eq!(
-        convergence::<Stormer13<_, Starter<_>>>(&n_body_problem, 75 * Second)?,
-        5 * Minute
+        convergence::<Stormer13<_>>(&n_body_problem, 75.0 * Second)?,
+        5.0 * Minute
     );
     assert_eq!(
-        convergence::<BlanesMoan14A<_>>(&n_body_problem, 75 * Second)?,
-        10 * Minute
+        convergence::<BlanesMoan14A<_>>(&n_body_problem, 75.0 * Second)?,
+        10.0 * Minute
     );
 
     Ok(())

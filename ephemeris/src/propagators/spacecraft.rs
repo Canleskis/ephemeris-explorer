@@ -3,12 +3,10 @@ use crate::{
     trajectory::{BoundedTrajectory, CubicHermiteSplineSamples, EvaluateTrajectory, StateVector},
 };
 
-use hifitime::{Duration, Epoch, Unit};
+use ftime::{Duration, Epoch};
 use integration::prelude::*;
 use num_traits::bounds::UpperBounded;
 use std::ops::Div;
-
-const TIME_UNIT: Unit = Unit::Second;
 
 pub trait AccelerationModel {
     type Vector;
@@ -158,7 +156,7 @@ impl<V, F> Default for ManoeuvreSchedule<V, F> {
     fn default() -> Self {
         Self {
             events: vec![ManoeuvreEvent::Stop {
-                time: Epoch::from_tai_duration(Duration::MIN),
+                time: Epoch::from_offset(Duration::MIN),
             }],
             idx: 0,
         }
@@ -173,13 +171,20 @@ impl<V, F> ManoeuvreSchedule<V, F> {
     }
 
     #[inline]
-    fn last_event_idx_at(&self, time: Epoch) -> usize {
+    fn last_event_at_idx(&self, time: Epoch) -> usize {
         self.binary_search(time)
             .unwrap_or_else(|i| i.saturating_sub(1))
     }
 
     #[inline]
-    fn next_event_idx_at(&self, time: Epoch) -> Option<usize> {
+    fn last_event_at_exclusive_idx(&self, time: Epoch) -> usize {
+        self.binary_search(time)
+            .unwrap_or_else(|i| i)
+            .saturating_sub(1)
+    }
+
+    #[inline]
+    fn next_event_at_idx(&self, time: Epoch) -> Option<usize> {
         self.binary_search(time)
             .map(|i| i + 1)
             .map_or_else(Some, Some)
@@ -188,12 +193,17 @@ impl<V, F> ManoeuvreSchedule<V, F> {
 
     #[inline]
     pub fn last_event_at(&self, time: Epoch) -> &ManoeuvreEvent<V, F> {
-        &self.events[self.last_event_idx_at(time)]
+        &self.events[self.last_event_at_idx(time)]
+    }
+
+    #[inline]
+    pub fn last_event_at_exclusive(&self, time: Epoch) -> &ManoeuvreEvent<V, F> {
+        &self.events[self.last_event_at_exclusive_idx(time)]
     }
 
     #[inline]
     pub fn next_event_at(&self, time: Epoch) -> Option<&ManoeuvreEvent<V, F>> {
-        self.next_event_idx_at(time)
+        self.next_event_at_idx(time)
             .and_then(|i| self.events.get(i))
     }
 
@@ -202,7 +212,7 @@ impl<V, F> ManoeuvreSchedule<V, F> {
     #[inline]
     pub fn update(&mut self, time: Epoch) -> bool {
         let old_idx = self.idx;
-        self.idx = self.last_event_idx_at(time);
+        self.idx = self.last_event_at_idx(time);
 
         old_idx != self.idx
     }
@@ -276,7 +286,7 @@ where
         [y]: &[StateVector<V>; 1],
         [dy]: &mut [StateVector<V>; 1],
     ) -> Result<(), EvalFailed> {
-        let t = Epoch::from_tai_duration(t * TIME_UNIT);
+        let t = Epoch::from_offset(Duration::from_seconds(t));
         dy.velocity = self.context.acceleration(t, y).ok_or(EvalFailed)?
             + self.manoeuvres.acceleration(t, y).ok_or(EvalFailed)?;
         dy.position = y.velocity;
@@ -309,10 +319,6 @@ impl From<StepError> for SpacecraftPropagationError {
     }
 }
 
-// TODO: Timekeeping is done using f64s here, which unfortunately means the integration will break
-// down for a propagation at TAI durations around 200 years or more after TAI epoch. This happens
-// because the conversion between Epochs and f64s TAI seconds for setting integration bounds cannot
-// be precise enough. Our integration crate needs to support higher-precision timekeeping.
 pub struct SpacecraftPropagator<C, V, F, M: Method<SpacecraftProblem<C, V, F>>> {
     integration: Integration<SpacecraftProblem<C, V, F>, M>,
 }
@@ -351,8 +357,8 @@ where
     {
         Self {
             integration: M::new(params).integrate(SpacecraftProblem {
-                time: initial_time.to_tai_duration().to_unit(TIME_UNIT),
-                bound: context.max_time().to_tai_duration().to_unit(TIME_UNIT),
+                time: initial_time.as_offset_seconds(),
+                bound: context.max_time().as_offset_seconds(),
                 state: [initial_state],
                 ode: SpacecraftModel {
                     context,
@@ -364,7 +370,7 @@ where
 
     #[inline]
     pub fn time(&self) -> Epoch {
-        Epoch::from_tai_duration(self.integration.problem.time * TIME_UNIT)
+        Epoch::from_offset(Duration::from_seconds(self.integration.problem.time))
     }
 
     #[inline]
@@ -372,7 +378,7 @@ where
     where
         M::Integrator: IntegratorState<Time = f64>,
     {
-        self.integration.step_size() * TIME_UNIT
+        Duration::from_seconds(self.integration.step_size())
     }
 
     #[inline]
@@ -407,11 +413,7 @@ where
     }
 
     #[inline]
-    pub fn push_manoeuvre(&mut self, mut manoeuvre: ConstantThrust<V, F>) {
-        // TODO: The integrator struggles to stop at times with sub-decisecond precision. For now we
-        // round to the nearest 100ms as burn timings rarely require higher precision.
-        manoeuvre.start = manoeuvre.start.round(Duration::from_milliseconds(100.0));
-        manoeuvre.duration = manoeuvre.duration.round(Duration::from_milliseconds(100.0));
+    pub fn push_manoeuvre(&mut self, manoeuvre: ConstantThrust<V, F>) {
         self.integration.problem.ode.manoeuvres.push(manoeuvre);
     }
 
@@ -420,8 +422,7 @@ where
     where
         Integration<SpacecraftProblem<C, V, F>, M>: ResetIntegration,
     {
-        // self.time = time;
-        self.integration.problem.time = time.to_tai_duration().to_unit(TIME_UNIT);
+        self.integration.problem.time = time.as_offset_seconds();
         self.integration.problem.state[0] = state_vector;
         self.integration.reset();
     }
@@ -432,7 +433,7 @@ where
         C: PropagationContext,
     {
         let max = self.integration.problem.ode.context.max_time();
-        self.integration.problem.bound = bound.min(max).to_tai_duration().to_unit(TIME_UNIT);
+        self.integration.problem.bound = bound.min(max).as_offset_seconds();
     }
 
     #[inline]
@@ -470,7 +471,7 @@ where
     ) -> Result<(), SpacecraftPropagationError> {
         let manoeuvre_changed = self.integration.problem.ode.manoeuvres.update(self.time());
         let next_manoeuvre_change = self.integration.problem.ode.manoeuvres.next_event_time();
-        self.set_bound(next_manoeuvre_change.unwrap_or(Epoch::from_tai_duration(Duration::MAX)));
+        self.set_bound(next_manoeuvre_change.unwrap_or(Epoch::from_offset(Duration::MAX)));
         // A manoeuvre change essentially means the problem definition has changed; we reset the
         // integrator so it can be re-initialised with the new problem definition so that
         // potentially cached information is forgotten.
@@ -528,7 +529,7 @@ where
 
     #[inline]
     fn merge(lhs: &mut Self::Trajectory, rhs: Self::Trajectory) {
-        lhs.clear_after(rhs.start() - Duration::EPSILON);
+        lhs.clear_after(rhs.start());
         lhs.extend(rhs);
     }
 }

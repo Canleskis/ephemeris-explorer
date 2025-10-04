@@ -11,7 +11,7 @@ use crate::{load::LoadSolarSystemEvent, MainState};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContext, EguiContexts, EguiPlugin};
 use bevy_file_dialog::prelude::*;
-use hifitime::Epoch;
+use ftime::Epoch;
 use std::str::FromStr;
 
 pub fn is_using_pointer(query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>) -> bool {
@@ -345,11 +345,6 @@ impl<T> IdentedInfo<T> {
 #[inline]
 fn epoch_clamped_parser(min: Epoch, max: Epoch) -> impl Fn(&str) -> Option<Epoch> {
     move |buf| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
-}
-
-#[inline]
-fn precision() -> hifitime::Duration {
-    hifitime::Duration::from_milliseconds(100.0)
 }
 
 macro_rules! nformat {

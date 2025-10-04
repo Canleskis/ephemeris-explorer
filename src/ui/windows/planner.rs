@@ -3,14 +3,14 @@ use crate::{
     dynamics::{Backward, Forward, NBodyPropagator},
     load::SystemRoot,
     prediction::{ExtendPredictionEvent, PredictionPropagator, PredictionTracker},
-    time::SimulationTime,
+    simulation::SimulationTime,
     ui::WindowsUiSet,
     MainState,
 };
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use hifitime::Epoch;
+use ftime::Epoch;
 use std::str::FromStr;
 
 pub struct PredictionPlannerPlugin;
@@ -48,13 +48,13 @@ impl PredictionPlannerWindow {
         let (backward_duration, backward_label) = match parser(buffer) {
             Some(start) if prediction.is_none() => {
                 let duration = (start - default).abs();
-                let label = format!("Planned prediction length: {}", duration.approx());
+                let label = format!("Planned prediction length: {}", duration);
 
                 (Some(duration), label)
             }
             _ => {
                 if !response.has_focus() {
-                    *buffer = format!("{default:x}");
+                    *buffer = format!("{default}");
                 }
                 let label = if prediction.is_some() {
                     "Prediction in progress"

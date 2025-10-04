@@ -2,7 +2,7 @@ use crate::{
     dynamics::{Forward, NBodyPropagator, UniformSpline},
     load::{SolarSystemState, UniqueAsset},
     prediction::{PredictionContext, Trajectory},
-    time::SimulationTime,
+    simulation::SimulationTime,
     ui::WindowsUiSet,
     MainState,
 };
@@ -10,7 +10,7 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory, NBodyProblem, NewtonianGravity};
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 use integration::prelude::*;
 use thousands::Separable;
 
@@ -77,8 +77,8 @@ impl EphemeridesDebugWindow {
                             .collect();
 
                     let nbody = NBodyProblem {
-                        time: start.to_tai_seconds(),
-                        bound: start.to_tai_seconds() + duration.to_seconds(),
+                        time: start.as_offset_seconds(),
+                        bound: start.as_offset_seconds() + duration.as_seconds(),
                         state: SecondOrderState::new(positions, velocities),
                         ode: NewtonianGravity {
                             gravitational_parameters: mus,
@@ -86,12 +86,12 @@ impl EphemeridesDebugWindow {
                     };
 
                     let method: QuinlanTremaine12<f64> =
-                        QuinlanTremaine12::new(FixedMethodParams::new(dt.to_seconds()));
+                        QuinlanTremaine12::new(FixedMethodParams::new(dt.as_seconds()));
                     let mut integrator = method.integrate(nbody);
 
                     let mut errors = bevy::ecs::entity::EntityHashMap::<f64>::default();
                     while let Ok((t, state)) = integrator.advance() {
-                        let epoch = Epoch::from_tai_seconds(*t);
+                        let epoch = Epoch::from_offset(Duration::from_seconds(*t));
                         for ((entity, _, traj), position) in query.iter().zip(&state.y) {
                             let traj_position = traj.position(epoch).unwrap();
 
@@ -198,10 +198,10 @@ impl EphemeridesDebugWindow {
                                 ui.label(count.to_string());
                             });
                             row.col(|ui| {
-                                ui.label(format!("{start:x}"));
+                                ui.label(format!("{start}"));
                             });
                             row.col(|ui| {
-                                ui.label(format!("{end:x}"));
+                                ui.label(format!("{end}"));
                             });
                             row.col(|ui| {
                                 ui.label(

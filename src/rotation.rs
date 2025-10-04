@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use hifitime::Epoch;
+use ftime::Epoch;
 
 #[derive(Component)]
 pub struct Rotating {
@@ -18,7 +18,7 @@ impl Rotating {
             self.declination.sin(),
         );
 
-        let dt = (epoch - self.reference_epoch).to_unit(hifitime::Unit::Day);
+        let dt = (epoch - self.reference_epoch).as_days();
         let angle = self.reference_rotation + dt * self.rotation_rate;
 
         bevy::math::DQuat::from_axis_angle(axis, angle)

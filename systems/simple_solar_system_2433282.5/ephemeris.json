@@ -1,45 +1,45 @@
 {
-    "dt": "1 hour",
+    "dt": "6 hour",
     "settings": {
         "Sun": {
             "degree": 6,
-            "count": 75
+            "count": 12
         },
         "Mercury": {
             "degree": 7,
-            "count": 12
+            "count": 2
         },
         "Venus": {
             "degree": 7,
-            "count": 60
+            "count": 10
         },
         "Earth": {
             "degree": 7,
-            "count": 15
+            "count": 3
         },
         "Moon": {
             "degree": 6,
-            "count": 6
+            "count": 1
         },
         "Mars": {
             "degree": 7,
-            "count": 75
+            "count": 12
         },
         "Jupiter": {
             "degree": 7,
-            "count": 150
+            "count": 25
         },
         "Saturn": {
             "degree": 6,
-            "count": 150
+            "count": 25
         },
         "Uranus": {
             "degree": 6,
-            "count": 150
+            "count": 25
         },
         "Neptune": {
             "degree": 5,
-            "count": 150
+            "count": 25
         }
     }
 }

@@ -1,52 +1,68 @@
 mod data;
 pub use data::*;
 
-use bevy_math::DVec3;
-use hifitime::{Duration, Epoch, MonthName, TimeScale};
+use ftime::{Duration, Epoch};
+use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-#[inline]
-fn convert_date(date_str: &str) -> Option<String> {
+fn from_horizons_date(date_str: &str) -> Option<Epoch> {
     let date_str = date_str.split_once(' ')?.1;
+    let month_idx = date_str.find('-')? + 1;
+    let month_num = match &date_str[month_idx..month_idx + 3] {
+        "Jan" => "01",
+        "Feb" => "02",
+        "Mar" => "03",
+        "Apr" => "04",
+        "May" => "05",
+        "Jun" => "06",
+        "Jul" => "07",
+        "Aug" => "08",
+        "Sep" => "09",
+        "Oct" => "10",
+        "Nov" => "11",
+        "Dec" => "12",
+        _ => return None,
+    };
     let mut result = date_str.to_string();
-    result.push_str(" TT");
+    result.replace_range(month_idx..month_idx + 3, month_num);
+    result.parse().ok()
+}
 
-    if let Some(month_pos) = date_str.find(char::is_alphabetic) {
-        if let Ok(month) = MonthName::from_str(&date_str[month_pos..month_pos + 3]) {
-            let month_num = match month {
-                MonthName::January => "01",
-                MonthName::February => "02",
-                MonthName::March => "03",
-                MonthName::April => "04",
-                MonthName::May => "05",
-                MonthName::June => "06",
-                MonthName::July => "07",
-                MonthName::August => "08",
-                MonthName::September => "09",
-                MonthName::October => "10",
-                MonthName::November => "11",
-                MonthName::December => "12",
-            };
-            result.replace_range(month_pos..month_pos + 3, month_num);
-            return Some(result);
-        }
-    }
+fn to_iso(date_str: Epoch) -> String {
+    date_str.to_string().replace(' ', "T")
+}
 
-    None
+const TT_OFFSET: Duration = Duration::from_seconds(32.184);
+
+fn to_tai(epoch: Epoch) -> Epoch {
+    epoch - TT_OFFSET
+}
+
+fn to_tt(epoch: Epoch) -> Epoch {
+    epoch + TT_OFFSET
 }
 
 #[inline]
 fn parse_line(line: &str) -> Option<(Epoch, DVec3, DVec3)> {
     let mut data = line.split(',').map(str::trim).skip(1);
-    let epoch = Epoch::from_str(&convert_date(data.next()?)?).ok()?;
+    let epoch = from_horizons_date(data.next()?)?;
     let mut data = data.flat_map(f64::from_str);
     Some((
-        epoch.to_time_scale(TimeScale::TAI),
+        to_tai(epoch),
         DVec3::new(data.next()?, data.next()?, data.next()?),
         DVec3::new(data.next()?, data.next()?, data.next()?),
     ))
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ParseLineError;
+impl std::fmt::Display for ParseLineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "failed to parse line")
+    }
+}
+impl std::error::Error for ParseLineError {}
 
 #[inline]
 pub fn fetch_body(
@@ -68,15 +84,9 @@ pub fn fetch_body(
             ("OBJ_DATA", "NO"),
             ("CENTER", "500@0"),
             ("TIME_TYPE", "TT"),
-            (
-                "START_TIME",
-                &start.to_time_scale(TimeScale::TT).to_isoformat(),
-            ),
-            (
-                "STOP_TIME",
-                &end.to_time_scale(TimeScale::TT).to_isoformat(),
-            ),
-            ("STEP_SIZE", &format!("'{step}'")),
+            ("START_TIME", &to_iso(to_tt(start))),
+            ("STOP_TIME", &to_iso(to_tt(end))),
+            ("STEP_SIZE", &format!("'{}'", step.as_seconds())),
             ("REF_SYSTEM", "ICRF"),
             ("REF_PLANE", "FRAME"),
             ("VEC_TABLE", "2"),
@@ -90,21 +100,24 @@ pub fn fetch_body(
     let start = resp.find("$$SOE").ok_or_else(|| resp.clone())? + 6;
     let end = resp.find("$$EOE").ok_or_else(|| resp.clone())? - 1;
 
-    Ok(resp[start..end]
+    resp[start..end]
         .lines()
-        .flat_map(parse_line)
-        .map(|(epoch, pos, vel)| {
-            (
-                epoch,
-                Body {
-                    name: object.to_string(),
-                    mu: GRAVITATIONAL_PARAMETERS[&id],
-                    position: pos,
-                    velocity: vel,
-                },
-            )
+        .map(|line| {
+            parse_line(line)
+                .map(|(epoch, pos, vel)| {
+                    (
+                        epoch,
+                        Body {
+                            name: object.to_string(),
+                            mu: GRAVITATIONAL_PARAMETERS[&id],
+                            position: pos,
+                            velocity: vel,
+                        },
+                    )
+                })
+                .ok_or(Box::new(ParseLineError) as _)
         })
-        .collect())
+        .collect()
 }
 
 #[inline]

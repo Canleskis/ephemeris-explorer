@@ -3,7 +3,7 @@ use crate::{
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
     prediction::{Predicting, Trajectory},
-    time::SimulationTime,
+    simulation::SimulationTime,
     ui::{
         nformat, PlotPoints, SourceOf, TrajectoryHitPoint, TrajectoryPlot, WorldUiSet,
         PICK_THRESHOLD,
@@ -14,7 +14,7 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use ephemeris::{EvaluateTrajectory, RelativeTrajectory};
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 
 pub struct TooltipPlugin;
 
@@ -147,8 +147,8 @@ fn show_intersections(
                         |ui, range| {
                             for (j, (_, position, time)) in window_data.iter().enumerate() {
                                 let hovered = if range.contains(&j) {
-                                    let time = time.round(Duration::from_seconds(1.0));
                                     ui.scope(|ui| {
+                                        let time = *time;
                                         let is_current = time == sim_time.current();
                                         let mut text = egui::RichText::new(time.to_string());
                                         if is_current {
@@ -282,9 +282,9 @@ fn show_separation(
                     (target_trajectory, Some((target_points, target_plot)))
                 }
             };
-            const EPOCH_MIN: Epoch = Epoch::from_tai_duration(Duration::MIN);
+            const EPOCH_MIN: Epoch = Epoch::from_offset(Duration::MIN);
             let target_start = target_data.map_or(EPOCH_MIN, |(_, plot)| plot.start);
-            const EPOCH_MAX: Epoch = Epoch::from_tai_duration(Duration::MAX);
+            const EPOCH_MAX: Epoch = Epoch::from_offset(Duration::MAX);
             let target_end = target_data.map_or(EPOCH_MAX, |(_, plot)| plot.end);
 
             let trajectory = query_trajectory.get(plot.source).ok()?;
@@ -294,7 +294,11 @@ fn show_separation(
                 plot.end.min(target_end),
                 0.001,
                 1000,
-                |t1, t2, at| t1.distance_squared(t2, at).unwrap(),
+                |t1, t2, at| {
+                    t1.position(at)
+                        .unwrap()
+                        .distance_squared(t2.position(at).unwrap())
+                },
             )?;
 
             let position = points.evaluate(at)?;

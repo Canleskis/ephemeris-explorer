@@ -1,8 +1,8 @@
-use crate::time::SimulationTime;
+use crate::simulation::SimulationTime;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use hifitime::{Duration, Epoch};
+use ftime::{Duration, Epoch};
 use std::str::FromStr;
 use thousands::Separable;
 
@@ -91,10 +91,7 @@ pub fn time_controls(
             }
 
             if !edit.has_focus() {
-                *buffer = format!(
-                    "{:x}",
-                    sim_time.current().round(Duration::from_seconds(1.0))
-                );
+                *buffer = format!("{}", sim_time.current());
             }
 
             let button = egui::Button::new(if sim_time.paused { "▶" } else { "⏸" });
@@ -135,10 +132,10 @@ pub fn time_controls(
                             format!(
                                 "{}{}",
                                 if computed_time_scale < 0.0 { "-" } else { "" },
-                                (Duration::from_seconds(computed_time_scale).abs().approx())
+                                (Duration::from_seconds(computed_time_scale).abs())
                             )
                         })
-                        .custom_parser(|text| Some(Duration::from_str(text).ok()?.to_seconds())),
+                        .custom_parser(|text| Some(Duration::from_str(text).ok()?.as_seconds())),
                     TimeScale::Multiplier => slider.prefix("x").custom_formatter(|_, _| {
                         format!("{computed_time_scale:.2}").separate_with_commas()
                     }),

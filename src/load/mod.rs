@@ -17,8 +17,8 @@ use crate::{
     prediction::{ExtendPredictionEvent, PredictionContext, PredictionTracker, Trajectory},
     rotation::Rotating,
     selection::Selectable,
+    simulation::{BoundsTime, SimulationTime},
     starlight::Star,
-    time::{BoundsTime, SimulationTime},
     ui::{Labelled, TrajectoryPlot},
     MainState,
 };
@@ -27,8 +27,7 @@ use bevy::asset::RecursiveDependencyLoadState;
 use bevy::core_pipeline::Skybox;
 use bevy::prelude::*;
 use ephemeris::{EvaluateTrajectory, DIV};
-
-use hifitime::Duration;
+use ftime::Duration;
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, SubStates)]
 #[source(MainState = MainState::Loading)]
@@ -335,7 +334,7 @@ fn spawn_loaded_bodies(
                 })
                 .unwrap_or(SphereOfInfluence::Fixed(f64::INFINITY));
 
-            let sample_period = eph_settings.dt * settings.count as i64;
+            let sample_period = eph_settings.dt * settings.count as f64;
 
             let mut entity = commands.spawn_empty();
             entity.insert((
@@ -362,7 +361,7 @@ fn spawn_loaded_bodies(
                 Mu(body.mu),
                 Trajectory::new(UniformSpline::new(
                     solar_system.epoch,
-                    sample_period * DIV as i64,
+                    sample_period * DIV as f64,
                 )),
                 BoundsTime,
                 soi,
@@ -387,8 +386,8 @@ fn spawn_loaded_bodies(
                         source: cmds.parent_entity(),
                         enabled: depth <= 1,
                         color: visual.orbit.color,
-                        start: solar_system.epoch - Duration::from_parts(10, 0),
-                        end: solar_system.epoch + Duration::from_parts(10, 0),
+                        start: solar_system.epoch - Duration::from_years(1000.0),
+                        end: solar_system.epoch + Duration::from_years(1000.0),
                         threshold: 0.5,
                         max_points: 10_000,
                         reference: Some(parent),
@@ -618,8 +617,8 @@ fn spawn_ship(
                     1.0,
                 )
                 .into(),
-                start: ship.start - Duration::from_parts(10, 0),
-                end: ship.start + Duration::from_parts(10, 0),
+                start: ship.start - Duration::from_years(1000.0),
+                end: ship.start + Duration::from_years(1000.0),
                 threshold: 0.5,
                 max_points: 10_000,
                 reference: parent,
