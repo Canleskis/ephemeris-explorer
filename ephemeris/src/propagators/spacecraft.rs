@@ -131,8 +131,7 @@ impl<V, F> ManoeuvreEvent<V, F> {
     #[inline]
     pub fn time(&self) -> Epoch {
         match self {
-            Self::Start { time, .. } => *time,
-            Self::Stop { time } => *time,
+            Self::Start { time, .. } | Self::Stop { time } => *time,
         }
     }
 
@@ -233,13 +232,21 @@ impl<V, F> ManoeuvreSchedule<V, F> {
     }
 
     #[inline]
-    pub fn push(&mut self, manoeuvre: ConstantThrust<V, F>) {
-        let end = manoeuvre.end();
-        self.events.push(ManoeuvreEvent::Start {
-            time: manoeuvre.start,
-            manoeuvre,
-        });
-        self.events.push(ManoeuvreEvent::Stop { time: end });
+    pub fn insert(&mut self, manoeuvre: ConstantThrust<V, F>) {
+        let index = self.binary_search(manoeuvre.start).unwrap_or_else(|i| i);
+        self.events.insert(
+            index,
+            ManoeuvreEvent::Stop {
+                time: manoeuvre.end(),
+            },
+        );
+        self.events.insert(
+            index,
+            ManoeuvreEvent::Start {
+                time: manoeuvre.start,
+                manoeuvre,
+            },
+        );
     }
 
     #[inline]
@@ -413,8 +420,8 @@ where
     }
 
     #[inline]
-    pub fn push_manoeuvre(&mut self, manoeuvre: ConstantThrust<V, F>) {
-        self.integration.problem.ode.manoeuvres.push(manoeuvre);
+    pub fn insert_manoeuvre(&mut self, manoeuvre: ConstantThrust<V, F>) {
+        self.integration.problem.ode.manoeuvres.insert(manoeuvre);
     }
 
     #[inline]

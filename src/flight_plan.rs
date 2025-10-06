@@ -330,7 +330,7 @@ fn apply_flight_plan(
         if !burn.enabled || burn.overlaps || burn.start < min {
             continue;
         }
-        propagator.push_manoeuvre(ConstantThrust::new(
+        propagator.insert_manoeuvre(ConstantThrust::new(
             burn.start,
             burn.duration,
             burn.acceleration / 1e3,
