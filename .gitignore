@@ -3,6 +3,7 @@ target/
 **/*.rs.bk
 *.pdb
 .cargo
+.old
 
 .timetracker
 .[Vv][Ss][Cc]ode*

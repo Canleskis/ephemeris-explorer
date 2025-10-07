@@ -13,7 +13,7 @@ pub use big_space::camera::{
     camera_controller, nearest_objects_in_grid, CameraController, CameraInput,
 };
 
-pub fn is_using_pointer(query: Query<&Window, With<bevy::window::PrimaryWindow>>) -> bool {
+pub fn using_pointer(query: Query<&Window, With<bevy::window::PrimaryWindow>>) -> bool {
     query.get_single().is_ok_and(|window| {
         window.cursor_options.grab_mode == bevy::window::CursorGrabMode::Confined
     })
@@ -115,8 +115,8 @@ impl Plugin for CameraPlugin {
                 Update,
                 (
                     (
-                        crate::ui::is_using_pointer.pipe(disable_mouse_controls),
-                        crate::ui::is_using_keyboard.pipe(disable_keyboard_controls),
+                        crate::ui::using_pointer.pipe(disable_mouse_controls),
+                        crate::ui::using_keyboard.pipe(disable_keyboard_controls),
                     )
                         .after(WindowsUiSet),
                     (
@@ -170,7 +170,7 @@ fn disable_mouse_controls(
     mut disabled_controls: ResMut<DisabledControls>,
     query: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    if !is_using_pointer(query) {
+    if !using_pointer(query) {
         disabled_controls.mouse = disabled;
     }
 }

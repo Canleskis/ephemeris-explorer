@@ -78,12 +78,21 @@ impl SettingsWindow {
                                     .logarithmic(true)
                                     .text("Mouse sensitivity"),
                             )
+                            | ui.checkbox(
+                                &mut settings.user.manoeuvre_dragging,
+                                egui::RichText::new(
+                                    "Manoeuvre dragging (EXPERIMENTAL)",
+                                ),
+                            )
                     })
                     .inner
                     .changed()
                 {
+                    bevy::log::debug!("Settings were changed");
                     settings.set_changed();
                 }
+
+                ui.add_space(10.0);
 
                 ui.horizontal(|ui| {
                     if ui.button("Discard").clicked() {

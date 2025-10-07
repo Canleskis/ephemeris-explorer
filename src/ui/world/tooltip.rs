@@ -5,46 +5,140 @@ use crate::{
     prediction::{Predicting, Trajectory},
     simulation::SimulationTime,
     ui::{
-        nformat, PlotPoints, SourceOf, TrajectoryHitPoint, TrajectoryPlot, WorldUiSet,
+        nformat, ManoeuvreHitPoint, MarkerGizmoConfigGroup, PlotPoints, SourceOf,
+        TrajectoryHitPoint, TrajectoryPlot, WorldUiInteraction, WorldUiSet, MANOEUVRE_SIZE,
         PICK_THRESHOLD,
     },
     MainState,
 };
 
+use bevy::picking::backend::ray::RayMap;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use ephemeris::{EvaluateTrajectory, RelativeTrajectory};
 use ftime::{Duration, Epoch};
 
+#[derive(Clone, Copy, Debug, Default, Resource)]
+pub struct ManoeuvreDraggingOptions {
+    pub enabled: bool,
+}
+
 pub struct TooltipPlugin;
 
 impl Plugin for TooltipPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            PostUpdate,
-            (
-                show_separation.after(crate::ui::compute_plot_points_parallel),
-                show_intersections
-                    .before(bevy_egui::EguiPostUpdateSet::EndPass)
-                    .after(crate::ui::trajectory_picking),
-            )
-                .in_set(WorldUiSet)
-                .run_if(in_state(MainState::Running)),
-        );
+        app.init_resource::<ManoeuvreDraggingOptions>()
+            .init_resource::<FocusedManoeuvreHitPoint>()
+            .add_systems(
+                PostUpdate,
+                (
+                    show_separation.after(crate::ui::compute_plot_points_parallel),
+                    (
+                        focus_manoeuvre_hit,
+                        manoeuvre_dragging,
+                        show_cursor_crossings,
+                    )
+                        .chain()
+                        .before(bevy_egui::EguiPostUpdateSet::EndPass)
+                        .after(crate::ui::trajectory_picking),
+                )
+                    .in_set(WorldUiSet)
+                    .run_if(in_state(MainState::Running)),
+            );
     }
 }
 
-fn show_intersections(
+#[derive(Resource, Clone, Copy, Default)]
+pub struct FocusedManoeuvreHitPoint {
+    pub point: Option<ManoeuvreHitPoint>,
+    pub locked: bool,
+}
+
+fn focus_manoeuvre_hit(
+    mut manoeuvre_events: EventReader<ManoeuvreHitPoint>,
+    mut focused: ResMut<FocusedManoeuvreHitPoint>,
+) {
+    if !focused.locked {
+        focused.point = manoeuvre_events
+            .read()
+            .min_by(|a, b| a.distance.total_cmp(&b.distance))
+            .copied();
+    }
+}
+
+// A bit janky when there are many crossings, but still useful.
+fn manoeuvre_dragging(
+    mut commands: Commands,
+    drag_opts: Res<ManoeuvreDraggingOptions>,
+    ray_map: Res<RayMap>,
+    perspective: Single<&PerspectiveProjection, With<Camera>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut world_ui: ResMut<WorldUiInteraction>,
+    mut focused_manoeuvre_hit: ResMut<FocusedManoeuvreHitPoint>,
+    query_plot: Query<&PlotPoints>,
+    mut query_flight_plan: Query<&mut FlightPlan>,
+) {
+    if !drag_opts.enabled {
+        return;
+    }
+
+    if focused_manoeuvre_hit.point.is_some() && mouse.just_pressed(MouseButton::Left) {
+        focused_manoeuvre_hit.locked = true;
+        world_ui.using_pointer = true;
+    }
+
+    if !focused_manoeuvre_hit.locked {
+        return;
+    }
+
+    if mouse.just_released(MouseButton::Left) {
+        focused_manoeuvre_hit.locked = false;
+        world_ui.using_pointer = false;
+    }
+
+    if let Some(hit) = focused_manoeuvre_hit.point {
+        let Ok(points) = query_plot.get(hit.plot_entity) else {
+            return;
+        };
+        let Some((_, ray)) = ray_map.iter().next() else {
+            return;
+        };
+        let ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+
+        if let Some((mut time, _, _)) = points
+            .ray_distances(&ray)
+            .filter(|hit| hit.1 < hit.2 * perspective.fov * MANOEUVRE_SIZE)
+            .min_by(|a, b| a.0.cmp(&b.0))
+        {
+            let Ok(mut flight_plan) = query_flight_plan.get_mut(hit.flight_plan_entity) else {
+                return;
+            };
+
+            if let Some(burn) = flight_plan.burns.iter_mut().find(|b| b.id == hit.id) {
+                time = time.round(Duration::from_seconds(1.0));
+                if burn.start != time {
+                    burn.start = time;
+                    commands.trigger_targets(FlightPlanChanged, hit.flight_plan_entity);
+                }
+            }
+        }
+    };
+}
+
+fn show_cursor_crossings(
     mut contexts: EguiContexts,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     mut commands: Commands,
     input: Res<ButtonInput<MouseButton>>,
     mut sim_time: ResMut<SimulationTime>,
-    mut events: EventReader<TrajectoryHitPoint>,
+    drag_opts: Res<ManoeuvreDraggingOptions>,
+    mut traj_events: EventReader<TrajectoryHitPoint>,
+    focused_manoeuvre_hit: Res<FocusedManoeuvreHitPoint>,
     query_trajectory: Query<&Trajectory>,
     query_points: Query<(&Name, &PlotPoints, &TrajectoryPlot)>,
     mut query_flight_plan: Query<&mut FlightPlan>,
     camera: Single<(&GlobalTransform, &Camera, &PerspectiveProjection)>,
+    mut buffer: Local<Vec<TrajectoryHitPoint>>,
     mut persisted: Local<Vec<TrajectoryHitPoint>>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
@@ -52,8 +146,66 @@ fn show_intersections(
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
     };
+    buffer.clear();
 
-    let mut buffer = events.read().cloned().collect::<Vec<_>>();
+    if let Some(hit) = focused_manoeuvre_hit.point {
+        (|| {
+            let flight_plan = query_flight_plan.get_mut(hit.flight_plan_entity).ok()?;
+            let (burn_idx, burn) = flight_plan
+                .burns
+                .iter()
+                .enumerate()
+                .find(|(_, burn)| burn.id == hit.id)?;
+            let (name, points, plot) = query_points.get(hit.plot_entity).ok()?;
+
+            let position = points.evaluate(burn.start)?;
+            let vp_position = camera.world_to_viewport(camera_transform, position).ok()?;
+            let window_position = vp_position + Vec2::new(20.0, -20.0);
+
+            egui::Window::new("Manoeuvre")
+                .collapsible(false)
+                .resizable(false)
+                .fade_in(false)
+                .fade_out(false)
+                .title_bar(false)
+                .constrain(false)
+                .fixed_size([250.0, 200.0])
+                .fixed_pos(window_position.to_array())
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.style_mut().interaction.selectable_labels = false;
+                            ui.label(format!("{} — Burn #{}", name.as_str(), burn_idx + 1));
+                        });
+                    });
+                    ui.separator();
+                    ui.label(burn.start.to_string());
+                });
+
+            if drag_opts.enabled {
+                let direction = camera_transform.translation() - position;
+                let size = direction.length() * perspective.fov * PICK_THRESHOLD;
+                gizmos.circle(
+                    Transform::from_translation(position)
+                        .looking_to(direction, Vec3::Y)
+                        .to_isometry(),
+                    size,
+                    plot.color,
+                );
+            }
+
+            Some(())
+        })();
+    } else {
+        // Only hits close to the cursor are used (small separation).
+        buffer.extend(
+            traj_events
+                .read()
+                .filter(|hit| hit.separation < hit.distance * perspective.fov * PICK_THRESHOLD)
+                .cloned(),
+        );
+    }
+
     if let Some(min_hit) = buffer
         .iter()
         .min_by(|a, b| a.separation.total_cmp(&b.separation))
@@ -63,6 +215,8 @@ fn show_intersections(
         let min_distance = min_hit.distance * (1.0 - threshold);
         let max_distance = min_hit.distance * (1.0 + threshold);
         buffer.retain(|hit| {
+            // Filter out hits from other entities than the closest hit and keep hits that are
+            //relatively close to it.
             hit.entity == min_hit.entity && (min_distance..=max_distance).contains(&hit.distance)
         });
         if input.just_pressed(MouseButton::Left) && !ctx.is_pointer_over_area() {
@@ -71,7 +225,7 @@ fn show_intersections(
         }
     }
 
-    for (i, hits) in [&mut buffer, &mut persisted].into_iter().enumerate() {
+    for (i, hits) in [&mut *buffer, &mut *persisted].into_iter().enumerate() {
         if hits.is_empty() {
             continue;
         }
@@ -105,15 +259,15 @@ fn show_intersections(
             + Vec2::new(20.0, -20.0);
 
         egui::Window::new(name.as_str())
-            .id(egui::Id::new(i.to_string() + "#intersections"))
-            .fixed_pos(window_position.to_array())
-            .fixed_size([250.0, 200.0])
             .collapsible(false)
             .resizable(false)
             .fade_in(false)
             .fade_out(false)
             .title_bar(false)
             .constrain(false)
+            .fixed_size([250.0, 200.0])
+            .id(egui::Id::new(i.to_string() + "#intersections"))
+            .fixed_pos(window_position.to_array())
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -198,7 +352,7 @@ fn show_intersections(
                                 };
 
                                 let direction = camera_transform.translation() - *position;
-                                let size = direction.length() * PICK_THRESHOLD * perspective.fov;
+                                let size = direction.length() * perspective.fov * PICK_THRESHOLD;
 
                                 gizmos.circle(
                                     Transform::from_translation(*position)
@@ -255,7 +409,7 @@ impl SeparationPlot {
 
 fn show_separation(
     mut contexts: EguiContexts,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     camera: Single<(&GlobalTransform, &Camera, &PerspectiveProjection)>,
     query_data: Query<(&Name, &PlotPoints, &TrajectoryPlot, Option<&SeparationPlot>)>,
     // Don't display the separation if the prediction is still being computed.

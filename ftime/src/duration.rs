@@ -88,6 +88,11 @@ impl Duration {
     pub fn scaled(self, factor: f64) -> Self {
         Duration(self.0 * factor)
     }
+
+    #[inline]
+    pub fn round(self, to: Self) -> Self {
+        Duration((self.0 / to.0).round() * to.0)
+    }
 }
 
 impl std::ops::Add for Duration {

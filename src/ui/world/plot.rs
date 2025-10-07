@@ -10,7 +10,11 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use bevy::{math::DVec3, picking::backend::ray::RayMap};
+use bevy::{
+    math::bounding::{BoundingSphere, RayCast3d},
+    math::DVec3,
+    picking::backend::ray::RayMap,
+};
 use ephemeris::{
     BoundedTrajectory, EvaluateTrajectory, ManoeuvreFrame, RelativeTrajectory, StateVector,
 };
@@ -32,8 +36,6 @@ pub struct TrajectoryPlot {
     pub reference: Option<Entity>,
 }
 
-pub type SourceOf = Children;
-
 impl TrajectoryPlot {
     #[inline]
     pub fn get_relative_trajectory<'w>(
@@ -47,67 +49,11 @@ impl TrajectoryPlot {
     }
 }
 
+pub type SourceOf = Children;
+
 /// Global space position of the points of a trajectory.
 #[derive(Default, Debug, Component, Deref, DerefMut)]
 pub struct PlotPoints(pub Vec<(Epoch, Vec3)>);
-
-#[derive(Clone, Event)]
-pub struct TrajectoryHitPoint {
-    pub entity: Entity,
-    pub time: Epoch,
-    pub separation: f32,
-    pub distance: f32,
-}
-
-#[derive(Default)]
-pub struct PlotPlugin;
-
-impl Plugin for PlotPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_event::<TrajectoryHitPoint>().add_systems(
-            PostUpdate,
-            (
-                compute_plot_points_parallel,
-                (
-                    plot_trajectories,
-                    // plot_knots,
-                    plot_burns,
-                    trajectory_picking.run_if(not(
-                        crate::ui::is_using_pointer.or(crate::camera::is_using_pointer)
-                    )),
-                ),
-            )
-                .chain()
-                .in_set(WorldUiSet)
-                .run_if(in_state(MainState::Running))
-                .after(bevy::transform::TransformSystem::TransformPropagate),
-        );
-    }
-}
-
-#[inline]
-pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
-    root.local_floating_origin()
-        .grid_transform()
-        .transform_vector3(v)
-        .as_vec3()
-}
-
-#[inline]
-pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
-    // TODO: There is probably a simpler way to do this.
-    let (cell, translation) = root.translation_to_grid(pos);
-    root.global_transform(&cell, &Transform::from_translation(translation))
-        .translation()
-}
-
-#[inline]
-pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
-    StateVector {
-        velocity: transform_vector3(sv.velocity, root).as_dvec3(),
-        position: to_global_pos(sv.position, root).as_dvec3(),
-    }
-}
 
 impl PlotPoints {
     // Adapted from Principia's PlotMethod3.
@@ -192,6 +138,130 @@ impl PlotPoints {
             }
         }
     }
+
+    pub fn ray_distances<'a>(
+        &'a self,
+        ray: &'a RayCast3d,
+    ) -> impl Iterator<Item = (Epoch, f32, f32)> + 'a {
+        self.iter()
+            .zip(self.iter().skip(1))
+            .filter_map(|((t1, p1), (t2, p2))| {
+                let p1 = bevy::math::Vec3A::from(*p1);
+                let p2 = bevy::math::Vec3A::from(*p2);
+
+                let u = p2 - p1;
+                let v = *ray.direction;
+                let w = p1 - ray.origin;
+
+                let a = u.dot(u);
+                let b = u.dot(v);
+                let c = v.dot(v);
+                let d = u.dot(w);
+                let e = v.dot(w);
+
+                let denom = a * c - b * b;
+                let t_seg: f32;
+                let t_ray: f32;
+
+                // Parallel case
+                if denom < 1e-7 {
+                    t_seg = 0.0;
+                    t_ray = if b > c { d / b } else { e / c };
+                } else {
+                    t_seg = (b * e - c * d) / denom;
+                    t_ray = (a * e - b * d) / denom;
+                }
+
+                if t_ray > ray.max {
+                    return None;
+                }
+
+                if !(0.0..=1.0).contains(&t_seg) {
+                    return None;
+                }
+
+                let p_seg = p1 + u * t_seg;
+                let p_ray = ray.origin + v * t_ray;
+                let separation = p_ray.distance(p_seg);
+
+                Some((*t1 + (*t2 - *t1) * t_seg as f64, separation, t_ray))
+            })
+    }
+}
+
+#[derive(Clone, Copy, Event)]
+pub struct TrajectoryHitPoint {
+    pub entity: Entity,
+    pub time: Epoch,
+    // Closest approach distance between the ray and the trajectory.
+    pub separation: f32,
+    // Distance along the ray.
+    pub distance: f32,
+}
+
+#[derive(Clone, Copy, Event)]
+pub struct ManoeuvreHitPoint {
+    pub plot_entity: Entity,
+    pub flight_plan_entity: Entity,
+    pub id: uuid::Uuid,
+    // Distance along the ray.
+    pub distance: f32,
+}
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct MarkerGizmoConfigGroup;
+
+#[derive(Default)]
+pub struct PlotPlugin;
+
+impl Plugin for PlotPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_gizmo_group::<MarkerGizmoConfigGroup>()
+            .add_event::<TrajectoryHitPoint>()
+            .add_event::<ManoeuvreHitPoint>()
+            .add_systems(
+                PostUpdate,
+                (
+                    compute_plot_points_parallel,
+                    (
+                        // plot_knots,
+                        plot_trajectories,
+                        plot_manoeuvres,
+                        (trajectory_picking, manoeuvre_picking).run_if(not(
+                            crate::ui::using_pointer.or(crate::camera::using_pointer),
+                        )),
+                    ),
+                )
+                    .chain()
+                    .in_set(WorldUiSet)
+                    .run_if(in_state(MainState::Running))
+                    .after(bevy::transform::TransformSystem::TransformPropagate),
+            );
+    }
+}
+
+#[inline]
+pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
+    root.local_floating_origin()
+        .grid_transform()
+        .transform_vector3(v)
+        .as_vec3()
+}
+
+#[inline]
+pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
+    // TODO: There is probably a simpler way to do this.
+    let (cell, translation) = root.translation_to_grid(pos);
+    root.global_transform(&cell, &Transform::from_translation(translation))
+        .translation()
+}
+
+#[inline]
+pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
+    StateVector {
+        velocity: transform_vector3(sv.velocity, root).as_dvec3(),
+        position: to_global_pos(sv.position, root).as_dvec3(),
+    }
 }
 
 pub fn compute_plot_points_parallel(
@@ -260,87 +330,95 @@ pub fn compute_plot_points_parallel(
     });
 }
 
-pub const PICK_THRESHOLD: f32 = 6e-3;
-
-pub fn trajectory_picking(
-    ray_map: Res<RayMap>,
-    query_clickable: Query<(&GlobalTransform, &Selectable)>,
-    perspective: Single<&PerspectiveProjection, With<Camera>>,
-    query_points: Query<(Entity, &PlotPoints)>,
-    mut events: EventWriter<TrajectoryHitPoint>,
-) {
-    let Some((_, ray)) = ray_map.iter().next() else {
-        return;
-    };
-    let mut ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
-
-    ray.max = query_clickable
-        .iter()
-        .filter_map(|(transform, clickable)| {
-            let distance = transform.translation().distance(Vec3::from(ray.origin));
-            ray.sphere_intersection_at(&bevy::math::bounding::BoundingSphere::new(
-                transform.translation(),
-                clickable.radius + distance * perspective.fov * 1e-2,
-            ))
-        })
-        .fold(f32::MAX, f32::min);
-
-    for (entity, points) in query_points.iter() {
-        for ((t1, p1), (t2, p2)) in points.iter().zip(points.iter().skip(1)) {
-            let p1 = bevy::math::Vec3A::from(*p1);
-            let p2 = bevy::math::Vec3A::from(*p2);
-
-            let seg_direction = p2 - p1;
-            let w0 = ray.origin - p1;
-
-            let a = ray.direction.dot(*ray.direction);
-            let b = ray.direction.dot(seg_direction);
-            let c = seg_direction.dot(seg_direction);
-            let d = ray.direction.dot(w0);
-            let e = seg_direction.dot(w0);
-
-            let denom = a * c - b * b;
-
-            let t_ray = if denom.abs() > f32::EPSILON {
-                (b * e - c * d) / denom
-            } else {
-                0.0
-            }
-            .max(0.0);
-            let t_seg = (a * e - b * d) / denom;
-
-            if t_ray > ray.max {
-                continue;
-            }
-
-            if !(0.0..=1.0).contains(&t_seg) {
-                continue;
-            }
-
-            let closest_point_seg = p1 + seg_direction * t_seg;
-            let closest_point_ray = ray.origin + ray.direction * t_ray;
-            let separation = (closest_point_ray - closest_point_seg).length();
-
-            if separation < t_ray * perspective.fov * PICK_THRESHOLD {
-                events.send(TrajectoryHitPoint {
-                    entity,
-                    time: *t1 + (*t2 - *t1) * t_seg as f64,
-                    separation,
-                    distance: t_ray,
-                });
-            }
-        }
-    }
-}
-
 fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &TrajectoryPlot)>) {
     for (points, plot) in query.iter() {
         gizmos.linestrip(points.iter().map(|(_, p)| *p), plot.color);
     }
 }
 
-fn plot_burns(
-    mut gizmos: Gizmos,
+pub const PICK_THRESHOLD: f32 = 6e-3;
+
+pub fn trajectory_picking(
+    ray_map: Res<RayMap>,
+    query_clickable: Query<(&GlobalTransform, &Selectable)>,
+    perspective: Single<&PerspectiveProjection, With<Camera>>,
+    query_plot: Query<(Entity, &PlotPoints)>,
+    mut events: EventWriter<TrajectoryHitPoint>,
+) {
+    let Some((_, ray)) = ray_map.iter().next() else {
+        return;
+    };
+    let mut ray = RayCast3d::from_ray(*ray, f32::MAX);
+
+    ray.max = query_clickable
+        .iter()
+        .filter_map(|(transform, clickable)| {
+            let distance = transform.translation().distance(Vec3::from(ray.origin));
+            ray.sphere_intersection_at(&BoundingSphere::new(
+                transform.translation(),
+                clickable.radius + distance * perspective.fov * 1e-2,
+            ))
+        })
+        .fold(f32::MAX, f32::min);
+
+    for (entity, points) in query_plot.iter() {
+        events.send_batch(
+            points
+                .ray_distances(&ray)
+                .map(|(time, separation, distance)| TrajectoryHitPoint {
+                    entity,
+                    time,
+                    separation,
+                    distance,
+                }),
+        );
+    }
+}
+
+pub const MANOEUVRE_SIZE: f32 = 0.02;
+
+fn manoeuvre_picking(
+    ray_map: Res<RayMap>,
+    query: Query<(Entity, &FlightPlan, &SourceOf)>,
+    query_plot: Query<(Entity, &PlotPoints)>,
+    perspective: Single<&PerspectiveProjection, With<Camera>>,
+    mut events: EventWriter<ManoeuvreHitPoint>,
+) {
+    let Some((_, ray)) = ray_map.iter().next() else {
+        return;
+    };
+    let ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+
+    for (fp_entity, flight_plan, source_of) in query.iter() {
+        for (entity, points) in query_plot.iter_many(source_of) {
+            for burn in flight_plan.burns.iter() {
+                if !burn.enabled || burn.overlaps {
+                    continue;
+                }
+
+                let Some(world_pos) = points.evaluate(burn.start) else {
+                    continue;
+                };
+
+                let distance = world_pos.distance(Vec3::from(ray.origin));
+                if let Some(distance) = ray.sphere_intersection_at(&BoundingSphere::new(
+                    world_pos,
+                    distance * perspective.fov * MANOEUVRE_SIZE / 2.0,
+                )) {
+                    events.send(ManoeuvreHitPoint {
+                        plot_entity: entity,
+                        flight_plan_entity: fp_entity,
+                        id: burn.id,
+                        distance,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn plot_manoeuvres(
+    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&Trajectory, &FlightPlan, &SourceOf)>,
     query_trajectory: Query<&Trajectory>,
     query_plot: Query<(&PlotPoints, &TrajectoryPlot)>,
@@ -375,8 +453,8 @@ fn plot_burns(
                 let Some(world_pos) = points.evaluate(burn.start) else {
                     continue;
                 };
-                let direction = camera.0.translation() - world_pos;
-                let size = direction.length() * 0.02 * camera.1.fov;
+                let size =
+                    camera.0.translation().distance(world_pos) * camera.1.fov * MANOEUVRE_SIZE;
                 gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
                 gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
                 gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);

@@ -26,7 +26,7 @@ impl Plugin for SelectionPlugin {
                 (
                     entity_picker
                         .never_param_warn()
-                        .run_if(not(crate::ui::is_using_pointer)),
+                        .run_if(not(crate::ui::using_pointer)),
                     select_clicked,
                 )
                     .chain()

@@ -14,18 +14,32 @@ use bevy_file_dialog::prelude::*;
 use ftime::Epoch;
 use std::str::FromStr;
 
-pub fn is_using_pointer(query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>) -> bool {
+pub fn egui_using_pointer(query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>) -> bool {
     query
         .get_single()
         .map(EguiContext::get)
         .is_ok_and(|ctx| ctx.is_pointer_over_area() || ctx.is_using_pointer())
 }
 
-pub fn is_using_keyboard(query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>) -> bool {
+pub fn egui_using_keyboard(query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>) -> bool {
     query
         .get_single()
         .map(EguiContext::get)
         .is_ok_and(|ctx| ctx.wants_keyboard_input())
+}
+
+pub fn using_pointer(
+    world_ui: Res<WorldUiInteraction>,
+    query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>,
+) -> bool {
+    world_ui.using_pointer || egui_using_pointer(query)
+}
+
+pub fn using_keyboard(
+    world_ui: Res<WorldUiInteraction>,
+    query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>,
+) -> bool {
+    world_ui.using_keyboard || egui_using_keyboard(query)
 }
 
 #[derive(Default)]

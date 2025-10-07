@@ -63,6 +63,13 @@ impl Epoch {
             offset: self.offset.floor(to),
         }
     }
+
+    #[inline]
+    pub fn round(self, to: Duration) -> Self {
+        Epoch {
+            offset: self.offset.round(to),
+        }
+    }
 }
 
 impl std::ops::Add<Duration> for Epoch {

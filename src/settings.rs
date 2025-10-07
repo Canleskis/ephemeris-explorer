@@ -1,4 +1,7 @@
-use crate::{load::LoadSolarSystemEvent, ui::LabelSettings};
+use crate::{
+    load::LoadSolarSystemEvent,
+    ui::{LabelSettings, ManoeuvreDraggingOptions},
+};
 
 use bevy::{
     core_pipeline::bloom::Bloom,
@@ -32,6 +35,7 @@ pub struct UserSettings {
     pub line_width: f32,
     pub show_labels: bool,
     pub mouse_sensitivity: f64,
+    pub manoeuvre_dragging: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -69,6 +73,7 @@ impl Default for AppSettings {
                     show_labels: true,
                     line_width: 1.0,
                     mouse_sensitivity: 1.0,
+                    manoeuvre_dragging: false,
                 },
                 window: WindowSettings {
                     size: Vec2::new(1280.0, 720.0),
@@ -83,6 +88,7 @@ impl AppSettings {
         mut settings: ResMut<AppSettings>,
         label_settings: ResMut<LabelSettings>,
         gizmos_config: ResMut<GizmoConfigStore>,
+        drag_opts: ResMut<ManoeuvreDraggingOptions>,
         mut controller: Query<&mut CameraController>,
         mut window: Query<&mut Window>,
         mut bloom: Query<&mut Bloom>,
@@ -150,6 +156,10 @@ impl AppSettings {
         label_settings
             .map_unchanged(|s| &mut s.enabled)
             .set_if_neq(settings.user.show_labels);
+
+        drag_opts
+            .map_unchanged(|o| &mut o.enabled)
+            .set_if_neq(settings.user.manoeuvre_dragging);
 
         for event in load_event.read() {
             settings.user.system_path = event.path.clone();
