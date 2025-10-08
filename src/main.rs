@@ -22,7 +22,7 @@ use crate::{
     camera::CameraPlugin,
     dynamics::{Backward, Forward, NBodyPropagator, SpacecraftPropagator},
     flight_plan::FlightPlanPlugin,
-    floating_origin::FloatingOriginPlugin,
+    floating_origin::{BigSpaceCorePlugin, BigSpacePropagationPlugin, BigSpaceValidationPlugin},
     load::{LoadSolarSystemEvent, LoadSystemPlugin},
     prediction::PredictionPlugin,
     selection::SelectionPlugin,
@@ -47,12 +47,11 @@ impl PluginGroup for MainPlugins {
     fn build(self) -> bevy::app::PluginGroupBuilder {
         bevy::app::PluginGroupBuilder::start::<Self>()
             .add(bevy::app::PanicHandlerPlugin)
+            .add(bevy::app::TaskPoolPlugin::default())
             .add(bevy::log::LogPlugin::default())
-            .add(bevy::core::TaskPoolPlugin::default())
-            .add(bevy::core::TypeRegistrationPlugin)
-            .add(bevy::core::FrameCountPlugin)
+            .add(bevy::diagnostic::FrameCountPlugin)
             .add(bevy::time::TimePlugin)
-            .add(bevy::hierarchy::HierarchyPlugin)
+            // .add(bevy::hierarchy::HierarchyPlugin)
             .add(bevy::diagnostic::DiagnosticsPlugin)
             .add(bevy::input::InputPlugin)
             .add(bevy::app::ScheduleRunnerPlugin::default())
@@ -68,13 +67,16 @@ impl PluginGroup for MainPlugins {
             })
             .add(bevy::a11y::AccessibilityPlugin)
             .add(bevy::app::TerminalCtrlCHandlerPlugin)
-            .add(bevy::asset::AssetPlugin::default())
+            .add(bevy::asset::AssetPlugin {
+                unapproved_path_mode: bevy::asset::UnapprovedPathMode::Allow,
+                ..default()
+            })
             .add(bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default())
             .add(bevy::render::RenderPlugin::default())
             .add(bevy::render::texture::ImagePlugin::default())
             .add(bevy::render::pipelined_rendering::PipelinedRenderingPlugin)
             .add(bevy::core_pipeline::CorePipelinePlugin)
-            .add(bevy::sprite::SpritePlugin::default())
+            .add(bevy::sprite::SpritePlugin)
             .add(bevy::text::TextPlugin)
             .add(bevy::pbr::PbrPlugin::default())
             .add(bevy::gizmos::GizmoPlugin)
@@ -82,12 +84,14 @@ impl PluginGroup for MainPlugins {
             .add(bevy::picking::input::PointerInputPlugin::default())
             .add(bevy::picking::PickingPlugin::default())
             .add(bevy::picking::InteractionPlugin)
-            .add(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+            .add(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
             .add(PersistentSettingsPlugin)
             .add(CameraPlugin)
             .add(SelectionPlugin)
             .add(StarLightPlugin)
-            .add(FloatingOriginPlugin::default())
+            .add(BigSpaceCorePlugin)
+            .add(BigSpacePropagationPlugin)
+            .add(BigSpaceValidationPlugin)
             .add(SimulationTimePlugin)
             .add(OrbitalAnalysisPlugin)
             .add(UiPlugin)
@@ -130,7 +134,7 @@ fn set_window_icon(
     windows: NonSend<bevy::winit::WinitWindows>,
     primary_window: Query<Entity, With<bevy::window::PrimaryWindow>>,
 ) {
-    let primary_entity = primary_window.single();
+    let primary_entity = primary_window.single().unwrap();
     let Some(primary) = windows.get_window(primary_entity) else {
         return;
     };
@@ -153,7 +157,7 @@ fn load_initial_solar_system(
 ) {
     match LoadSolarSystemEvent::try_from_dir(&settings.user.system_path, &asset_server) {
         Ok(event) => {
-            events.send(event);
+            events.write(event);
         }
         Err(err) => {
             panic!("Failed to load solar system: {err}");
@@ -161,13 +165,16 @@ fn load_initial_solar_system(
     }
 }
 
-fn delay_window_visiblity(mut window: Query<&mut Window>, frames: Res<bevy::core::FrameCount>) {
+fn delay_window_visiblity(
+    mut window: Query<&mut Window>,
+    frames: Res<bevy::diagnostic::FrameCount>,
+) {
     // The delay may be different for your app or system.
     if frames.0 == 3 {
         // At this point the gpu is ready to show the app so we can make the window visible.
         // Alternatively, you could toggle the visibility in Startup.
         // It will work, but it will have one white frame before it starts rendering
-        window.single_mut().visible = true;
+        window.single_mut().unwrap().visible = true;
     }
 }
 

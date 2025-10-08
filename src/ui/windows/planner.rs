@@ -9,7 +9,7 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use ftime::Epoch;
 use std::str::FromStr;
 
@@ -18,7 +18,7 @@ pub struct PredictionPlannerPlugin;
 impl Plugin for PredictionPlannerPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
+            EguiPrimaryContextPass,
             PredictionPlannerWindow::show
                 .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
@@ -136,9 +136,9 @@ impl PredictionPlannerWindow {
         mut backward_time: Local<Option<std::time::Duration>>,
     ) {
         // One system for now (maybe ever).
-        let (root, forward, backward) = prediction.get_single().expect("No root entity found");
+        let (root, forward, backward) = prediction.single().expect("No root entity found");
 
-        let Some(ctx) = contexts.try_ctx_mut() else {
+        let Ok(ctx) = contexts.ctx_mut() else {
             return;
         };
 

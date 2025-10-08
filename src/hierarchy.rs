@@ -1,7 +1,6 @@
 //! Similar to `bevy_hierarchy` but simply for an informative relationship.
 
-use bevy::ecs::query::{QueryData, QueryFilter, WorldQuery};
-use bevy::ecs::world::Command;
+use bevy::ecs::query::{QueryData, QueryFilter};
 use bevy::prelude::*;
 use smallvec::SmallVec;
 
@@ -97,7 +96,7 @@ fn update_old_orbiting(world: &mut World, body: Entity, orbiting: Entity) {
 /// Traverses the hierarchy breadth-first.
 pub struct OrbitingDescendantIter<'w, 's, D: QueryData, F: QueryFilter>
 where
-    D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>,
+    D::ReadOnly: QueryData<Item<'w> = &'w OrbitedBy>,
 {
     orbited_by_query: &'w Query<'w, 's, D, F>,
     vecdeque: std::collections::VecDeque<Entity>,
@@ -105,7 +104,7 @@ where
 
 impl<'w, 's, D: QueryData, F: QueryFilter> OrbitingDescendantIter<'w, 's, D, F>
 where
-    D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>,
+    D::ReadOnly: QueryData<Item<'w> = &'w OrbitedBy>,
 {
     /// Returns a new [`DescendantIter`].
     pub fn new(orbited_by_query: &'w Query<'w, 's, D, F>, entity: Entity) -> Self {
@@ -123,7 +122,7 @@ where
 
 impl<'w, D: QueryData, F: QueryFilter> Iterator for OrbitingDescendantIter<'w, '_, D, F>
 where
-    D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>,
+    D::ReadOnly: QueryData<Item<'w> = &'w OrbitedBy>,
 {
     type Item = Entity;
 
@@ -141,13 +140,13 @@ where
 pub trait HierarchyQueryExt<'w, 's, D: QueryData, F: QueryFilter> {
     fn iter_orbiting_descendants(&'w self, entity: Entity) -> OrbitingDescendantIter<'w, 's, D, F>
     where
-        D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>;
+        D::ReadOnly: QueryData<Item<'w> = &'w OrbitedBy>;
 }
 
 impl<'w, 's, D: QueryData, F: QueryFilter> HierarchyQueryExt<'w, 's, D, F> for Query<'w, 's, D, F> {
     fn iter_orbiting_descendants(&'w self, entity: Entity) -> OrbitingDescendantIter<'w, 's, D, F>
     where
-        D::ReadOnly: WorldQuery<Item<'w> = &'w OrbitedBy>,
+        D::ReadOnly: QueryData<Item<'w> = &'w OrbitedBy>,
     {
         OrbitingDescendantIter::new(self, entity)
     }

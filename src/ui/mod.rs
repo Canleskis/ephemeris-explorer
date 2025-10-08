@@ -9,37 +9,25 @@ pub use world::*;
 use crate::{load::LoadSolarSystemEvent, MainState};
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContext, EguiContexts, EguiPlugin};
+use bevy_egui::{
+    egui, EguiContext, EguiContexts, EguiPlugin, EguiPrimaryContextPass,
+};
 use bevy_file_dialog::prelude::*;
 use ftime::Epoch;
 use std::str::FromStr;
 
-pub fn egui_using_pointer(query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>) -> bool {
-    query
-        .get_single()
-        .map(EguiContext::get)
-        .is_ok_and(|ctx| ctx.is_pointer_over_area() || ctx.is_using_pointer())
-}
-
-pub fn egui_using_keyboard(query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>) -> bool {
-    query
-        .get_single()
-        .map(EguiContext::get)
-        .is_ok_and(|ctx| ctx.wants_keyboard_input())
-}
-
 pub fn using_pointer(
     world_ui: Res<WorldUiInteraction>,
-    query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>,
+    egui_input_res: Res<bevy_egui::input::EguiWantsInput>,
 ) -> bool {
-    world_ui.using_pointer || egui_using_pointer(query)
+    world_ui.using_pointer || bevy_egui::input::egui_wants_any_pointer_input(egui_input_res)
 }
 
 pub fn using_keyboard(
     world_ui: Res<WorldUiInteraction>,
-    query: Query<&EguiContext, With<bevy::window::PrimaryWindow>>,
+    egui_input_res: Res<bevy_egui::input::EguiWantsInput>,
 ) -> bool {
-    world_ui.using_keyboard || egui_using_keyboard(query)
+    world_ui.using_keyboard || bevy_egui::input::egui_wants_any_keyboard_input(egui_input_res)
 }
 
 #[derive(Default)]
@@ -47,9 +35,13 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
+        app.insert_resource(bevy_egui::EguiGlobalSettings {
+            auto_create_primary_context: false,
+            ..default()
+        })
+        .add_plugins((
             bevy::ui::UiPlugin::default(),
-            EguiPlugin,
+            EguiPlugin::default(),
             WorldUiPlugin,
             FixedUiPlugin,
             WindowsUiPlugin,
@@ -59,17 +51,20 @@ impl Plugin for UiPlugin {
                 .with_save_file::<ExportSolarSystemFile>()
                 .with_save_file::<ExportShipFile>(),
         ))
-        .add_systems(Startup, setup_egui)
+        .add_observer(setup_egui_visuals)
         .add_systems(
-            Update,
-            (load_solar_system_state, top_menu.before(FixedUiSet))
+            EguiPrimaryContextPass,
+            top_menu
+                .before(FixedUiSet)
                 .run_if(in_state(MainState::Running)),
-        );
+        )
+        .add_systems(Update, load_solar_system_state);
     }
 }
 
-fn setup_egui(mut contexts: EguiContexts) {
-    if let Some(ctx) = contexts.try_ctx_mut() {
+fn setup_egui_visuals(trigger: Trigger<OnInsert, EguiContext>, mut query: Query<&mut EguiContext>) {
+    if let Ok(mut ctx) = query.get_mut(trigger.target()) {
+        let ctx = ctx.get_mut();
         let font_definitions = {
             // From egui
             let font_data = std::collections::BTreeMap::from([
@@ -83,7 +78,7 @@ fn setup_egui(mut contexts: EguiContexts) {
                 (
                     "Montserrat".to_owned(),
                     egui::FontData::from_static(include_bytes!(
-                        "../../assets/fonts/Montserrat-Regular.ttf"
+                        "../../assets/fonts/Montserrat-Medium.ttf"
                     ))
                     .into(),
                 ),
@@ -105,7 +100,6 @@ fn setup_egui(mut contexts: EguiContexts) {
                     ))
                     .tweak(egui::FontTweak {
                         scale: 0.90, // make it smaller
-                        // probably not correct, but this does make texts look better (#2724 for details)
                         ..Default::default()
                     })
                     .into(),
@@ -204,7 +198,7 @@ fn load_solar_system_state(
     for picked in ev_picked.read() {
         match LoadSolarSystemEvent::try_from_dir(&picked.path, &asset_server) {
             Ok(event) => {
-                events.send(event);
+                events.write(event);
             }
             Err(err) => {
                 bevy::log::error!(
@@ -226,7 +220,7 @@ fn top_menu(
     spawner: Option<Res<ShipSpawnerWindow>>,
     settings: Option<Res<SettingsWindow>>,
 ) {
-    let Some(ctx) = contexts.try_ctx_mut() else {
+    let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
 

@@ -6,7 +6,7 @@ pub use ui::*;
 
 use crate::{
     analysis::{under_soi, SphereOfInfluence},
-    camera::{CameraController, CanFollow, Followed, OrbitCamera},
+    camera::{BigSpaceCameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
         Backward, Bodies, CubicHermiteSplineSamples, Forward, LeastSquaresFit, Mu, NBodyPropagator,
         SpacecraftPropagator, StateVector, UniformSpline, DEFAULT_PARAMS,
@@ -25,9 +25,11 @@ use crate::{
 
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::core_pipeline::Skybox;
+use bevy::platform::hash::FixedState;
 use bevy::prelude::*;
 use ephemeris::{EvaluateTrajectory, DIV};
 use ftime::Duration;
+use std::hash::{BuildHasher, Hash};
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, SubStates)]
 #[source(MainState = MainState::Loading)]
@@ -108,7 +110,7 @@ impl Plugin for LoadSystemPlugin {
         bevy::asset::load_internal_binary_asset!(
             app,
             Handle::default(),
-            "../../assets/fonts/Montserrat-Regular.ttf",
+            "../../assets/fonts/Montserrat-Medium.ttf",
             |bytes: &[u8], _: String| { Font::try_from_bytes(bytes.to_vec()).unwrap() }
         );
     }
@@ -383,7 +385,7 @@ fn spawn_loaded_bodies(
                 cmds.spawn((
                     Name::new(name.to_string()),
                     TrajectoryPlot {
-                        source: cmds.parent_entity(),
+                        source: cmds.target_entity(),
                         enabled: depth <= 1,
                         color: visual.orbit.color,
                         start: solar_system.epoch - Duration::from_years(1000.0),
@@ -529,9 +531,7 @@ fn spawn_ship(
         .map(|(e, traj, mu)| (e, (traj.clone(), *mu)))
         .collect();
 
-    let mut rng = rand::thread_rng();
-
-    let mut entity = match trigger.entity() {
+    let mut entity = match trigger.target() {
         entity if entity == Entity::PLACEHOLDER => commands.spawn_empty(),
         entity => commands.entity(entity),
     };
@@ -569,6 +569,14 @@ fn spawn_ship(
             return;
         }
     };
+
+    let hash = FixedState::default().hash_one(&ship.name);
+    let color = LinearRgba::new(
+        (hash & 0xFF) as f32 / 255.0,
+        ((hash >> 4) & 0xFF) as f32 / 255.0,
+        ((hash >> 8) & 0xFF) as f32 / 255.0,
+        1.0,
+    );
 
     entity
         .insert((
@@ -610,13 +618,7 @@ fn spawn_ship(
             TrajectoryPlot {
                 source: id,
                 enabled: true,
-                color: LinearRgba::new(
-                    rand::Rng::gen_range(&mut rng, 0.0..1.0),
-                    rand::Rng::gen_range(&mut rng, 0.0..1.0),
-                    rand::Rng::gen_range(&mut rng, 0.0..1.0),
-                    1.0,
-                )
-                .into(),
+                color: color.into(),
                 start: ship.start - Duration::from_years(1000.0),
                 end: ship.start + Duration::from_years(1000.0),
                 threshold: 0.5,
@@ -642,15 +644,16 @@ fn setup_camera(
     commands
         .spawn((
             // No state scope needed as it is always a child of the root.
+            bevy_egui::PrimaryEguiContext,
             Camera3d::default(),
             Camera {
                 hdr: true,
                 ..default()
             },
-            PerspectiveProjection {
+            Projection::Perspective(PerspectiveProjection {
                 near: 0.001,
                 ..default()
-            },
+            }),
             bevy::render::camera::Exposure { ev100: 12.0 },
             bevy::core_pipeline::bloom::Bloom::NATURAL,
             Msaa::Sample4,
@@ -662,7 +665,7 @@ fn setup_camera(
             FloatingOrigin,
             GridCell::default(),
             OrbitCamera::default().with_distance(5e4),
-            CameraController::default()
+            BigSpaceCameraController::default()
                 .with_speed_bounds([1e-17, 10e35])
                 .with_smoothness(0.0, 0.0)
                 .with_speed(1.0)
@@ -671,7 +674,7 @@ fn setup_camera(
                 .with_speed_roll(0.5),
             IsDefaultUiCamera,
         ))
-        .set_parent(*root);
+        .insert(ChildOf(*root));
 }
 
 fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>) {
@@ -707,11 +710,11 @@ fn ephemerides_bodies_progress(
     }
 
     let forward_progress = forward
-        .get_single()
+        .single()
         .map(PredictionTracker::progress)
         .unwrap_or(1.0);
     let backward_progress = backward
-        .get_single()
+        .single()
         .map(PredictionTracker::progress)
         .unwrap_or(1.0);
     let progress = (forward_progress + backward_progress) / 2.0;

@@ -42,7 +42,7 @@ fn setup_lights(mut commands: Commands, query: Query<(Entity, &Star), Added<Star
                 }
                 .build(),
             ))
-            .set_parent(entity);
+            .insert(ChildOf(entity));
     }
 }
 

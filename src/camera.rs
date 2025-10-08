@@ -1,5 +1,5 @@
 use crate::{
-    floating_origin::{BigSpace, Grid, GridCell, Precision},
+    floating_origin::{BigSpace, Grid, GridCell},
     ui::WindowsUiSet,
     MainState,
 };
@@ -10,11 +10,11 @@ use bevy::{
     prelude::*,
 };
 pub use big_space::camera::{
-    camera_controller, nearest_objects_in_grid, CameraController, CameraInput,
+    camera_controller, nearest_objects_in_grid, BigSpaceCameraController, BigSpaceCameraInput,
 };
 
 pub fn using_pointer(query: Query<&Window, With<bevy::window::PrimaryWindow>>) -> bool {
-    query.get_single().is_ok_and(|window| {
+    query.single().is_ok_and(|window| {
         window.cursor_options.grab_mode == bevy::window::CursorGrabMode::Confined
     })
 }
@@ -37,7 +37,7 @@ pub struct Followed(pub Option<Entity>);
 
 pub struct SetFollowed(pub Option<Entity>);
 
-impl bevy::ecs::world::Command for SetFollowed {
+impl Command for SetFollowed {
     fn apply(self, world: &mut World) {
         let Some(followed) = self.0 else {
             return;
@@ -45,12 +45,16 @@ impl bevy::ecs::world::Command for SetFollowed {
         let can_follow = *world.entity(followed).get::<CanFollow>().unwrap();
         let (camera_entity, mut orbit) = world
             .query::<(Entity, &mut OrbitCamera)>()
-            .single_mut(world);
+            .single_mut(world)
+            .unwrap();
         orbit.min_distance = can_follow.min_distance;
         orbit.max_distance = can_follow.max_distance;
 
         world.resource_mut::<Followed>().bypass_change_detection().0 = Some(followed);
-        world.commands().entity(camera_entity).set_parent(followed);
+        world
+            .commands()
+            .entity(camera_entity)
+            .insert(ChildOf(followed));
         world
             .resource_mut::<NextState<CameraState>>()
             .set(CameraState::Orbit);
@@ -88,7 +92,7 @@ pub trait CameraInputExt {
     fn any_kb_input(&self) -> bool;
 }
 
-impl CameraInputExt for CameraInput {
+impl CameraInputExt for BigSpaceCameraInput {
     fn any_mouse_input(&self) -> bool {
         self.pitch != 0.0 || self.yaw != 0.0
     }
@@ -104,7 +108,7 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Followed>()
-            .insert_resource(CameraInput {
+            .insert_resource(BigSpaceCameraInput {
                 defaults_disabled: true,
                 ..default()
             })
@@ -126,7 +130,8 @@ impl Plugin for CameraPlugin {
                     ),
                     (
                         change_camera_state,
-                        hide_cursor.run_if(|input: Res<CameraInput>| input.any_mouse_input()),
+                        hide_cursor
+                            .run_if(|input: Res<BigSpaceCameraInput>| input.any_mouse_input()),
                         show_cursor.run_if(|mouse: Res<ButtonInput<MouseButton>>| {
                             mouse.any_just_released([MouseButton::Left, MouseButton::Right])
                         }),
@@ -144,8 +149,8 @@ impl Plugin for CameraPlugin {
                         orbit_controls.run_if(in_state(CameraState::Orbit)),
                         (
                             sync_camera_distance,
-                            nearest_objects_in_grid::<Precision>,
-                            camera_controller::<Precision>,
+                            nearest_objects_in_grid,
+                            camera_controller,
                         )
                             .chain()
                             .run_if(in_state(CameraState::Follow)),
@@ -195,7 +200,7 @@ fn change_camera_state(world: &mut World) {
     }
 
     let mouse_input = world.resource::<ButtonInput<MouseButton>>();
-    let input = world.resource::<CameraInput>();
+    let input = world.resource::<BigSpaceCameraInput>();
 
     if mouse_input.pressed(MouseButton::Right) {
         if *world.resource::<State<CameraState>>() != CameraState::Orbit {
@@ -214,7 +219,7 @@ fn change_camera_state(world: &mut World) {
 }
 
 fn hide_cursor(mut query: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
-    let mut primary_window = query.single_mut();
+    let mut primary_window = query.single_mut().unwrap();
 
     if primary_window.cursor_options.visible {
         primary_window.cursor_options.visible = false;
@@ -223,7 +228,7 @@ fn hide_cursor(mut query: Query<&mut Window, With<bevy::window::PrimaryWindow>>)
 }
 
 fn show_cursor(mut query: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
-    let mut primary_window = query.single_mut();
+    let mut primary_window = query.single_mut().unwrap();
 
     if !primary_window.cursor_options.visible {
         primary_window.cursor_options.visible = true;
@@ -235,7 +240,7 @@ fn mouse_controls(
     mouse: Res<ButtonInput<MouseButton>>,
     mut mouse_move: EventReader<MouseMotion>,
     mut scroll_events: EventReader<MouseWheel>,
-    mut input: ResMut<CameraInput>,
+    mut input: ResMut<BigSpaceCameraInput>,
     mut input_2: ResMut<AdditionalCameraInput>,
     time: Res<Time>,
 ) {
@@ -256,14 +261,17 @@ fn mouse_controls(
 }
 
 fn scale_mouse_to_fov(
-    perspective: Single<&PerspectiveProjection, With<Camera>>,
-    mut input: ResMut<CameraInput>,
+    perspective: Single<&Projection, With<Camera>>,
+    mut input: ResMut<BigSpaceCameraInput>,
 ) {
+    let Projection::Perspective(perspective) = *perspective else {
+        unreachable!("Camera is not perspective");
+    };
     input.pitch *= perspective.fov as f64;
     input.yaw *= perspective.fov as f64;
 }
 
-fn keyboard_controls(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<CameraInput>) {
+fn keyboard_controls(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<BigSpaceCameraInput>) {
     keyboard
         .pressed(KeyCode::KeyW)
         .then(|| input.forward -= 1.0);
@@ -288,7 +296,7 @@ fn sync_camera_distance(
     mut query_camera: Query<(&GlobalTransform, &mut OrbitCamera)>,
     transform: Query<&GlobalTransform>,
 ) {
-    let Ok((camera_transform, mut orbit)) = query_camera.get_single_mut() else {
+    let Ok((camera_transform, mut orbit)) = query_camera.single_mut() else {
         return;
     };
 
@@ -301,14 +309,14 @@ fn sync_camera_distance(
 }
 
 pub fn orbit_controls(
-    input: Res<CameraInput>,
+    input: Res<BigSpaceCameraInput>,
     input_2: Res<AdditionalCameraInput>,
     mut query: Query<(&mut Transform, &mut GridCell)>,
-    mut query_camera: Query<(Entity, &CameraController, &mut OrbitCamera)>,
+    mut query_camera: Query<(Entity, &BigSpaceCameraController, &mut OrbitCamera)>,
     grid: Single<&Grid, With<BigSpace>>,
     time: Res<Time>,
 ) {
-    let Ok((camera_entity, controller, mut orbit)) = query_camera.get_single_mut() else {
+    let Ok((camera_entity, controller, mut orbit)) = query_camera.single_mut() else {
         return;
     };
 
@@ -334,7 +342,10 @@ pub fn orbit_controls(
     camera_transform.rotation = rotation.as_quat();
 }
 
-fn reset_controls(mut input: ResMut<CameraInput>, mut input_2: ResMut<AdditionalCameraInput>) {
+fn reset_controls(
+    mut input: ResMut<BigSpaceCameraInput>,
+    mut input_2: ResMut<AdditionalCameraInput>,
+) {
     input.reset();
     input_2.reset();
 }

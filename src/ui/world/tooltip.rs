@@ -14,7 +14,7 @@ use crate::{
 
 use bevy::picking::backend::ray::RayMap;
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use ephemeris::{EvaluateTrajectory, RelativeTrajectory};
 use ftime::{Duration, Epoch};
 
@@ -31,14 +31,14 @@ impl Plugin for TooltipPlugin {
             .init_resource::<FocusedManoeuvreHitPoint>()
             .add_systems(
                 PostUpdate,
+                (focus_manoeuvre_hit, manoeuvre_dragging).chain(),
+            )
+            .add_systems(
+                EguiPrimaryContextPass,
                 (
                     show_separation.after(crate::ui::compute_plot_points_parallel),
-                    (
-                        focus_manoeuvre_hit,
-                        manoeuvre_dragging,
-                        show_cursor_crossings,
-                    )
-                        .chain()
+                    show_cursor_crossings
+                        .after(focus_manoeuvre_hit)
                         .before(bevy_egui::EguiPostUpdateSet::EndPass)
                         .after(crate::ui::trajectory_picking),
                 )
@@ -71,7 +71,7 @@ fn manoeuvre_dragging(
     mut commands: Commands,
     drag_opts: Res<ManoeuvreDraggingOptions>,
     ray_map: Res<RayMap>,
-    perspective: Single<&PerspectiveProjection, With<Camera>>,
+    perspective: Single<&Projection, With<Camera>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut world_ui: ResMut<WorldUiInteraction>,
     mut focused_manoeuvre_hit: ResMut<FocusedManoeuvreHitPoint>,
@@ -95,6 +95,10 @@ fn manoeuvre_dragging(
         focused_manoeuvre_hit.locked = false;
         world_ui.using_pointer = false;
     }
+
+    let Projection::Perspective(perspective) = *perspective else {
+        unreachable!("Camera is not perspective");
+    };
 
     if let Some(hit) = focused_manoeuvre_hit.point {
         let Ok(points) = query_plot.get(hit.plot_entity) else {
@@ -137,16 +141,19 @@ fn show_cursor_crossings(
     query_trajectory: Query<&Trajectory>,
     query_points: Query<(&Name, &PlotPoints, &TrajectoryPlot)>,
     mut query_flight_plan: Query<&mut FlightPlan>,
-    camera: Single<(&GlobalTransform, &Camera, &PerspectiveProjection)>,
+    camera: Single<(&GlobalTransform, &Camera, &Projection)>,
     mut buffer: Local<Vec<TrajectoryHitPoint>>,
     mut persisted: Local<Vec<TrajectoryHitPoint>>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
-    let (camera_transform, camera, perspective) = *camera;
-    let Some(ctx) = contexts.try_ctx_mut() else {
+    let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
     buffer.clear();
+
+    let (camera_transform, camera, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
 
     if let Some(hit) = focused_manoeuvre_hit.point {
         (|| {
@@ -410,17 +417,19 @@ impl SeparationPlot {
 fn show_separation(
     mut contexts: EguiContexts,
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
-    camera: Single<(&GlobalTransform, &Camera, &PerspectiveProjection)>,
+    camera: Single<(&GlobalTransform, &Camera, &Projection)>,
     query_data: Query<(&Name, &PlotPoints, &TrajectoryPlot, Option<&SeparationPlot>)>,
     // Don't display the separation if the prediction is still being computed.
     query_trajectory: Query<&Trajectory, Without<Predicting<SpacecraftPropagator>>>,
     query_source_of: Query<&SourceOf>,
 ) {
-    let Some(ctx) = contexts.try_ctx_mut() else {
+    let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
 
-    let (camera_transform, camera, perspective) = *camera;
+    let (camera_transform, camera, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
 
     let color = LinearRgba::gray(0.4);
 
@@ -472,7 +481,7 @@ fn show_separation(
                 let source_of = query_source_of.get(target.entity()).ok()?;
                 source_of.iter().find_map(|plot_entity| {
                     query_data
-                        .get(*plot_entity)
+                        .get(plot_entity)
                         .ok()
                         .map(|(_, points, plot, _)| (points, plot))
                         .filter(|(_, plot)| plot.start <= at && plot.end >= at)

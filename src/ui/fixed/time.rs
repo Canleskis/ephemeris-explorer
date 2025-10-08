@@ -70,7 +70,7 @@ pub fn time_controls(
     mut scale: Local<TimeScale>,
     mut time_scale_history: Local<History>,
 ) {
-    let Some(ctx) = contexts.try_ctx_mut() else {
+    let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
 
@@ -143,7 +143,14 @@ pub fn time_controls(
 
                 let slider = ui.add(slider);
                 if slider.is_pointer_button_down_on() {
-                    egui::show_tooltip_at_pointer(&slider.ctx, slider.layer_id, slider.id, |ui| {
+                    egui::Tooltip::always_open(
+                        slider.ctx,
+                        slider.layer_id,
+                        slider.id,
+                        egui::PopupAnchor::Pointer,
+                    )
+                    .gap(12.0)
+                    .show(|ui| {
                         ui.add(
                             egui::Label::new(format!("x{}", sim_time.time_scale))
                                 .wrap_mode(egui::TextWrapMode::Extend),

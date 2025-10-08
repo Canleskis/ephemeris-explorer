@@ -29,7 +29,10 @@ pub struct WorldUiPlugin;
 
 impl Plugin for WorldUiPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WorldUiInteraction>()
-            .add_plugins((TooltipPlugin, PlotPlugin, LabelsPlugin));
+        app.init_resource::<WorldUiInteraction>().add_plugins((
+            TooltipPlugin,
+            PlotPlugin,
+            LabelsPlugin,
+        ));
     }
 }

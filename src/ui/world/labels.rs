@@ -77,7 +77,7 @@ fn despawn_labels(
 
     for entity in removed_labelled.read() {
         if let Some(label_entity) = local.get(&entity) {
-            commands.entity(*label_entity).despawn_recursive();
+            commands.entity(*label_entity).despawn();
             local.remove(&entity);
         }
     }
@@ -99,7 +99,7 @@ fn update_labels_position(
     query_labelled: Query<(&LabelEntity, &Labelled, &GlobalTransform)>,
     mut query_labels: Query<(&mut Node, &ComputedNode)>,
 ) {
-    let Ok((camera, camera_transform)) = query_camera.get_single() else {
+    let Ok((camera, camera_transform)) = query_camera.single() else {
         return;
     };
 
@@ -137,7 +137,7 @@ fn update_labels_visibility(
     query_labelled: Query<(&GlobalTransform, &Labelled, &LabelEntity)>,
     mut query_visibility: Query<&mut Visibility, With<Label>>,
 ) {
-    let Ok(camera_transform) = query_camera.get_single() else {
+    let Ok(camera_transform) = query_camera.single() else {
         return;
     };
 

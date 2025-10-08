@@ -25,7 +25,7 @@ impl Plugin for SelectionPlugin {
                 PostUpdate,
                 (
                     entity_picker
-                        .never_param_warn()
+                        // .never_param_warn()
                         .run_if(not(crate::ui::using_pointer)),
                     select_clicked,
                 )
@@ -40,7 +40,7 @@ fn entity_picker(
     ray_map: Res<RayMap>,
     mouse_input: Res<ButtonInput<MouseButton>>,
     mut mouse_move: EventReader<MouseMotion>,
-    perspective: Single<&PerspectiveProjection, With<Camera>>,
+    perspective: Single<&Projection, With<Camera>>,
     query_can_select: Query<(Entity, &GlobalTransform, &Selectable)>,
 ) {
     if !mouse_input.just_pressed(MouseButton::Left) || !mouse_move.is_empty() {
@@ -52,6 +52,10 @@ fn entity_picker(
         return;
     };
     let ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+
+    let Projection::Perspective(perspective) = *perspective else {
+        unreachable!("Camera is not perspective");
+    };
 
     let clicked_entity = query_can_select
         .iter()
@@ -67,7 +71,7 @@ fn entity_picker(
         .min_by(|(_, i1), (_, i2)| i1.total_cmp(i2))
         .map(|(entity, ..)| entity);
 
-    click_entity_events.send(ClickEvent(clicked_entity));
+    click_entity_events.write(ClickEvent(clicked_entity));
 }
 
 fn select_clicked(mut click_events: EventReader<ClickEvent>, mut selected: ResMut<Selected>) {
@@ -83,7 +87,7 @@ fn _show_pickable_zone(
     query_camera: Query<&GlobalTransform, With<Camera>>,
     query_can_select: Query<(&GlobalTransform, &Selectable)>,
 ) {
-    let Ok(camera_transform) = query_camera.get_single() else {
+    let Ok(camera_transform) = query_camera.single() else {
         return;
     };
 

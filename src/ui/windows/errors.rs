@@ -1,14 +1,14 @@
 use crate::{load::LoadingErrors, ui::WindowsUiSet, MainState};
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 pub struct ErrorsPlugin;
 
 impl Plugin for ErrorsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
+            EguiPrimaryContextPass,
             ErrorsWindow::show
                 .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
@@ -24,7 +24,7 @@ impl ErrorsWindow {
             return;
         }
 
-        let Some(ctx) = contexts.try_ctx_mut() else {
+        let Ok(ctx) = contexts.ctx_mut() else {
             return;
         };
 

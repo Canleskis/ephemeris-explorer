@@ -8,7 +8,7 @@ use bevy::{
     prelude::*,
     window::{MonitorSelection, WindowMode},
 };
-use big_space::camera::CameraController;
+use big_space::camera::BigSpaceCameraController;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default)]
@@ -89,13 +89,13 @@ impl AppSettings {
         label_settings: ResMut<LabelSettings>,
         gizmos_config: ResMut<GizmoConfigStore>,
         drag_opts: ResMut<ManoeuvreDraggingOptions>,
-        mut controller: Query<&mut CameraController>,
+        mut controller: Query<&mut BigSpaceCameraController>,
         mut window: Query<&mut Window>,
         mut bloom: Query<&mut Bloom>,
-        mut projection: Query<(&mut PerspectiveProjection, &mut Projection)>,
+        mut projection: Query<&mut Projection>,
         mut load_event: EventReader<LoadSolarSystemEvent>,
     ) {
-        if let Ok(mut window) = window.get_single_mut() {
+        if let Ok(mut window) = window.single_mut() {
             window
                 .reborrow()
                 .map_unchanged(|window| &mut window.mode)
@@ -123,15 +123,12 @@ impl AppSettings {
                 window.position.set(settings.window.position);
             }
         }
-        if let Ok(bloom) = bloom.get_single_mut() {
+        if let Ok(bloom) = bloom.single_mut() {
             bloom
                 .map_unchanged(|bloom| &mut bloom.intensity)
                 .set_if_neq(settings.user.bloom_intensity);
         }
-        if let Ok((perspective, projection)) = projection.get_single_mut() {
-            perspective
-                .map_unchanged(|perspective| &mut perspective.fov)
-                .set_if_neq(settings.user.fov.to_radians());
+        if let Ok(projection) = projection.single_mut() {
             projection
                 .map_unchanged(|projection| match projection {
                     Projection::Perspective(perspective) => &mut perspective.fov,
@@ -140,10 +137,10 @@ impl AppSettings {
                 .set_if_neq(settings.user.fov.to_radians());
         }
         gizmos_config
-            .map_unchanged(|c| &mut c.config_mut::<DefaultGizmoConfigGroup>().0.line_width)
+            .map_unchanged(|c| &mut c.config_mut::<DefaultGizmoConfigGroup>().0.line.width)
             .set_if_neq(settings.user.line_width);
 
-        if let Ok(mut controller) = controller.get_single_mut() {
+        if let Ok(mut controller) = controller.single_mut() {
             controller
                 .reborrow()
                 .map_unchanged(|controller| &mut controller.speed_pitch)

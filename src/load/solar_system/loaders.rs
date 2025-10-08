@@ -41,7 +41,7 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
         reader: &mut dyn bevy::asset::io::Reader,
         _: &(),
         ctx: &mut bevy::asset::LoadContext,
-    ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+    ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         #[derive(Deserialize, Clone)]
         #[serde(default)]
         struct PhysicalToml {
@@ -217,7 +217,7 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
         reader: &mut dyn bevy::asset::io::Reader,
         _: &(),
         ctx: &mut bevy::asset::LoadContext,
-    ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+    ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         #[derive(Deserialize)]
         struct BodyJson {
             name: String,
@@ -237,7 +237,8 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
             reader.read_to_end(&mut bytes).await?;
             let json = serde_json::from_slice::<SolarSytemJson>(&bytes)?;
 
-            let mut bodies = bevy::utils::HashMap::with_capacity(json.bodies.len());
+            let mut bodies =
+                bevy::platform::collections::hash_map::HashMap::with_capacity(json.bodies.len());
 
             for body in json.bodies {
                 let label = body.name.to_lowercase();
@@ -290,7 +291,7 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
         reader: &mut dyn bevy::asset::io::Reader,
         _: &(),
         _: &mut bevy::asset::LoadContext,
-    ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+    ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         #[derive(Deserialize)]
         struct EphemerisSettingsJson {
             pub degree: usize,
@@ -300,7 +301,7 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
         #[derive(Deserialize)]
         struct EphemeridesSettingsJson {
             dt: Duration,
-            settings: bevy::utils::HashMap<String, EphemerisSettingsJson>,
+            settings: bevy::platform::collections::hash_map::HashMap<String, EphemerisSettingsJson>,
         }
 
         async move {
@@ -359,7 +360,7 @@ impl bevy::asset::AssetLoader for HierarchyTreeLoader {
         reader: &mut dyn bevy::asset::io::Reader,
         _: &(),
         _: &mut bevy::asset::LoadContext,
-    ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+    ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         async move {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
@@ -399,7 +400,7 @@ impl bevy::asset::AssetLoader for ShipLoader {
         reader: &mut dyn bevy::asset::io::Reader,
         _: &(),
         _: &mut bevy::asset::LoadContext,
-    ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+    ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
         async move {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
@@ -434,7 +435,7 @@ impl bevy::asset::AssetLoader for ShipLoader {
 //         reader: &mut dyn bevy::asset::io::Reader,
 //         settings: &Self::Settings,
 //         load_context: &mut bevy::asset::LoadContext,
-//     ) -> impl bevy::utils::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+//     ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
 //         async move {
 //             let mut image = self.0.load(reader, settings, load_context).await?;
 //             if image.texture_descriptor.array_layer_count() == 1 {

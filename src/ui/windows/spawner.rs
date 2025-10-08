@@ -12,7 +12,7 @@ use crate::{
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_file_dialog::prelude::*;
 use ephemeris::{EvaluateTrajectory, StateVector};
 use ftime::{Duration, Epoch};
@@ -23,7 +23,7 @@ pub struct ShipSpawnerPlugin;
 impl Plugin for ShipSpawnerPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
+            EguiPrimaryContextPass,
             (
                 ShipSpawnerWindow::show,
                 ShipSpawnerWindow::on_close.run_if(resource_removed::<ShipSpawnerWindow>),
@@ -88,7 +88,7 @@ impl ShipSpawnerWindow {
         query_context: Query<(Entity, &Trajectory, &Mu)>,
         followed: Res<Followed>,
     ) {
-        let Some(ctx) = contexts.try_ctx_mut() else {
+        let Ok(ctx) = contexts.ctx_mut() else {
             return;
         };
 
@@ -104,9 +104,9 @@ impl ShipSpawnerWindow {
         };
 
         let Ok((preview, mut data, Some((mut name, mut prediction, mut plot)))) =
-            query_preview.get_single_mut()
+            query_preview.single_mut()
         else {
-            let (entity, data) = match query_preview.get_single() {
+            let (entity, data) = match query_preview.single() {
                 Ok((entity, data, _)) => (entity, data.clone()),
                 _ => {
                     let data = ShipSpawnerData {
@@ -119,7 +119,10 @@ impl ShipSpawnerWindow {
                         reference: **followed,
                         preview_duration: Duration::from_days(5.0),
                     };
-                    (commands.spawn(data.clone()).set_parent(*root).id(), data)
+                    (
+                        commands.spawn(data.clone()).insert(ChildOf(*root)).id(),
+                        data,
+                    )
                 }
             };
 
@@ -398,7 +401,7 @@ impl ShipSpawnerWindow {
         for entity in preview.iter() {
             commands
                 .entity(entity)
-                .retain::<(ShipSpawnerData, Parent)>();
+                .retain::<(ShipSpawnerData, ChildOf)>();
         }
     }
 }

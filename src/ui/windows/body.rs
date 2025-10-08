@@ -15,7 +15,7 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_file_dialog::prelude::*;
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
 use ftime::{Duration, Epoch};
@@ -32,7 +32,7 @@ impl Plugin for BodyInfoPlugin {
                 .run_if(in_state(MainState::Running)),
         )
         .add_systems(
-            Update,
+            EguiPrimaryContextPass,
             (BodyInfoWindow::show, BodyInfoWindow::persisting)
                 .chain()
                 .in_set(WindowsUiSet)
@@ -108,7 +108,7 @@ impl BodyInfoWindow {
         query_plot: Query<&TrajectoryPlot>,
     ) {
         for (entity, source_of, flight_plan) in &query {
-            let Some(plot) = source_of.iter().find_map(|e| query_plot.get(*e).ok()) else {
+            let Some(plot) = source_of.iter().find_map(|e| query_plot.get(e).ok()) else {
                 continue;
             };
             commands.entity(entity).insert(Self {
@@ -130,10 +130,10 @@ impl BodyInfoWindow {
         mut query_plot: Query<&mut TrajectoryPlot>,
     ) {
         for (entity, parent, source_of, mut info) in &mut query {
-            let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(**e)) else {
+            let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(*e)) else {
                 continue;
             };
-            let mut plot = query_plot.get_mut(*plot_entity).unwrap();
+            let mut plot = query_plot.get_mut(plot_entity).unwrap();
 
             if info.auto_plot_reference {
                 plot.reference = Some(**parent);
@@ -172,11 +172,11 @@ impl BodyInfoWindow {
         mut query_separation: Query<&mut SeparationPlot>,
         #[expect(unused)] query_source_of: Query<&SourceOf>,
         root: Single<Entity, With<SystemRoot>>,
-        mut delete: Local<bevy::utils::HashSet<uuid::Uuid>>,
+        mut delete: Local<bevy::platform::collections::hash_set::HashSet<uuid::Uuid>>,
     ) {
         let mut open = selected.is_some();
         if let Some(entity) = **selected {
-            let Some(ctx) = contexts.try_ctx_mut() else {
+            let Ok(ctx) = contexts.ctx_mut() else {
                 return;
             };
 
@@ -196,11 +196,11 @@ impl BodyInfoWindow {
                         return;
                     };
 
-                    let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(**e))
+                    let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(*e))
                     else {
                         return;
                     };
-                    let mut plot = query_plot.get_mut(*plot_entity).unwrap();
+                    let mut plot = query_plot.get_mut(plot_entity).unwrap();
 
                     let Some(relative) = plot.get_relative_trajectory(&query_trajectory) else {
                         return;
@@ -265,7 +265,7 @@ impl BodyInfoWindow {
                                             if followed.is_some_and(|f| f == entity) {
                                                 commands.queue(SetFollowed(parent.map(|p| **p)));
                                             }
-                                            commands.entity(entity).despawn_recursive();
+                                            commands.entity(entity).despawn();
                                         }
                                         if ui.button("Cancel").clicked() {
                                             *delete = false;
@@ -462,9 +462,9 @@ impl BodyInfoWindow {
                     ui.add_space(5.0);
 
                     // Reborrow to drop previous mutable borrow of the query.
-                    let plot = query_plot.get(*plot_entity).unwrap();
+                    let plot = query_plot.get(plot_entity).unwrap();
 
-                    if let Ok(target) = query_separation.get_mut(*plot_entity).as_deref_mut() {
+                    if let Ok(target) = query_separation.get_mut(plot_entity).as_deref_mut() {
                         let unknown = Name::new("Unknown");
                         let name = |e| {
                             query_hierarchy
@@ -556,12 +556,12 @@ impl BodyInfoWindow {
                                 });
 
                             if ui.button("❌").clicked() {
-                                commands.entity(*plot_entity).remove::<SeparationPlot>();
+                                commands.entity(plot_entity).remove::<SeparationPlot>();
                             }
                         });
                     } else if ui.button("Set separation marker").clicked() {
                         commands
-                            .entity(*plot_entity)
+                            .entity(plot_entity)
                             .insert(SeparationPlot::Trajectory(plot.reference.unwrap_or(*root)));
                     }
 

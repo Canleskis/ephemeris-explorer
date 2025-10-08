@@ -8,7 +8,7 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory, NBodyProblem, NewtonianGravity};
 use ftime::{Duration, Epoch};
 use integration::prelude::*;
@@ -19,7 +19,7 @@ pub struct EphemeridesDebugPlugin;
 impl Plugin for EphemeridesDebugPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
+            EguiPrimaryContextPass,
             EphemeridesDebugWindow::show
                 .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
@@ -41,7 +41,7 @@ impl EphemeridesDebugWindow {
         query: Query<(Entity, &Name, &Trajectory)>,
         mut errors: Local<Option<bevy::ecs::entity::EntityHashMap<f64>>>,
     ) {
-        let Some(ctx) = contexts.try_ctx_mut() else {
+        let Ok(ctx) = contexts.ctx_mut() else {
             return;
         };
 
@@ -53,7 +53,7 @@ impl EphemeridesDebugWindow {
                     return;
                 };
 
-                let prediction = query_prediction.single();
+                let prediction = query_prediction.single().unwrap();
                 let dt = prediction.propagator.delta();
                 let start = system.epoch;
                 let duration = Duration::from_days(365.0 * 2.0).min(sim_time.end() - start);

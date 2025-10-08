@@ -14,11 +14,12 @@ integration = { path = "integration" }
 ftime = { path = "ftime", features = ["serde"] }
 ephemeris = { path = "ephemeris" }
 
-bevy = { version = "=0.15.2", default-features = false, features = [
+bevy = { version = "0.16.1", default-features = false, features = [
     "bevy_asset",
     "bevy_color",
     "bevy_core_pipeline",
     "bevy_gizmos",
+    "bevy_log",
     "bevy_mesh_picking_backend",
     "bevy_pbr",
     "bevy_picking",
@@ -40,14 +41,16 @@ bevy = { version = "=0.15.2", default-features = false, features = [
     "tonemapping_luts",
     "x11",
     "jpeg",
+    "std",
+    "async_executor",
     "bevy_remote",
 ] }
-bevy_window = { version = "=0.15.2" }
 
-bevy_egui = { version = "0.33.0", features = ["immutable_ctx"] }
-egui_extras = { version = "0.31.0" }
-big_space = { version = "0.9.1", features = ["camera"] }
-bevy_file_dialog = { git = "https://github.com/richardhozak/bevy_file_dialog.git", rev = "cd813fa" }
+bevy_egui = { version = "0.36.0" }
+egui_extras = { version = "0.32.3" }
+big_space = { version = "0.10.0", features = ["camera"] }
+bevy_file_dialog = { version = "0.8.0" }
+
 futures-util = { version = "0.3.31", features = ["io"] }
 image = { version = "0.25", default-features = false }
 winit = { version = "0.30", default-features = false }
@@ -68,7 +71,6 @@ serde_json = { version = "1", features = ["preserve_order"] }
 indexmap = { version = "2", features = ["serde"] }
 toml = "0.8"
 thiserror = "2"
-rand = "0.8"
 dirs = "6.0.0"
 deepsize = "0.2.0"
 

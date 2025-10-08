@@ -79,6 +79,7 @@ impl Plugin for LoadSolarSystemPlugin {
             .insert_resource(AmbientLight {
                 color: Color::NONE,
                 brightness: 0.0,
+                affects_lightmapped_meshes: true,
             })
             .add_systems(
                 PreUpdate,
@@ -199,14 +200,14 @@ pub struct Body {
 
 #[derive(Debug, Default, Asset, TypePath)]
 pub struct SolarSystemState {
-    pub bodies: bevy::utils::HashMap<String, Body>,
+    pub bodies: bevy::platform::collections::hash_map::HashMap<String, Body>,
     pub epoch: Epoch,
 }
 
 fn handle_missing_visuals(
     asset_server: Res<AssetServer>,
     mut solar_system: UniqueAssetMut<SolarSystemState>,
-    mut writer: EventWriter<AssetEvent<BodyVisuals>>,
+    mut events: EventWriter<AssetEvent<BodyVisuals>>,
 ) {
     if let Some(solar_system) = solar_system.get_mut() {
         for body in solar_system.bodies.values_mut() {
@@ -215,7 +216,7 @@ fn handle_missing_visuals(
                 bevy::asset::LoadState::Failed(_)
             ) {
                 body.visuals = Handle::default();
-                writer.send(AssetEvent::LoadedWithDependencies {
+                events.write(AssetEvent::LoadedWithDependencies {
                     id: body.visuals.id(),
                 });
             }
@@ -232,7 +233,7 @@ pub struct EphemerisSettings {
 #[derive(Debug, Default, Asset, TypePath)]
 pub struct EphemeridesSettings {
     pub dt: Duration,
-    pub settings: bevy::utils::HashMap<String, EphemerisSettings>,
+    pub settings: bevy::platform::collections::hash_map::HashMap<String, EphemerisSettings>,
 }
 
 #[derive(Asset, TypePath, Deref, DerefMut, Debug, serde::Deserialize)]

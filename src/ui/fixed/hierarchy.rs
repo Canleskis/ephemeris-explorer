@@ -19,7 +19,7 @@ pub fn solar_system_hierarchy(
     query_selectable: Query<&Selectable>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
-    let Some(ctx) = contexts.try_ctx_mut() else {
+    let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
 
@@ -32,7 +32,7 @@ pub fn solar_system_hierarchy(
             egui::ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = [1.0, 3.0].into();
+                    ui.spacing_mut().item_spacing = [4.0, 4.0].into();
                     show_tree(
                         ui,
                         query_hierarchy.get(*root).unwrap(),
@@ -69,10 +69,8 @@ pub fn solar_system_hierarchy(
                                         let [r, g, b, _a] = first.color.to_srgba().to_u8_array();
                                         ui.visuals_mut().selection.bg_fill =
                                             egui::Color32::from_gray(80);
-                                        ui.visuals_mut().selection.stroke = egui::Stroke::new(
-                                            1.0,
-                                            egui::Color32::from_rgb(r, g, b),
-                                        );
+                                        ui.visuals_mut().selection.stroke.color =
+                                            egui::Color32::from_rgb(r, g, b);
                                     }
 
                                     let enabled =

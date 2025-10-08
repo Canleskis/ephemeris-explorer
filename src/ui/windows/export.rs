@@ -10,7 +10,7 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_file_dialog::prelude::*;
 use ephemeris::EvaluateTrajectory;
 use ftime::{Duration, Epoch};
@@ -20,7 +20,7 @@ pub struct ExportPlugin;
 impl Plugin for ExportPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<ExportSolarSystemEvent>().add_systems(
-            Update,
+            EguiPrimaryContextPass,
             (ExportWindow::show, export_solar_system)
                 .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
@@ -64,7 +64,7 @@ impl ExportWindow {
         mut cached_exports: Local<Option<[ExportType; 1]>>,
         mut current: Local<usize>,
     ) {
-        let Some(ctx) = contexts.try_ctx_mut() else {
+        let Ok(ctx) = contexts.ctx_mut() else {
             return;
         };
 
@@ -79,7 +79,7 @@ impl ExportWindow {
 
             ui.horizontal(|ui| {
                 if ui.button("Export").clicked() {
-                    event.send(ExportSolarSystemEvent {
+                    event.write(ExportSolarSystemEvent {
                         export: export[*current],
                         bodies: bodies.iter().copied().collect(),
                     });
@@ -157,12 +157,14 @@ impl ExportWindow {
                                 let checked = bodies.contains(&entity);
                                 if ui.selectable_label(checked, name.as_str()).clicked() {
                                     match bodies.entry(entity) {
-                                        bevy::utils::hashbrown::hash_set::Entry::Occupied(
+                                        bevy::platform::collections::hash_set::Entry::Occupied(
                                             entry,
                                         ) => {
                                             entry.remove();
                                         }
-                                        bevy::utils::hashbrown::hash_set::Entry::Vacant(entry) => {
+                                        bevy::platform::collections::hash_set::Entry::Vacant(
+                                            entry,
+                                        ) => {
                                             entry.insert();
                                         }
                                     }

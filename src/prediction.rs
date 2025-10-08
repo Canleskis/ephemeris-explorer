@@ -412,7 +412,7 @@ fn add_predicting_marker<P>(
 ) where
     P: PredictionPropagator,
 {
-    if let Ok(prediction) = query_prediction.get(trigger.entity()) {
+    if let Ok(prediction) = query_prediction.get(trigger.target()) {
         for entity in &prediction.entities {
             commands
                 .entity(*entity)
@@ -428,9 +428,9 @@ fn remove_predicting_marker<P>(
 ) where
     P: PredictionPropagator,
 {
-    if let Ok(prediction) = query_prediction.get(trigger.entity()) {
+    if let Ok(prediction) = query_prediction.get(trigger.target()) {
         for entity in &prediction.entities {
-            if let Some(mut entity) = commands.get_entity(*entity) {
+            if let Ok(mut entity) = commands.get_entity(*entity) {
                 entity.remove::<Predicting<P>>();
             }
         }

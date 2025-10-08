@@ -42,7 +42,7 @@ fn add_loading_screen(mut commands: Commands) {
             },
             BackgroundColor(Color::BLACK),
             LoadingScreen,
-            TargetCamera(camera),
+            UiTargetCamera(camera),
         ))
         .with_children(|parent| {
             parent.spawn((

@@ -5,16 +5,16 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 pub struct SettingsPlugin;
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
+            EguiPrimaryContextPass,
             SettingsWindow::show
-                .never_param_warn()
+                // .never_param_warn()
                 .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
         );
@@ -38,10 +38,13 @@ impl SettingsWindow {
     fn show(
         mut commands: Commands,
         mut contexts: EguiContexts,
-        window: Res<Self>,
+        window: Option<Res<Self>>,
         mut settings: ResMut<AppSettings>,
     ) {
-        let Some(ctx) = contexts.try_ctx_mut() else {
+        let Some(window) = window else {
+            return;
+        };
+        let Ok(ctx) = contexts.ctx_mut() else {
             return;
         };
 
@@ -80,9 +83,7 @@ impl SettingsWindow {
                             )
                             | ui.checkbox(
                                 &mut settings.user.manoeuvre_dragging,
-                                egui::RichText::new(
-                                    "Manoeuvre dragging (EXPERIMENTAL)",
-                                ),
+                                egui::RichText::new("Manoeuvre dragging (EXPERIMENTAL)"),
                             )
                     })
                     .inner

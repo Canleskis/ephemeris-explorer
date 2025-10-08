@@ -270,8 +270,12 @@ pub fn compute_plot_points_parallel(
     mut query_plot: Query<(Entity, &TrajectoryPlot)>,
     query_trajectory: Query<&Trajectory>,
     root: Single<&Grid, With<BigSpace>>,
-    camera: Single<(&GlobalTransform, &PerspectiveProjection)>,
+    camera: Single<(&GlobalTransform, &Projection)>,
 ) {
+    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
+
     query_plot.par_iter_mut().for_each(|(entity, plot)| {
         commands.command_scope(move |mut commands| {
             commands.queue(move |world: &mut World| {
@@ -284,7 +288,8 @@ pub fn compute_plot_points_parallel(
         if let Some(relative) = plot.get_relative_trajectory(&query_trajectory) {
             if plot.enabled && !relative.is_empty() && plot.start < plot.end {
                 const ARC_MINUTE: f32 = 0.000290888;
-                let tan2_angular_resolution = (plot.threshold * ARC_MINUTE * camera.1.fov) as f64;
+                let tan2_angular_resolution =
+                    (plot.threshold * ARC_MINUTE * perspective.fov) as f64;
 
                 let start = relative.start();
                 let end = relative.end();
@@ -313,7 +318,7 @@ pub fn compute_plot_points_parallel(
                     },
                     min,
                     max,
-                    camera.0,
+                    camera_transform,
                     tan2_angular_resolution,
                     plot.max_points,
                 );
@@ -341,7 +346,7 @@ pub const PICK_THRESHOLD: f32 = 6e-3;
 pub fn trajectory_picking(
     ray_map: Res<RayMap>,
     query_clickable: Query<(&GlobalTransform, &Selectable)>,
-    perspective: Single<&PerspectiveProjection, With<Camera>>,
+    perspective: Single<&Projection, With<Camera>>,
     query_plot: Query<(Entity, &PlotPoints)>,
     mut events: EventWriter<TrajectoryHitPoint>,
 ) {
@@ -349,6 +354,10 @@ pub fn trajectory_picking(
         return;
     };
     let mut ray = RayCast3d::from_ray(*ray, f32::MAX);
+
+    let Projection::Perspective(perspective) = *perspective else {
+        unreachable!("Camera is not perspective");
+    };
 
     ray.max = query_clickable
         .iter()
@@ -362,7 +371,7 @@ pub fn trajectory_picking(
         .fold(f32::MAX, f32::min);
 
     for (entity, points) in query_plot.iter() {
-        events.send_batch(
+        events.write_batch(
             points
                 .ray_distances(&ray)
                 .map(|(time, separation, distance)| TrajectoryHitPoint {
@@ -380,14 +389,30 @@ pub const MANOEUVRE_SIZE: f32 = 0.02;
 fn manoeuvre_picking(
     ray_map: Res<RayMap>,
     query: Query<(Entity, &FlightPlan, &SourceOf)>,
+    query_clickable: Query<(&GlobalTransform, &Selectable)>,
     query_plot: Query<(Entity, &PlotPoints)>,
-    perspective: Single<&PerspectiveProjection, With<Camera>>,
+    perspective: Single<&Projection, With<Camera>>,
     mut events: EventWriter<ManoeuvreHitPoint>,
 ) {
     let Some((_, ray)) = ray_map.iter().next() else {
         return;
     };
-    let ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+    let mut ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+
+    let Projection::Perspective(perspective) = *perspective else {
+        unreachable!("Camera is not perspective");
+    };
+
+    ray.max = query_clickable
+        .iter()
+        .filter_map(|(transform, clickable)| {
+            let distance = transform.translation().distance(Vec3::from(ray.origin));
+            ray.sphere_intersection_at(&BoundingSphere::new(
+                transform.translation(),
+                clickable.radius + distance * perspective.fov * 1e-2,
+            ))
+        })
+        .fold(f32::MAX, f32::min);
 
     for (fp_entity, flight_plan, source_of) in query.iter() {
         for (entity, points) in query_plot.iter_many(source_of) {
@@ -405,7 +430,7 @@ fn manoeuvre_picking(
                     world_pos,
                     distance * perspective.fov * MANOEUVRE_SIZE / 2.0,
                 )) {
-                    events.send(ManoeuvreHitPoint {
+                    events.write(ManoeuvreHitPoint {
                         plot_entity: entity,
                         flight_plan_entity: fp_entity,
                         id: burn.id,
@@ -423,8 +448,12 @@ fn plot_manoeuvres(
     query_trajectory: Query<&Trajectory>,
     query_plot: Query<(&PlotPoints, &TrajectoryPlot)>,
     root: Single<&Grid, With<BigSpace>>,
-    camera: Single<(&GlobalTransform, &PerspectiveProjection)>,
+    camera: Single<(&GlobalTransform, &Projection)>,
 ) {
+    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
+
     for (trajectory, flight_plan, source_of) in query.iter() {
         for (points, plot) in query_plot.iter_many(source_of) {
             if !plot.enabled || trajectory.is_empty() {
@@ -453,8 +482,9 @@ fn plot_manoeuvres(
                 let Some(world_pos) = points.evaluate(burn.start) else {
                     continue;
                 };
-                let size =
-                    camera.0.translation().distance(world_pos) * camera.1.fov * MANOEUVRE_SIZE;
+                let size = camera_transform.translation().distance(world_pos)
+                    * perspective.fov
+                    * MANOEUVRE_SIZE;
                 gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
                 gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
                 gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);
@@ -468,20 +498,24 @@ fn plot_knots(
     mut gizmos: Gizmos,
     query_plot: Query<(&TrajectoryPlot, &PlotPoints)>,
     query_trajectory: Query<&Trajectory>,
-    camera: Single<(&GlobalTransform, &PerspectiveProjection)>,
+    camera: Single<(&GlobalTransform, &Projection)>,
 ) {
     fn plot_knots(
         gizmos: &mut Gizmos,
-        camera: (&GlobalTransform, &PerspectiveProjection),
+        camera: (&GlobalTransform, &Projection),
         knots: impl Iterator<Item = Epoch>,
         plot_points: &PlotPoints,
     ) {
+        let (camera_transform, Projection::Perspective(perspective)) = camera else {
+            unreachable!("Camera is not perspective");
+        };
+
         for t in knots {
             let Some(position) = plot_points.evaluate(t) else {
                 continue;
             };
-            let direction = camera.0.translation() - position;
-            let size = direction.length() * 4e-3 * camera.1.fov;
+            let direction = camera_transform.translation() - position;
+            let size = direction.length() * 4e-3 * perspective.fov;
             gizmos.circle(
                 Transform::from_translation(position)
                     .looking_to(direction, Vec3::Y)

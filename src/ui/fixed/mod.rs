@@ -7,6 +7,7 @@ pub use time::*;
 use crate::MainState;
 
 use bevy::prelude::*;
+use bevy_egui::EguiPrimaryContextPass;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub struct FixedUiSet;
@@ -16,7 +17,7 @@ pub struct FixedUiPlugin;
 impl Plugin for FixedUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
+            EguiPrimaryContextPass,
             (time_controls, solar_system_hierarchy)
                 .chain()
                 .in_set(FixedUiSet)

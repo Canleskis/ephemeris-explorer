@@ -239,7 +239,7 @@ fn apply_flight_plan(
     )>,
     query_trajectory: Query<&Trajectory>,
 ) {
-    let entity = trigger.entity();
+    let entity = trigger.target();
     let Ok((mut flight_plan, mut last, mut prediction, trajectory)) = query.get_mut(entity) else {
         return;
     };
