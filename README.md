@@ -99,3 +99,30 @@ The initial state is used as the starting point for the generation of the epheme
 Currently, the interpolation is done using a least squares polynomial fit.  
 
 This implementation was custom made for this project and is not validated in any way. It is also better suited to stable trajectories and incorrect configuration of a system will result non-continuous polynomials within the trajectories.
+
+## Goals
+
+### Short term
+
+- [x] Implement multiple types of integrators appropriate for different problems (symplectic, linear multistep, Runge-Kutta-Nystrom, etc.).
+- [x] Evaluation of accuracy of solar system simulations versus data from JPL and other sources.
+
+### Medium term
+
+- [ ] Newhall approximation and automatic selection of interpolation polynomial parameters.
+- [ ] Hierarchical system simulations (model planetary systems as barycenters before simulating satellites f.e.).
+- [ ] Spherical harmonics gravity models for celestial bodies.
+- [ ] More ways to manoeuvre spacecrafts (brachistochrone, recurring manoeuvres, etc.).
+
+### Long term
+
+- [ ] Plots and graphs for visualizing data.
+- [ ] Import and export data from and to other software (NAIF kernels, TLEs, etc.).
+- [ ] Ealuation of accuracy of spacecraft orbit propagation versus real data.
+- [ ] Add more models for spacecraft orbit propagation (simplified perturbations models, radiation pressure, atmospheres, etc.).
+
+### Stretch
+
+- [ ] Better visuals (improved UI, atmospheres, better shadows, 3D models, planetary rings, etc.).
+- [ ] Automated mission design tools.
+- [ ] Take general relativity into account.
