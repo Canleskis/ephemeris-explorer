@@ -1,15 +1,15 @@
 use crate::{
+    MainState,
     auto_extend::AutoExtendSettings,
     dynamics::{Backward, Forward, NBodyPropagator},
     load::SystemRoot,
     prediction::{ExtendPredictionEvent, PredictionPropagator, PredictionTracker},
     simulation::SimulationTime,
     ui::WindowsUiSet,
-    MainState,
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use ftime::Epoch;
 use std::str::FromStr;
 
@@ -90,10 +90,10 @@ impl PredictionPlannerWindow {
         ui.horizontal(|ui| match prediction {
             None => {
                 ui.add_enabled_ui(backward_duration.is_some(), |ui| {
-                    if ui.button("Start prediction").clicked() {
-                        if let Some(duration) = backward_duration {
-                            commands.trigger(ExtendPredictionEvent::<P>::all(duration, 1000));
-                        }
+                    if ui.button("Start prediction").clicked()
+                        && let Some(duration) = backward_duration
+                    {
+                        commands.trigger(ExtendPredictionEvent::<P>::all(duration, 1000));
                     }
                 });
             }

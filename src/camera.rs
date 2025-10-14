@@ -1,7 +1,7 @@
 use crate::{
+    MainState,
     floating_origin::{BigSpace, Grid, GridCell},
     ui::WindowsUiSet,
-    MainState,
 };
 
 use bevy::{
@@ -10,7 +10,7 @@ use bevy::{
     prelude::*,
 };
 pub use big_space::camera::{
-    camera_controller, nearest_objects_in_grid, BigSpaceCameraController, BigSpaceCameraInput,
+    BigSpaceCameraController, BigSpaceCameraInput, camera_controller, nearest_objects_in_grid,
 };
 
 pub fn using_pointer(query: Query<&Window, With<bevy::window::PrimaryWindow>>) -> bool {
@@ -252,11 +252,11 @@ fn mouse_controls(
         } as f64)
         .sum::<f64>();
 
-    if mouse.pressed(MouseButton::Left) || mouse.pressed(MouseButton::Right) {
-        if let Some(motion) = mouse_move.read().map(|e| e.delta).reduce(|sum, i| sum + i) {
-            input.pitch -= motion.y as f64 * 0.2 / time.delta_secs_f64();
-            input.yaw -= motion.x as f64 * 0.2 / time.delta_secs_f64();
-        }
+    if (mouse.pressed(MouseButton::Left) || mouse.pressed(MouseButton::Right))
+        && let Some(motion) = mouse_move.read().map(|e| e.delta).reduce(|sum, i| sum + i)
+    {
+        input.pitch -= motion.y as f64 * 0.2 / time.delta_secs_f64();
+        input.yaw -= motion.x as f64 * 0.2 / time.delta_secs_f64();
     }
 }
 

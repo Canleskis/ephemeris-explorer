@@ -6,7 +6,7 @@ use crate::{
     load::{Ship, SpawnShip, SystemRoot},
     prediction::{ComputePredictionEvent, PredictionContext, Trajectory},
     simulation::SimulationTime,
-    ui::{get_name, show_tree, IdentedInfo, Labelled, TrajectoryPlot, WindowsUiSet},
+    ui::{get_name, show_tree, IdentedInfo, Labelled, PlotConfig, PlotSource, WindowsUiSet},
     MainState,
 };
 
@@ -81,7 +81,7 @@ impl ShipSpawnerWindow {
             Option<(
                 &mut Name,
                 &mut PredictionContext<SpacecraftPropagator>,
-                &mut TrajectoryPlot,
+                &mut PlotConfig,
             )>,
         )>,
         query_trajectory: Query<&Trajectory>,
@@ -155,14 +155,14 @@ impl ShipSpawnerWindow {
                         Bodies(new_context()),
                     ),
                 ),
-                TrajectoryPlot {
+                PlotSource(entity),
+                PlotConfig {
                     enabled: true,
                     color: bevy::color::palettes::css::FUCHSIA.into(),
                     start: Epoch::from_offset(-Duration::MAX),
                     end: Epoch::from_offset(Duration::MAX),
                     threshold: 0.5,
                     max_points: usize::MAX,
-                    source: entity,
                     reference: data.reference,
                 },
             ));

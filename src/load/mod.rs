@@ -19,7 +19,7 @@ use crate::{
     selection::Selectable,
     simulation::{BoundsTime, SimulationTime},
     starlight::Star,
-    ui::{Labelled, TrajectoryPlot},
+    ui::{Labelled, PlotConfig, PlotSource},
     MainState,
 };
 
@@ -384,8 +384,8 @@ fn spawn_loaded_bodies(
             entity.with_children(|cmds| {
                 cmds.spawn((
                     Name::new(name.to_string()),
-                    TrajectoryPlot {
-                        source: cmds.target_entity(),
+                    PlotSource(cmds.target_entity()),
+                    PlotConfig {
                         enabled: depth <= 1,
                         color: visual.orbit.color,
                         start: solar_system.epoch - Duration::from_years(1000.0),
@@ -615,8 +615,8 @@ fn spawn_ship(
         ))
         .with_child((
             Name::new(ship.name.to_string()),
-            TrajectoryPlot {
-                source: id,
+            PlotSource(id),
+            PlotConfig {
                 enabled: true,
                 color: color.into(),
                 start: ship.start - Duration::from_years(1000.0),

@@ -1,32 +1,37 @@
 use crate::{
+    MainState,
     dynamics::{CubicHermiteSplineSamples, UniformSpline},
     flight_plan::FlightPlan,
     floating_origin::{BigSpace, Grid},
     prediction::Trajectory,
-    selection::Selectable,
     simulation::SimulationTime,
-    ui::WorldUiSet,
-    MainState,
+    ui::{MANOEUVRE_SIZE, WorldUiSet},
 };
 
 use bevy::prelude::*;
-use bevy::{
-    math::bounding::{BoundingSphere, RayCast3d},
-    math::DVec3,
-    picking::backend::ray::RayMap,
-};
+use bevy::{math::DVec3, math::bounding::RayCast3d};
 use ephemeris::{
     BoundedTrajectory, EvaluateTrajectory, ManoeuvreFrame, RelativeTrajectory, StateVector,
 };
 use ftime::Epoch;
 
+#[derive(Default, Debug, PartialEq, Eq, Component, Deref)]
+#[relationship_target(relationship = PlotSource)]
+pub struct PlotSourceOf(Vec<Entity>);
+
+#[derive(Component)]
+#[relationship(relationship_target = PlotSourceOf)]
+pub struct PlotSource(pub Entity);
+
+impl PlotSource {
+    pub fn entity(&self) -> Entity {
+        self.0
+    }
+}
+
 #[derive(Component)]
 #[require(PlotPoints)]
-pub struct TrajectoryPlot {
-    /// For now this should always refers to the parent of the plot, but eventually when we have
-    /// entity-entity relationships we can have a `SourceOf` component on entities that are
-    /// referenced by a `TrajectoryPlot`.
-    pub source: Entity,
+pub struct PlotConfig {
     pub enabled: bool,
     pub start: Epoch,
     pub end: Epoch,
@@ -36,22 +41,21 @@ pub struct TrajectoryPlot {
     pub reference: Option<Entity>,
 }
 
-impl TrajectoryPlot {
+impl PlotConfig {
     #[inline]
     pub fn get_relative_trajectory<'w>(
         &self,
+        source: Entity,
         query_trajectory: &'w Query<&Trajectory>,
     ) -> Option<RelativeTrajectory<&'w Trajectory>> {
         Some(RelativeTrajectory::new(
-            query_trajectory.get(self.source).ok()?,
+            query_trajectory.get(source).ok()?,
             self.reference.and_then(|e| query_trajectory.get(e).ok()),
         ))
     }
 }
 
-pub type SourceOf = Children;
-
-/// Global space position of the points of a trajectory.
+/// Global space position of the points for a plotted trajectory.
 #[derive(Default, Debug, Component, Deref, DerefMut)]
 pub struct PlotPoints(pub Vec<(Epoch, Vec3)>);
 
@@ -227,9 +231,6 @@ impl Plugin for PlotPlugin {
                         // plot_knots,
                         plot_trajectories,
                         plot_manoeuvres,
-                        (trajectory_picking, manoeuvre_picking).run_if(not(
-                            crate::ui::using_pointer.or(crate::camera::using_pointer),
-                        )),
                     ),
                 )
                     .chain()
@@ -267,7 +268,7 @@ pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
 pub fn compute_plot_points_parallel(
     commands: ParallelCommands,
     sim_time: Res<SimulationTime>,
-    mut query_plot: Query<(Entity, &TrajectoryPlot)>,
+    mut query_plot: Query<(Entity, &PlotConfig, &PlotSource)>,
     query_trajectory: Query<&Trajectory>,
     root: Single<&Grid, With<BigSpace>>,
     camera: Single<(&GlobalTransform, &Projection)>,
@@ -276,17 +277,22 @@ pub fn compute_plot_points_parallel(
         unreachable!("Camera is not perspective");
     };
 
-    query_plot.par_iter_mut().for_each(|(entity, plot)| {
-        commands.command_scope(move |mut commands| {
-            commands.queue(move |world: &mut World| {
-                if let Some(mut points) = world.get_mut::<PlotPoints>(entity) {
-                    points.clear();
-                }
+    query_plot
+        .par_iter_mut()
+        .for_each(|(entity, plot, source)| {
+            commands.command_scope(move |mut commands| {
+                commands.queue(move |world: &mut World| {
+                    if let Some(mut points) = world.get_mut::<PlotPoints>(entity) {
+                        points.clear();
+                    }
+                });
             });
-        });
 
-        if let Some(relative) = plot.get_relative_trajectory(&query_trajectory) {
-            if plot.enabled && !relative.is_empty() && plot.start < plot.end {
+            if let Some(relative) = plot.get_relative_trajectory(source.entity(), &query_trajectory)
+                && plot.enabled
+                && !relative.is_empty()
+                && plot.start < plot.end
+            {
                 const ARC_MINUTE: f32 = 0.000290888;
                 let tan2_angular_resolution =
                     (plot.threshold * ARC_MINUTE * perspective.fov) as f64;
@@ -330,123 +336,21 @@ pub fn compute_plot_points_parallel(
                         }
                     });
                 });
-            }
-        };
-    });
+            };
+        });
 }
 
-fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &TrajectoryPlot)>) {
+fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &PlotConfig)>) {
     for (points, plot) in query.iter() {
         gizmos.linestrip(points.iter().map(|(_, p)| *p), plot.color);
     }
 }
 
-pub const PICK_THRESHOLD: f32 = 6e-3;
-
-pub fn trajectory_picking(
-    ray_map: Res<RayMap>,
-    query_clickable: Query<(&GlobalTransform, &Selectable)>,
-    perspective: Single<&Projection, With<Camera>>,
-    query_plot: Query<(Entity, &PlotPoints)>,
-    mut events: EventWriter<TrajectoryHitPoint>,
-) {
-    let Some((_, ray)) = ray_map.iter().next() else {
-        return;
-    };
-    let mut ray = RayCast3d::from_ray(*ray, f32::MAX);
-
-    let Projection::Perspective(perspective) = *perspective else {
-        unreachable!("Camera is not perspective");
-    };
-
-    ray.max = query_clickable
-        .iter()
-        .filter_map(|(transform, clickable)| {
-            let distance = transform.translation().distance(Vec3::from(ray.origin));
-            ray.sphere_intersection_at(&BoundingSphere::new(
-                transform.translation(),
-                clickable.radius + distance * perspective.fov * 1e-2,
-            ))
-        })
-        .fold(f32::MAX, f32::min);
-
-    for (entity, points) in query_plot.iter() {
-        events.write_batch(
-            points
-                .ray_distances(&ray)
-                .map(|(time, separation, distance)| TrajectoryHitPoint {
-                    entity,
-                    time,
-                    separation,
-                    distance,
-                }),
-        );
-    }
-}
-
-pub const MANOEUVRE_SIZE: f32 = 0.02;
-
-fn manoeuvre_picking(
-    ray_map: Res<RayMap>,
-    query: Query<(Entity, &FlightPlan, &SourceOf)>,
-    query_clickable: Query<(&GlobalTransform, &Selectable)>,
-    query_plot: Query<(Entity, &PlotPoints)>,
-    perspective: Single<&Projection, With<Camera>>,
-    mut events: EventWriter<ManoeuvreHitPoint>,
-) {
-    let Some((_, ray)) = ray_map.iter().next() else {
-        return;
-    };
-    let mut ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
-
-    let Projection::Perspective(perspective) = *perspective else {
-        unreachable!("Camera is not perspective");
-    };
-
-    ray.max = query_clickable
-        .iter()
-        .filter_map(|(transform, clickable)| {
-            let distance = transform.translation().distance(Vec3::from(ray.origin));
-            ray.sphere_intersection_at(&BoundingSphere::new(
-                transform.translation(),
-                clickable.radius + distance * perspective.fov * 1e-2,
-            ))
-        })
-        .fold(f32::MAX, f32::min);
-
-    for (fp_entity, flight_plan, source_of) in query.iter() {
-        for (entity, points) in query_plot.iter_many(source_of) {
-            for burn in flight_plan.burns.iter() {
-                if !burn.enabled || burn.overlaps {
-                    continue;
-                }
-
-                let Some(world_pos) = points.evaluate(burn.start) else {
-                    continue;
-                };
-
-                let distance = world_pos.distance(Vec3::from(ray.origin));
-                if let Some(distance) = ray.sphere_intersection_at(&BoundingSphere::new(
-                    world_pos,
-                    distance * perspective.fov * MANOEUVRE_SIZE / 2.0,
-                )) {
-                    events.write(ManoeuvreHitPoint {
-                        plot_entity: entity,
-                        flight_plan_entity: fp_entity,
-                        id: burn.id,
-                        distance,
-                    });
-                }
-            }
-        }
-    }
-}
-
 fn plot_manoeuvres(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
-    query: Query<(&Trajectory, &FlightPlan, &SourceOf)>,
+    query: Query<(&Trajectory, &FlightPlan, &PlotSourceOf)>,
     query_trajectory: Query<&Trajectory>,
-    query_plot: Query<(&PlotPoints, &TrajectoryPlot)>,
+    query_plot: Query<(&PlotPoints, &PlotConfig)>,
     root: Single<&Grid, With<BigSpace>>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
@@ -455,7 +359,7 @@ fn plot_manoeuvres(
     };
 
     for (trajectory, flight_plan, source_of) in query.iter() {
-        for (points, plot) in query_plot.iter_many(source_of) {
+        for (points, plot) in query_plot.iter_many(source_of.iter()) {
             if !plot.enabled || trajectory.is_empty() {
                 continue;
             }
@@ -496,7 +400,7 @@ fn plot_manoeuvres(
 #[expect(unused)]
 fn plot_knots(
     mut gizmos: Gizmos,
-    query_plot: Query<(&TrajectoryPlot, &PlotPoints)>,
+    query_plot: Query<(&PlotConfig, &PlotPoints, &PlotSource)>,
     query_trajectory: Query<&Trajectory>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
@@ -526,23 +430,23 @@ fn plot_knots(
         }
     }
 
-    for (plot, plot_points) in query_plot.iter() {
+    for (plot, points, source) in query_plot.iter() {
         if !plot.enabled {
             continue;
         }
-        let Ok(trajectory) = query_trajectory.get(plot.source) else {
+        let Ok(trajectory) = query_trajectory.get(source.entity()) else {
             continue;
         };
         let traj = trajectory.read();
 
         if let Some(traj) = traj.as_any().downcast_ref::<CubicHermiteSplineSamples>() {
             let knots = traj.points().iter().map(|(t, _)| *t);
-            plot_knots(&mut gizmos, *camera, knots, plot_points);
+            plot_knots(&mut gizmos, *camera, knots, points);
         };
 
         if let Some(traj) = traj.as_any().downcast_ref::<UniformSpline>() {
             let knots = (0..traj.len()).map(|i| traj.start() + traj.interval() * i as f64);
-            plot_knots(&mut gizmos, *camera, knots, plot_points);
+            plot_knots(&mut gizmos, *camera, knots, points);
         }
     }
 }

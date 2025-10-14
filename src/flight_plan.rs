@@ -129,6 +129,14 @@ impl FlightPlan {
         }
     }
 
+    pub fn get_burn(&self, id: uuid::Uuid) -> Option<&Burn> {
+        self.burns.iter().find(|burn| burn.id == id)
+    }
+
+    pub fn get_burn_mut(&mut self, id: uuid::Uuid) -> Option<&mut Burn> {
+        self.burns.iter_mut().find(|burn| burn.id == id)
+    }
+
     #[inline]
     pub fn compute_overlaps(&mut self) {
         for i in 0..self.burns.len() {

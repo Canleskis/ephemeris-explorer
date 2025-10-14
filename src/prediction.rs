@@ -212,7 +212,12 @@ pub type ExtendPredictionEvent<P> = ComputePredictionEvent<P, true>;
 
 /// Marker component to indicate that an entity's trajectory prediction is being computed.
 #[derive(Clone, Copy, Component)]
-pub struct Predicting<P>(std::marker::PhantomData<P>);
+pub struct Predicting;
+
+/// Marker component to indicate that an entity's trajectory prediction of type `P` is being
+/// computed.
+#[derive(Clone, Copy, Component)]
+pub struct PredictingWith<P>(std::marker::PhantomData<P>);
 
 pub struct PredictionPlugin<P>(std::marker::PhantomData<fn(P)>);
 
@@ -414,9 +419,10 @@ fn add_predicting_marker<P>(
 {
     if let Ok(prediction) = query_prediction.get(trigger.target()) {
         for entity in &prediction.entities {
-            commands
-                .entity(*entity)
-                .insert(Predicting::<P>(std::marker::PhantomData));
+            if let Ok(mut entity) = commands.get_entity(*entity) {
+                entity.insert(Predicting);
+                entity.insert(PredictingWith::<P>(std::marker::PhantomData));
+            }
         }
     };
 }
@@ -431,7 +437,8 @@ fn remove_predicting_marker<P>(
     if let Ok(prediction) = query_prediction.get(trigger.target()) {
         for entity in &prediction.entities {
             if let Ok(mut entity) = commands.get_entity(*entity) {
-                entity.remove::<Predicting<P>>();
+                entity.remove::<Predicting>();
+                entity.remove::<PredictingWith<P>>();
             }
         }
     };

@@ -51,7 +51,6 @@ impl PluginGroup for MainPlugins {
             .add(bevy::log::LogPlugin::default())
             .add(bevy::diagnostic::FrameCountPlugin)
             .add(bevy::time::TimePlugin)
-            // .add(bevy::hierarchy::HierarchyPlugin)
             .add(bevy::diagnostic::DiagnosticsPlugin)
             .add(bevy::input::InputPlugin)
             .add(bevy::app::ScheduleRunnerPlugin::default())
@@ -121,7 +120,6 @@ fn main() {
             (
                 set_window_icon,
                 load_initial_solar_system,
-                // load_later_solar_system,
             ),
         )
         .add_systems(First, delay_window_visiblity)

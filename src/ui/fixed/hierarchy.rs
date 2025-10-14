@@ -3,7 +3,7 @@ use crate::{
     hierarchy::OrbitedBy,
     load::SystemRoot,
     selection::{Selectable, Selected},
-    ui::{show_tree, SourceOf, TrajectoryPlot},
+    ui::{show_tree, PlotConfig, PlotSourceOf},
 };
 
 use bevy::prelude::*;
@@ -14,8 +14,8 @@ pub fn solar_system_hierarchy(
     mut followed: ResMut<Followed>,
     mut selected: ResMut<Selected>,
     query_hierarchy: Query<(Entity, &Name, Option<&OrbitedBy>)>,
-    mut query_plot: Query<&mut TrajectoryPlot>,
-    query_source_of: Query<&SourceOf>,
+    mut query_plot: Query<&mut PlotConfig>,
+    query_source_of: Query<&PlotSourceOf>,
     query_selectable: Query<&Selectable>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
@@ -74,10 +74,10 @@ pub fn solar_system_hierarchy(
                                     }
 
                                     let enabled =
-                                        query_plot.iter_many(source_of).any(|p| p.enabled);
+                                        query_plot.iter_many(source_of.iter()).any(|p| p.enabled);
 
                                     if ui.selectable_label(enabled, "○").clicked() {
-                                        let mut iter = query_plot.iter_many_mut(source_of);
+                                        let mut iter = query_plot.iter_many_mut(source_of.iter());
                                         while let Some(mut plot) = iter.fetch_next() {
                                             plot.enabled = !enabled;
                                         }

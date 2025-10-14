@@ -6,25 +6,23 @@ pub use fixed::*;
 pub use windows::*;
 pub use world::*;
 
-use crate::{load::LoadSolarSystemEvent, MainState};
+use crate::{MainState, load::LoadSolarSystemEvent};
 
 use bevy::prelude::*;
-use bevy_egui::{
-    egui, EguiContext, EguiContexts, EguiPlugin, EguiPrimaryContextPass,
-};
+use bevy_egui::{EguiContext, EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
 use ftime::Epoch;
 use std::str::FromStr;
 
 pub fn using_pointer(
-    world_ui: Res<WorldUiInteraction>,
+    world_ui: Res<WorldInteraction>,
     egui_input_res: Res<bevy_egui::input::EguiWantsInput>,
 ) -> bool {
     world_ui.using_pointer || bevy_egui::input::egui_wants_any_pointer_input(egui_input_res)
 }
 
 pub fn using_keyboard(
-    world_ui: Res<WorldUiInteraction>,
+    world_ui: Res<WorldInteraction>,
     egui_input_res: Res<bevy_egui::input::EguiWantsInput>,
 ) -> bool {
     world_ui.using_keyboard || bevy_egui::input::egui_wants_any_keyboard_input(egui_input_res)
@@ -51,10 +49,14 @@ impl Plugin for UiPlugin {
                 .with_save_file::<ExportSolarSystemFile>()
                 .with_save_file::<ExportShipFile>(),
         ))
+        .configure_sets(
+            EguiPrimaryContextPass,
+            (WorldUiSet, FixedUiSet, WindowsUiSet).chain(),
+        )
         .add_observer(setup_egui_visuals)
         .add_systems(
             EguiPrimaryContextPass,
-            top_menu
+            top_menu.after(WorldUiSet)
                 .before(FixedUiSet)
                 .run_if(in_state(MainState::Running)),
         )

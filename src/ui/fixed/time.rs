@@ -1,7 +1,7 @@
 use crate::simulation::SimulationTime;
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{EguiContexts, egui};
 use ftime::{Duration, Epoch};
 use std::str::FromStr;
 use thousands::Separable;
@@ -84,10 +84,10 @@ pub fn time_controls(
             ui.spacing_mut().text_edit_width = 240.0;
             let edit = ui.add(egui::TextEdit::singleline(&mut *buffer));
 
-            if edit.lost_focus() {
-                if let Ok(buffer) = Epoch::from_str(&buffer) {
-                    sim_time.set_current_clamped(buffer);
-                }
+            if edit.lost_focus()
+                && let Ok(buffer) = Epoch::from_str(&buffer)
+            {
+                sim_time.set_current_clamped(buffer);
             }
 
             if !edit.has_focus() {

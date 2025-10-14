@@ -1,16 +1,16 @@
 use crate::{
+    MainState,
     dynamics::Mu,
     flight_plan::FlightPlan,
     hierarchy::OrbitedBy,
     load::SystemRoot,
     prediction::Trajectory,
     simulation::SimulationTime,
-    ui::{epoch_clamped_parser, show_tree, WindowsUiSet},
-    MainState,
+    ui::{WindowsUiSet, epoch_clamped_parser, show_tree},
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
 use ephemeris::EvaluateTrajectory;
 use ftime::{Duration, Epoch};

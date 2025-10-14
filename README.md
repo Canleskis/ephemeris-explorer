@@ -106,6 +106,7 @@ This implementation was custom made for this project and is not validated in any
 
 - [x] Implement multiple types of integrators appropriate for different problems (symplectic, linear multistep, Runge-Kutta-Nystrom, etc.).
 - [x] Evaluation of accuracy of solar system simulations versus data from JPL and other sources.
+- [ ] Improve UI/UX related to trajectory plotting for spacecrafts. Display more information such as closest approach, SOI changes, etc.
 
 ### Medium term
 
@@ -118,7 +119,7 @@ This implementation was custom made for this project and is not validated in any
 
 - [ ] Plots and graphs for visualizing data.
 - [ ] Import and export data from and to other software (NAIF kernels, TLEs, etc.).
-- [ ] Ealuation of accuracy of spacecraft orbit propagation versus real data.
+- [ ] Evaluation of accuracy of spacecraft orbit propagation versus real data.
 - [ ] Add more models for spacecraft orbit propagation (simplified perturbations models, radiation pressure, atmospheres, etc.).
 
 ### Stretch

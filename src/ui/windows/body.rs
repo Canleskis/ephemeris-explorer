@@ -8,8 +8,7 @@ use crate::{
     selection::Selected,
     simulation::SimulationTime,
     ui::{
-        get_name, nformat, show_tree, IdentedInfo, SeparationPlot, SourceOf, TrajectoryPlot,
-        WindowsUiSet,
+        get_name, nformat, remove_separation, show_tree, IdentedInfo, PlotConfig, PlotSeparation, PlotSource, PlotSourceOf, WindowsUiSet
     },
     MainState,
 };
@@ -94,7 +93,7 @@ impl PlotOverwrite {
 pub struct ExportShipFile;
 
 #[derive(Component)]
-struct BodyInfoWindow {
+pub struct BodyInfoWindow {
     auto_plot_reference: bool,
     plot_start_overwrite: Option<PlotOverwrite>,
     plot_end_overwrite: Option<PlotOverwrite>,
@@ -104,8 +103,8 @@ struct BodyInfoWindow {
 impl BodyInfoWindow {
     fn init(
         mut commands: Commands,
-        query: Query<(Entity, &SourceOf, Option<&FlightPlan>), Without<Self>>,
-        query_plot: Query<&TrajectoryPlot>,
+        query: Query<(Entity, &PlotSourceOf, Option<&FlightPlan>), Without<Self>>,
+        query_plot: Query<&PlotConfig>,
     ) {
         for (entity, source_of, flight_plan) in &query {
             let Some(plot) = source_of.iter().find_map(|e| query_plot.get(e).ok()) else {
@@ -126,8 +125,8 @@ impl BodyInfoWindow {
     fn persisting(
         sim_time: Res<SimulationTime>,
         selected: Res<Selected>,
-        mut query: Query<(Entity, &Orbiting, &SourceOf, &mut Self)>,
-        mut query_plot: Query<&mut TrajectoryPlot>,
+        mut query: Query<(Entity, &Orbiting, &PlotSourceOf, &mut Self)>,
+        mut query_plot: Query<&mut PlotConfig>,
     ) {
         for (entity, parent, source_of, mut info) in &mut query {
             let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(*e)) else {
@@ -153,7 +152,7 @@ impl BodyInfoWindow {
     }
 
     #[expect(clippy::type_complexity)]
-    fn show(
+    pub fn show(
         mut commands: Commands,
         mut contexts: EguiContexts,
         mut selected: ResMut<Selected>,
@@ -164,13 +163,13 @@ impl BodyInfoWindow {
         query_trajectory: Query<&Trajectory>,
         mut query: Query<(
             Option<&Orbiting>,
-            &SourceOf,
+            &PlotSourceOf,
             Option<(&mut FlightPlan, &PredictionContext<SpacecraftPropagator>)>,
             &mut Self,
         )>,
-        mut query_plot: Query<&mut TrajectoryPlot>,
-        mut query_separation: Query<&mut SeparationPlot>,
-        #[expect(unused)] query_source_of: Query<&SourceOf>,
+        mut query_plot: Query<(&mut PlotConfig, &PlotSource)>,
+        mut query_separation: Query<&mut PlotSeparation>,
+        #[expect(unused)] query_source_of: Query<&PlotSourceOf>,
         root: Single<Entity, With<SystemRoot>>,
         mut delete: Local<bevy::platform::collections::hash_set::HashSet<uuid::Uuid>>,
     ) {
@@ -200,9 +199,11 @@ impl BodyInfoWindow {
                     else {
                         return;
                     };
-                    let mut plot = query_plot.get_mut(plot_entity).unwrap();
+                    let (mut plot, source) = query_plot.get_mut(plot_entity).unwrap();
 
-                    let Some(relative) = plot.get_relative_trajectory(&query_trajectory) else {
+                    let Some(relative) =
+                        plot.get_relative_trajectory(source.entity(), &query_trajectory)
+                    else {
                         return;
                     };
 
@@ -462,7 +463,7 @@ impl BodyInfoWindow {
                     ui.add_space(5.0);
 
                     // Reborrow to drop previous mutable borrow of the query.
-                    let plot = query_plot.get(plot_entity).unwrap();
+                    let (plot, _) = query_plot.get(plot_entity).unwrap();
 
                     if let Ok(target) = query_separation.get_mut(plot_entity).as_deref_mut() {
                         let unknown = Name::new("Unknown");
@@ -481,7 +482,7 @@ impl BodyInfoWindow {
                                 .show_ui(ui, |ui| {
                                     show_tree(
                                         ui,
-                                        SeparationPlot::Trajectory(*root),
+                                        PlotSeparation::Trajectory(*root),
                                         |&item| item,
                                         |_, _| true,
                                         |ui, _, separation, _| {
@@ -489,7 +490,7 @@ impl BodyInfoWindow {
                                             let color = query_plot
                                                 .get(ref_entity)
                                                 .ok()
-                                                .map(|plot| {
+                                                .map(|(plot, _)| {
                                                     let [r, g, b, a] =
                                                         plot.color.to_srgba().to_u8_array();
                                                     egui::Rgba::from_srgba_premultiplied(r, g, b, a)
@@ -549,20 +550,20 @@ impl BodyInfoWindow {
                                             // )
 
                                             query_orbited_by.get(ref_entity).ok().map(|c| {
-                                                c.iter().map(|e| SeparationPlot::Trajectory(*e))
+                                                c.iter().map(|e| PlotSeparation::Trajectory(*e))
                                             })
                                         },
                                     );
                                 });
 
                             if ui.button("❌").clicked() {
-                                commands.entity(plot_entity).remove::<SeparationPlot>();
+                                commands.entity(plot_entity).queue(remove_separation);
                             }
                         });
                     } else if ui.button("Set separation marker").clicked() {
                         commands
                             .entity(plot_entity)
-                            .insert(SeparationPlot::Trajectory(plot.reference.unwrap_or(*root)));
+                            .insert(PlotSeparation::Trajectory(plot.reference.unwrap_or(*root)));
                     }
 
                     let Some((flight_plan, prediction)) = data.as_mut() else {
