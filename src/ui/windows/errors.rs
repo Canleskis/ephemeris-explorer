@@ -1,7 +1,7 @@
-use crate::{load::LoadingErrors, ui::WindowsUiSet, MainState};
+use crate::{MainState, load::LoadingErrors, ui::WindowsUiSet};
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 
 pub struct ErrorsPlugin;
 

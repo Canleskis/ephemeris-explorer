@@ -5,11 +5,12 @@ pub use solar_system::*;
 pub use ui::*;
 
 use crate::{
-    analysis::{under_soi, SphereOfInfluence},
+    MainState,
+    analysis::{SphereOfInfluence, under_soi},
     camera::{BigSpaceCameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
-        Backward, Bodies, CubicHermiteSplineSamples, Forward, LeastSquaresFit, Mu, NBodyPropagator,
-        SpacecraftPropagator, StateVector, UniformSpline, DEFAULT_PARAMS,
+        Backward, Bodies, CubicHermiteSplineSamples, DEFAULT_PARAMS, Forward, LeastSquaresFit, Mu,
+        NBodyPropagator, SpacecraftPropagator, StateVector, UniformSpline,
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
@@ -20,14 +21,13 @@ use crate::{
     simulation::{BoundsTime, SimulationTime},
     starlight::Star,
     ui::{Labelled, PlotConfig, PlotSource},
-    MainState,
 };
 
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::core_pipeline::Skybox;
 use bevy::platform::hash::FixedState;
 use bevy::prelude::*;
-use ephemeris::{EvaluateTrajectory, DIV};
+use ephemeris::{DIV, EvaluateTrajectory};
 use ftime::Duration;
 use std::hash::{BuildHasher, Hash};
 

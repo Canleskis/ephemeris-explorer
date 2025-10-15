@@ -115,13 +115,7 @@ fn main() {
         ))
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()
-        .add_systems(
-            Startup,
-            (
-                set_window_icon,
-                load_initial_solar_system,
-            ),
-        )
+        .add_systems(Startup, (set_window_icon, load_initial_solar_system))
         .add_systems(First, delay_window_visiblity)
         .add_systems(PreUpdate, toggle_full_screen)
         .run();

@@ -3,11 +3,11 @@ use crate::{
     hierarchy::OrbitedBy,
     load::SystemRoot,
     selection::{Selectable, Selected},
-    ui::{show_tree, PlotConfig, PlotSourceOf},
+    ui::{PlotConfig, PlotSourceOf, show_tree},
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{EguiContexts, egui};
 
 pub fn solar_system_hierarchy(
     mut contexts: EguiContexts,

@@ -1,14 +1,14 @@
 use crate::{
+    MainState,
     dynamics::{Forward, NBodyPropagator, UniformSpline},
     load::{SolarSystemState, UniqueAsset},
     prediction::{PredictionContext, Trajectory},
     simulation::SimulationTime,
     ui::WindowsUiSet,
-    MainState,
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory, NBodyProblem, NewtonianGravity};
 use ftime::{Duration, Epoch};
 use integration::prelude::*;

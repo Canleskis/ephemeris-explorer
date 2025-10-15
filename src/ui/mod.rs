@@ -56,7 +56,8 @@ impl Plugin for UiPlugin {
         .add_observer(setup_egui_visuals)
         .add_systems(
             EguiPrimaryContextPass,
-            top_menu.after(WorldUiSet)
+            top_menu
+                .after(WorldUiSet)
                 .before(FixedUiSet)
                 .run_if(in_state(MainState::Running)),
         )

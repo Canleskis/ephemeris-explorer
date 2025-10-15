@@ -1,11 +1,11 @@
 use crate::{
+    MainState,
     settings::{AppSettings, UserSettings},
     ui::WindowsUiSet,
-    MainState,
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 
 pub struct SettingsPlugin;
 

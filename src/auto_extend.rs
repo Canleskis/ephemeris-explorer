@@ -1,9 +1,9 @@
 use crate::{
+    MainState,
     prediction::{
         ExtendPredictionEvent, PredictionContext, PredictionPropagator, PredictionTracker,
     },
     simulation::SimulationTime,
-    MainState,
 };
 
 use bevy::prelude::*;

@@ -3,8 +3,8 @@ use crate::prediction::Trajectory;
 use bevy::math::{DMat3, DVec3};
 use bevy::prelude::*;
 use ephemeris::{
-    eval_slice_horner, AccelerationModel, BoundedTrajectory, EvaluateTrajectory, Interpolation,
-    Polynomial, PropagationContext, Transform,
+    AccelerationModel, BoundedTrajectory, EvaluateTrajectory, Interpolation, Polynomial,
+    PropagationContext, Transform, eval_slice_horner,
 };
 use ftime::{Duration, Epoch};
 use integration::prelude::*;

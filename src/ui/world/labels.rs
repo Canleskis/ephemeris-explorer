@@ -1,4 +1,4 @@
-use crate::{selection::Selected, ui::WorldUiSet, MainState};
+use crate::{MainState, selection::Selected, ui::WorldUiSet};
 
 use bevy::prelude::*;
 

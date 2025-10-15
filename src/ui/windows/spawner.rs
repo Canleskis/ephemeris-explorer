@@ -1,18 +1,21 @@
 use crate::{
+    MainState,
     camera::Followed,
-    dynamics::{Bodies, CubicHermiteSplineSamples, Mu, SpacecraftPropagator, DEFAULT_PARAMS},
+    dynamics::{Bodies, CubicHermiteSplineSamples, DEFAULT_PARAMS, Mu, SpacecraftPropagator},
     floating_origin::BigGridBundle,
     hierarchy::OrbitedBy,
     load::{Ship, SpawnShip, SystemRoot},
     prediction::{ComputePredictionEvent, PredictionContext, Trajectory},
     simulation::SimulationTime,
-    ui::{get_name, show_tree, IdentedInfo, Labelled, PlotConfig, PlotSource, WindowsUiSet},
-    MainState,
+    ui::{
+        IdentedInfo, Labelled, PlotConfig, PlotSource, PlotSourceOf, WindowsUiSet, get_name,
+        show_tree,
+    },
 };
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
 use ephemeris::{EvaluateTrajectory, StateVector};
 use ftime::{Duration, Epoch};
@@ -81,9 +84,10 @@ impl ShipSpawnerWindow {
             Option<(
                 &mut Name,
                 &mut PredictionContext<SpacecraftPropagator>,
-                &mut PlotConfig,
+                &PlotSourceOf,
             )>,
         )>,
+        mut query_plot: Query<&mut PlotConfig>,
         query_trajectory: Query<&Trajectory>,
         query_context: Query<(Entity, &Trajectory, &Mu)>,
         followed: Res<Followed>,
@@ -103,7 +107,7 @@ impl ShipSpawnerWindow {
             return;
         };
 
-        let Ok((preview, mut data, Some((mut name, mut prediction, mut plot)))) =
+        let Ok((preview, mut data, Some((mut name, mut prediction, source_of)))) =
             query_preview.single_mut()
         else {
             let (entity, data) = match query_preview.single() {
@@ -129,46 +133,56 @@ impl ShipSpawnerWindow {
             let radius = 0.01;
             let sv = data.global_state_vector(data.start, &query_trajectory);
 
-            commands.entity(entity).insert((
-                Name::new(data.name.to_string()),
-                BigGridBundle {
-                    transform: Transform::from_translation(sv.position.as_vec3()),
-                    ..default()
-                },
-                Labelled {
-                    font: TextFont::from_font_size(12.0),
-                    colour: TextColor(bevy::color::palettes::css::FUCHSIA.into()),
-                    offset: Vec2::new(0.0, radius) * 1.1,
-                    index: 99,
-                },
-                Trajectory::new(CubicHermiteSplineSamples::new(
-                    data.start,
-                    sv.position,
-                    sv.velocity,
-                )),
-                PredictionContext::new(
-                    vec![entity],
-                    SpacecraftPropagator::new(
+            commands
+                .entity(entity)
+                .insert((
+                    Name::new(data.name.to_string()),
+                    BigGridBundle {
+                        transform: Transform::from_translation(sv.position.as_vec3()),
+                        ..default()
+                    },
+                    Labelled {
+                        font: TextFont::from_font_size(12.0),
+                        colour: TextColor(bevy::color::palettes::css::FUCHSIA.into()),
+                        offset: Vec2::new(0.0, radius) * 1.1,
+                        index: 99,
+                    },
+                    Trajectory::new(CubicHermiteSplineSamples::new(
                         data.start,
-                        sv,
-                        DEFAULT_PARAMS,
-                        Bodies(new_context()),
+                        sv.position,
+                        sv.velocity,
+                    )),
+                    PredictionContext::new(
+                        vec![entity],
+                        SpacecraftPropagator::new(
+                            data.start,
+                            sv,
+                            DEFAULT_PARAMS,
+                            Bodies(new_context()),
+                        ),
                     ),
-                ),
-                PlotSource(entity),
-                PlotConfig {
-                    enabled: true,
-                    color: bevy::color::palettes::css::FUCHSIA.into(),
-                    start: Epoch::from_offset(-Duration::MAX),
-                    end: Epoch::from_offset(Duration::MAX),
-                    threshold: 0.5,
-                    max_points: usize::MAX,
-                    reference: data.reference,
-                },
-            ));
+                ))
+                .with_child((
+                    Name::new(data.name.to_string()),
+                    PlotSource(entity),
+                    PlotConfig {
+                        enabled: true,
+                        color: bevy::color::palettes::css::FUCHSIA.into(),
+                        start: Epoch::from_offset(-Duration::MAX),
+                        end: Epoch::from_offset(Duration::MAX),
+                        threshold: 0.5,
+                        max_points: usize::MAX,
+                        reference: data.reference,
+                    },
+                ));
 
             window.valid_preview = false;
 
+            return;
+        };
+
+        // Previews only have one plot.
+        let Ok(mut plot) = query_plot.get_mut(source_of[0]) else {
             return;
         };
 
@@ -379,8 +393,6 @@ impl ShipSpawnerWindow {
 
         if !window.valid_preview {
             let sv = data.global_state_vector(data.start, &query_trajectory);
-            // prediction.propagator =
-            //     SpacecraftPropagator::new(data.start, sv.velocity, sv.position, new_context());
             prediction.propagator.set_initial_state(data.start, sv);
 
             commands.trigger(ComputePredictionEvent::<SpacecraftPropagator>::with(

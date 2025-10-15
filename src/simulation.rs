@@ -1,8 +1,8 @@
 use crate::{
+    MainState,
     floating_origin::{BigSpace, Grid, GridCell},
     prediction::Trajectory,
     rotation::Rotating,
-    MainState,
 };
 
 use bevy::prelude::*;

@@ -1,4 +1,5 @@
 use crate::{
+    MainState,
     camera::{Followed, SetFollowed},
     dynamics::{Bodies, SpacecraftPropagator},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
@@ -8,13 +9,13 @@ use crate::{
     selection::Selected,
     simulation::SimulationTime,
     ui::{
-        get_name, nformat, remove_separation, show_tree, IdentedInfo, PlotConfig, PlotSeparation, PlotSource, PlotSourceOf, WindowsUiSet
+        IdentedInfo, PlotConfig, PlotSeparation, PlotSource, PlotSourceOf, WindowsUiSet, get_name,
+        nformat, remove_separation, show_tree,
     },
-    MainState,
 };
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
 use ftime::{Duration, Epoch};
