@@ -1,8 +1,8 @@
 use crate::{
     MainState,
-    dynamics::{Forward, NBodyPropagator, UniformSpline},
-    load::{SolarSystemState, UniqueAsset},
-    prediction::{PredictionContext, Trajectory},
+    dynamics::{CelestialTrajectory, Forward, Trajectory, UniformSpline},
+    load::{SolarSystemState, SystemRoot, UniqueAsset},
+    prediction::PredictionContext,
     simulation::SimulationTime,
     ui::WindowsUiSet,
 };
@@ -14,6 +14,10 @@ use ftime::{Duration, Epoch};
 use integration::prelude::*;
 use thousands::Separable;
 
+/// A simple number to identify the order in which bodies were spawned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Component)]
+pub struct Id(pub u64);
+
 pub struct EphemeridesDebugPlugin;
 
 impl Plugin for EphemeridesDebugPlugin {
@@ -23,7 +27,8 @@ impl Plugin for EphemeridesDebugPlugin {
             EphemeridesDebugWindow::show
                 .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
-        );
+        )
+        .add_observer(compute_interpolation_errors);
     }
 }
 
@@ -37,9 +42,8 @@ impl EphemeridesDebugWindow {
         window: Option<Res<Self>>,
         system: UniqueAsset<SolarSystemState>,
         sim_time: Res<SimulationTime>,
-        query_prediction: Query<&PredictionContext<NBodyPropagator<Forward>>>,
-        query: Query<(Entity, &Name, &Trajectory)>,
-        mut errors: Local<Option<bevy::ecs::entity::EntityHashMap<f64>>>,
+        query: Query<(Entity, &Id, &Name, &Trajectory)>,
+        errors: Option<Single<&InterpolationErrors>>,
     ) {
         let Ok(ctx) = contexts.ctx_mut() else {
             return;
@@ -53,58 +57,8 @@ impl EphemeridesDebugWindow {
                     return;
                 };
 
-                let prediction = query_prediction.single().unwrap();
-                let dt = prediction.propagator.delta();
                 let start = system.epoch;
                 let duration = Duration::from_days(365.0 * 2.0).min(sim_time.end() - start);
-
-                let compute_error = || {
-                    let (query, positions, velocities, mus): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
-                        query
-                            .iter()
-                            .sort::<Entity>()
-                            .filter(|(.., trajectory)| {
-                                trajectory.read().as_any().is::<UniformSpline>()
-                            })
-                            .map(|(entity, name, trajectory)| {
-                                (
-                                    (entity, name, trajectory),
-                                    system.bodies[&**name].position,
-                                    system.bodies[&**name].velocity,
-                                    system.bodies[&**name].mu,
-                                )
-                            })
-                            .collect();
-
-                    let nbody = NBodyProblem {
-                        time: start.as_offset_seconds(),
-                        bound: start.as_offset_seconds() + duration.as_seconds(),
-                        state: SecondOrderState::new(positions, velocities),
-                        ode: NewtonianGravity {
-                            gravitational_parameters: mus,
-                        },
-                    };
-
-                    let method: QuinlanTremaine12<f64> =
-                        QuinlanTremaine12::new(FixedMethodParams::new(dt.as_seconds()));
-                    let mut integrator = method.integrate(nbody);
-
-                    let mut errors = bevy::ecs::entity::EntityHashMap::<f64>::default();
-                    while let Ok((t, state)) = integrator.advance() {
-                        let epoch = Epoch::from_offset(Duration::from_seconds(*t));
-                        for ((entity, _, traj), position) in query.iter().zip(&state.y) {
-                            let traj_position = traj.position(epoch).unwrap();
-
-                            let error = position.distance(traj_position) * 1e3;
-                            errors
-                                .entry(*entity)
-                                .and_modify(|e| *e = e.max(error))
-                                .or_insert(error);
-                        }
-                    }
-
-                    errors
-                };
 
                 let available_height = ui.available_height();
                 egui_extras::TableBuilder::new(ui)
@@ -125,7 +79,7 @@ impl EphemeridesDebugWindow {
                             ui.strong("Size");
                         });
                         header.col(|ui| {
-                            ui.strong("Segments");
+                            ui.strong("Polynomials");
                         });
                         header.col(|ui| {
                             ui.strong("Start");
@@ -148,15 +102,15 @@ impl EphemeridesDebugWindow {
                                 ))
                                 .clicked()
                             {
-                                *errors = Some(compute_error());
+                                commands.trigger(ComputeInterpolationErrors { start, duration });
                             }
                         });
                     })
                     .body(|body| {
                         let queried = query
                             .iter()
-                            .sort::<Entity>()
-                            .map(|(entity, name, data)| {
+                            .sort::<&Id>()
+                            .map(|(entity, _, name, data)| {
                                 (
                                     name.as_str(),
                                     data.heap_size(),
@@ -218,4 +172,72 @@ impl EphemeridesDebugWindow {
             commands.remove_resource::<Self>();
         }
     }
+}
+
+#[derive(Deref, DerefMut, Component)]
+struct InterpolationErrors(pub bevy::ecs::entity::EntityHashMap<f64>);
+
+#[derive(Event)]
+struct ComputeInterpolationErrors {
+    start: Epoch,
+    duration: Duration,
+}
+
+fn compute_interpolation_errors(
+    trigger: Trigger<ComputeInterpolationErrors>,
+    system: UniqueAsset<SolarSystemState>,
+    query_prediction: Query<&PredictionContext<CelestialTrajectory<Forward>>>,
+    query: Query<(Entity, &Id, &Name, &Trajectory)>,
+    root: Single<Entity, With<SystemRoot>>,
+    mut commands: Commands,
+) {
+    let Some(system) = system.get() else {
+        return;
+    };
+
+    let prediction = query_prediction.single().unwrap();
+    let dt = prediction.propagator.delta();
+
+    let (query, positions, velocities, mus): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = query
+        .iter()
+        .sort::<&Id>()
+        .filter(|(.., trajectory)| trajectory.read().as_any().is::<UniformSpline>())
+        .map(|(entity, _, name, trajectory)| {
+            (
+                (entity, name, trajectory),
+                system.bodies[&**name].position,
+                system.bodies[&**name].velocity,
+                system.bodies[&**name].mu,
+            )
+        })
+        .collect();
+
+    let nbody = NBodyProblem {
+        time: trigger.event().start.as_offset_seconds(),
+        bound: trigger.event().start.as_offset_seconds() + trigger.event().duration.as_seconds(),
+        state: SecondOrderState::new(positions, velocities),
+        ode: NewtonianGravity {
+            gravitational_parameters: mus,
+        },
+    };
+
+    let method: QuinlanTremaine12<f64> =
+        QuinlanTremaine12::new(FixedMethodParams::new(dt.as_seconds()));
+    let mut integrator = method.integrate(nbody);
+
+    let mut errors = bevy::ecs::entity::EntityHashMap::<f64>::default();
+    while let Ok((t, state)) = integrator.advance() {
+        let epoch = Epoch::from_offset(Duration::from_seconds(*t));
+        for ((entity, _, traj), position) in query.iter().zip(&state.y) {
+            let traj_position = traj.position(epoch).unwrap();
+
+            let error = position.distance(traj_position) * 1e3;
+            errors
+                .entry(*entity)
+                .and_modify(|e| *e = e.max(error))
+                .or_insert(error);
+        }
+    }
+
+    commands.entity(*root).insert(InterpolationErrors(errors));
 }

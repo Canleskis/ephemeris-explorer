@@ -393,8 +393,6 @@ impl<M: NewMethod<FixedMethodParams<Time>>> FromIndexFixed for M {}
 
 trait FromIndexAdaptive<V: Default>:
     NewMethod<AdaptiveMethodParams<Time, AbsRelTol<f64, V>, f64>> + Sized
-where
-    V: std::fmt::Debug,
 {
     #[inline]
     fn idx(i: i32, _: i32) -> Self {
@@ -407,8 +405,6 @@ where
 }
 impl<V: Default, M: NewMethod<AdaptiveMethodParams<Time, AbsRelTol<f64, V>, f64>>>
     FromIndexAdaptive<V> for M
-where
-    V: std::fmt::Debug,
 {
 }
 

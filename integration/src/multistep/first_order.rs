@@ -7,6 +7,8 @@ use num_traits::One;
 use std::ops::{Add, Mul};
 
 pub trait ELM1Coefficients {
+    const ORDER: u16;
+
     const ALPHA: &'static [i128];
 
     const BETA_N: &'static [i128];
@@ -21,7 +23,7 @@ pub struct StepOrder1<V> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ELM1<C, const ORDER: usize, V> {
+pub struct ELM1<C, V> {
     i: u32,
     current_dy: V,
     steps: LMBuffer<StepOrder1<V>>,
@@ -30,7 +32,7 @@ pub struct ELM1<C, const ORDER: usize, V> {
     _phantom: std::marker::PhantomData<C>,
 }
 
-impl<C, const ORDER: usize, V> ELM1<C, ORDER, V> {
+impl<C, V> ELM1<C, V> {
     /// Sets up the front of the buffer to be the last step
     #[inline]
     fn prepare_next_step(&mut self) {
@@ -39,14 +41,16 @@ impl<C, const ORDER: usize, V> ELM1<C, ORDER, V> {
     }
 }
 
-impl<C, const ORDER: usize, V> LMState for ELM1<C, ORDER, V> {
+impl<C: ELM1Coefficients, V> LMState for ELM1<C, V> {
+    const ORDER: u16 = C::ORDER;
+
     #[inline]
     fn step_count(&self) -> u32 {
         self.i
     }
 }
 
-impl<C, const ORDER: usize, V, P> LMInstance<P> for ELM1<C, ORDER, P::State>
+impl<C, V, P> LMInstance<P> for ELM1<C, P::State>
 where
     C: ELM1Coefficients,
     V: State + Clone,
@@ -55,14 +59,12 @@ where
     P::Time: Mul<Ratio, Output = P::Time> + Add<Output = P::Time> + One + Copy,
     P::ODE: FirstOrderODE<P::Time, V>,
 {
-    const ORDER: usize = ORDER;
-
     #[inline]
     fn from_problem(problem: &P) -> Self {
         Self {
             i: 0,
             current_dy: problem.as_ref().state.clone().zeroed(),
-            steps: (0..ORDER - 1)
+            steps: (0..C::ORDER - 1)
                 .map(|_| StepOrder1 {
                     y: problem.as_ref().state.clone(),
                     dy: problem.as_ref().state.clone().zeroed(),

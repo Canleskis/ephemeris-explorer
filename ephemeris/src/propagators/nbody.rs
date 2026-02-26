@@ -41,19 +41,21 @@ where
 
 pub type NBodyProblem<V> = ODEProblem<f64, SecondOrderState<Vec<V>>, NewtonianGravity>;
 
-pub trait Interpolation<V> {
-    fn interpolate(&self, ts: &[f64], xs: &[V]) -> Option<Polynomial<V>>;
+pub trait InterpolationAlgorithm<V> {
+    type Error;
+
+    fn interpolate(&self, ts: &[f64], xs: &[V]) -> Result<Polynomial<V>, Self::Error>;
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SegmentSamples<const LEN: usize, V> {
+pub struct PolyonmialInterpolator<const LEN: usize, V> {
     index: usize,
     samples: [V; LEN],
 }
 
-impl<const LEN: usize, V> SegmentSamples<LEN, V> {
+impl<const LEN: usize, V> PolyonmialInterpolator<LEN, V> {
     #[inline]
-    pub fn with(sample: &V) -> Self
+    pub fn new(sample: &V) -> Self
     where
         V: Copy,
     {
@@ -68,7 +70,7 @@ impl<const LEN: usize, V> SegmentSamples<LEN, V> {
     where
         V: Copy,
     {
-        assert!(self.index < LEN, "too many points for segment");
+        assert!(self.index < LEN, "too many points for sample");
         self.samples[self.index] = *sample;
         self.index += 1;
     }
@@ -89,29 +91,41 @@ impl<const LEN: usize, V> SegmentSamples<LEN, V> {
     }
 
     #[inline]
-    fn try_to_polynomial<A>(&self, ts: [f64; LEN], algorithm: &A) -> Option<Polynomial<V>>
+    pub fn try_to_polynomial<A>(
+        &self,
+        ts: [f64; LEN],
+        algorithm: &A,
+    ) -> Option<Result<Polynomial<V>, A::Error>>
     where
-        A: Interpolation<V>,
+        A: InterpolationAlgorithm<V>,
     {
-        algorithm.interpolate(&ts, &self.samples)
+        if !self.is_full() {
+            return None;
+        }
+
+        Some(algorithm.interpolate(&ts, &self.samples))
+    }
+
+    #[inline]
+    pub fn finish(&mut self) {
+        self.samples.swap(0, self.index - 1);
+        self.index = 1;
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct InterpolationSamples<const LEN: usize, V, A> {
+pub struct Interpolation<const LEN: usize, V, A> {
     last_sample_time: Duration,
     sample_period: Duration,
-    samples: SegmentSamples<LEN, V>,
+    interpolator: PolyonmialInterpolator<LEN, V>,
     algorithm: A,
 }
 
-impl<const LEN: usize, V, A> InterpolationSamples<LEN, V, A> {
+impl<const LEN: usize, V, A> Interpolation<LEN, V, A> {
     #[inline]
     pub fn time(&self) -> Duration {
         self.last_sample_time
-            + self
-                .sample_period
-                .scaled((self.samples.len().saturating_sub(1)) as f64)
+            + self.sample_period * (self.interpolator.len().saturating_sub(1)) as f64
     }
 }
 
@@ -158,32 +172,32 @@ impl Direction for Backward {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NBodyPropagationError {
-    IntegrationError(StepError),
-    InterpolationError,
+pub enum NBodyPropagatorError {
+    Integration(StepError),
+    Interpolation,
 }
-impl std::fmt::Display for NBodyPropagationError {
+impl std::fmt::Display for NBodyPropagatorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NBodyPropagationError::IntegrationError(e) => write!(f, "integration failed: {e}"),
-            NBodyPropagationError::InterpolationError => {
+            NBodyPropagatorError::Integration(e) => write!(f, "integration failed: {e}"),
+            NBodyPropagatorError::Interpolation => {
                 write!(f, "failed to interpolate trajectory")
             }
         }
     }
 }
-impl std::error::Error for NBodyPropagationError {}
+impl std::error::Error for NBodyPropagatorError {}
 
-impl From<StepError> for NBodyPropagationError {
+impl From<StepError> for NBodyPropagatorError {
     #[inline]
     fn from(err: StepError) -> Self {
-        NBodyPropagationError::IntegrationError(err)
+        NBodyPropagatorError::Integration(err)
     }
 }
 
 pub struct NBodyPropagator<D, V, M: Method<NBodyProblem<V>>, A> {
     integration: Integration<NBodyProblem<V>, M>,
-    interpolation: Vec<InterpolationSamples<{ DIV + 1 }, V, A>>,
+    interpolation: Vec<Interpolation<{ DIV + 1 }, V, A>>,
     _marker: std::marker::PhantomData<D>,
 }
 
@@ -227,10 +241,10 @@ where
                     sv.position,
                     sv.velocity,
                     m,
-                    InterpolationSamples {
+                    Interpolation {
                         last_sample_time: Duration::ZERO,
                         sample_period,
-                        samples: SegmentSamples::with(&sv.position),
+                        interpolator: PolyonmialInterpolator::new(&sv.position),
                         algorithm,
                     },
                 )
@@ -256,7 +270,7 @@ where
 
     #[inline]
     pub fn time(&self) -> Epoch {
-        Epoch::from_offset(Duration::from_seconds(self.integration.problem.time))
+        Epoch::from_offset_seconds(self.integration.problem.time)
     }
 
     #[inline]
@@ -268,15 +282,15 @@ where
     }
 
     #[inline]
-    fn extend_with<F>(
+    fn step_extend<E, F>(
         &mut self,
         trajectories: &mut [UniformSpline<V>],
-        add: F,
-    ) -> Result<(), NBodyPropagationError>
+        try_extend: F,
+    ) -> Result<(), NBodyPropagatorError>
     where
         V: Copy,
         M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
-        F: Fn(&mut UniformSpline<V>, &InterpolationSamples<{ DIV + 1 }, V, A>) -> Result<(), ()>,
+        F: Fn(&mut UniformSpline<V>, &mut Interpolation<{ DIV + 1 }, V, A>) -> Result<(), E>,
     {
         self.integration.step()?;
 
@@ -293,13 +307,8 @@ where
             interp.last_sample_time += delta_abs;
             if interp.last_sample_time == interp.sample_period {
                 interp.last_sample_time = Duration::ZERO;
-                interp.samples.push(position);
-                if interp.samples.is_full() {
-                    add(trajectory, interp)
-                        .map_err(|_| NBodyPropagationError::InterpolationError)?;
-                    interp.samples.index = 0;
-                    interp.samples.push(position);
-                }
+                interp.interpolator.push(position);
+                try_extend(trajectory, interp).map_err(|_| NBodyPropagatorError::Interpolation)?;
             }
         }
 
@@ -319,20 +328,20 @@ where
 impl<V, M, A> IncrementalPropagator for NBodyPropagator<Forward, V, M, A>
 where
     V: Copy,
-    A: Interpolation<V>,
+    A: InterpolationAlgorithm<V>,
     M: Method<NBodyProblem<V>>,
     M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
 {
-    type Error = NBodyPropagationError;
+    type Error = NBodyPropagatorError;
 
     #[inline]
     fn step(&mut self, trajectories: &mut Self::Trajectories) -> Result<(), Self::Error> {
-        self.extend_with(trajectories, |trajectory, interp| {
-            let polynomial = interp.samples.try_to_polynomial(
-                std::array::from_fn(|i| i as f64 / DIV as f64),
-                &interp.algorithm,
-            );
-            trajectory.push_back(polynomial.ok_or(())?);
+        self.step_extend::<A::Error, _>(trajectories, |trajectory, interp| {
+            let ts = std::array::from_fn(|i| i as f64 / DIV as f64);
+            if let Some(polynomial) = interp.interpolator.try_to_polynomial(ts, &interp.algorithm) {
+                trajectory.push_back(polynomial?);
+                interp.interpolator.finish();
+            }
             Ok(())
         })
     }
@@ -341,7 +350,7 @@ where
 impl<V, M, A> DirectionalPropagator for NBodyPropagator<Forward, V, M, A>
 where
     V: Copy,
-    A: Interpolation<V>,
+    A: InterpolationAlgorithm<V>,
     M: Method<NBodyProblem<V>>,
     M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
 {
@@ -364,7 +373,7 @@ where
 impl<V, M, A> BranchingPropagator for NBodyPropagator<Forward, V, M, A>
 where
     V: Copy,
-    A: Interpolation<V>,
+    A: InterpolationAlgorithm<V>,
     M: Method<NBodyProblem<V>>,
     M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
 {
@@ -375,36 +384,30 @@ where
             .map(|interpolation| {
                 UniformSpline::new(
                     self.time() - interpolation.time(),
-                    interpolation.sample_period.scaled(DIV as f64),
+                    interpolation.sample_period * DIV as f64,
                 )
             })
             .collect()
-    }
-
-    #[inline]
-    fn merge(lhs: &mut Self::Trajectory, rhs: Self::Trajectory) {
-        lhs.clear_after(rhs.start());
-        lhs.append(rhs);
     }
 }
 
 impl<V, M, A> IncrementalPropagator for NBodyPropagator<Backward, V, M, A>
 where
     V: Copy,
-    A: Interpolation<V>,
+    A: InterpolationAlgorithm<V>,
     M: Method<NBodyProblem<V>>,
     M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
 {
-    type Error = NBodyPropagationError;
+    type Error = NBodyPropagatorError;
 
     #[inline]
     fn step(&mut self, trajectories: &mut Self::Trajectories) -> Result<(), Self::Error> {
-        self.extend_with(trajectories, |trajectory, interp| {
-            let segment = interp.samples.try_to_polynomial(
-                std::array::from_fn(|i| 1.0 - i as f64 / DIV as f64),
-                &interp.algorithm,
-            );
-            trajectory.push_front(segment.ok_or(())?);
+        self.step_extend::<A::Error, _>(trajectories, |trajectory, interp| {
+            let ts = std::array::from_fn(|i| 1.0 - i as f64 / DIV as f64);
+            if let Some(polynomial) = interp.interpolator.try_to_polynomial(ts, &interp.algorithm) {
+                trajectory.push_front(polynomial?);
+                interp.interpolator.finish();
+            }
             Ok(())
         })
     }
@@ -413,7 +416,7 @@ where
 impl<V, M, A> DirectionalPropagator for NBodyPropagator<Backward, V, M, A>
 where
     V: Copy,
-    A: Interpolation<V>,
+    A: InterpolationAlgorithm<V>,
     M: Method<NBodyProblem<V>>,
     M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
 {
@@ -436,7 +439,7 @@ where
 impl<V, M, A> BranchingPropagator for NBodyPropagator<Backward, V, M, A>
 where
     V: Copy,
-    A: Interpolation<V>,
+    A: InterpolationAlgorithm<V>,
     M: Method<NBodyProblem<V>>,
     M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
 {
@@ -447,15 +450,9 @@ where
             .map(|interpolation| {
                 UniformSpline::new(
                     self.time() + interpolation.time(),
-                    interpolation.sample_period.scaled(DIV as f64),
+                    interpolation.sample_period * DIV as f64,
                 )
             })
             .collect()
-    }
-
-    #[inline]
-    fn merge(lhs: &mut Self::Trajectory, rhs: Self::Trajectory) {
-        lhs.clear_before(rhs.end());
-        lhs.prepend(rhs);
     }
 }

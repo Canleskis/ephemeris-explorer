@@ -492,8 +492,8 @@ pub mod coeffs {
     impl<P: Problem> RKCoefficients<P> for Verner87 {
         type Instance = ERK<Self, [P::State; 13]>;
     }
-    // Some of the coefficients were adjusted here since the original numerators and denominators
-    // did not fit in i128. Error is in the order of 1e-75.
+    // Some of the coefficients were adjusted since the original numerators and denominators did not
+    // fit in i128. Error is in the order of 1e-75.
     impl ERKCoefficients for Verner87 {
         const FSAL: bool = false;
 
@@ -789,7 +789,7 @@ pub mod coeffs {
                 frac!(
                     2761869401431568978679427864860062867,
                     134304339907491654060551956661891639298
-                ), // From Self::B[8].const_sub(BH[8]) with original coefficients
+                ), // From Self::B[8].const_sub(BH[8])
                 frac!(-10316987872791286328125, 264201047602135010194464), // From Self::B[9].const_sub(BH[9])
                 Self::B[10].const_sub(BH[10]),
                 Self::B[11].const_sub(BH[11]),
@@ -1422,9 +1422,11 @@ pub mod coeffs {
     #[derive(Clone, Copy, Debug)]
     pub struct AdamsBashforth2;
     impl<P: Problem> LMCoefficients<P> for AdamsBashforth2 {
-        type Instance = ELM1<Self, 2, P::State>;
+        type Instance = ELM1<Self, P::State>;
     }
     impl ELM1Coefficients for AdamsBashforth2 {
+        const ORDER: u16 = 2;
+
         const ALPHA: &'static [i128] = &[1, -1, 0];
 
         const BETA_N: &'static [i128] = &[0, 3, -1];
@@ -1436,9 +1438,11 @@ pub mod coeffs {
     #[derive(Clone, Copy, Debug)]
     pub struct AdamsBashforth3;
     impl<P: Problem> LMCoefficients<P> for AdamsBashforth3 {
-        type Instance = ELM1<Self, 3, P::State>;
+        type Instance = ELM1<Self, P::State>;
     }
     impl ELM1Coefficients for AdamsBashforth3 {
+        const ORDER: u16 = 3;
+
         const ALPHA: &'static [i128] = &[1, -1, 0, 0];
 
         const BETA_N: &'static [i128] = &[0, 23, -16, 5];
@@ -1450,9 +1454,11 @@ pub mod coeffs {
     #[derive(Clone, Copy, Debug)]
     pub struct AdamsBashforth4;
     impl<P: Problem> LMCoefficients<P> for AdamsBashforth4 {
-        type Instance = ELM1<Self, 4, P::State>;
+        type Instance = ELM1<Self, P::State>;
     }
     impl ELM1Coefficients for AdamsBashforth4 {
+        const ORDER: u16 = 4;
+
         const ALPHA: &'static [i128] = &[1, -1, 0, 0, 0];
 
         const BETA_N: &'static [i128] = &[0, 55, -59, 37, -9];
@@ -1464,9 +1470,11 @@ pub mod coeffs {
     #[derive(Clone, Copy, Debug)]
     pub struct AdamsBashforth5;
     impl<P: Problem> LMCoefficients<P> for AdamsBashforth5 {
-        type Instance = ELM1<Self, 5, P::State>;
+        type Instance = ELM1<Self, P::State>;
     }
     impl ELM1Coefficients for AdamsBashforth5 {
+        const ORDER: u16 = 5;
+
         const ALPHA: &'static [i128] = &[1, -1, 0, 0, 0, 0];
 
         const BETA_N: &'static [i128] = &[0, 1901, -2774, 2616, -1274, 251];
@@ -1478,9 +1486,11 @@ pub mod coeffs {
     #[derive(Clone, Copy, Debug)]
     pub struct AdamsBashforth6;
     impl<P: Problem> LMCoefficients<P> for AdamsBashforth6 {
-        type Instance = ELM1<Self, 6, P::State>;
+        type Instance = ELM1<Self, P::State>;
     }
     impl ELM1Coefficients for AdamsBashforth6 {
+        const ORDER: u16 = 6;
+
         const ALPHA: &'static [i128] = &[1, -1, 0, 0, 0, 0, 0];
 
         const BETA_N: &'static [i128] = &[0, 4277, -7923, 9982, -7298, 2877, -475];
@@ -1495,6 +1505,8 @@ pub mod coeffs {
         type Instance = ELM2<Self, 12, V>;
     }
     impl ELM2Coefficients for QuinlanTremaine12 {
+        const ORDER: u16 = 12;
+
         const ALPHA: &'static [i128] = &[1, -2, 2, -1, 0, 0, 0, 0, 0, -1, 2, -2, 1];
 
         const BETA_N: &'static [i128] = &[
@@ -1523,6 +1535,8 @@ pub mod coeffs {
         type Instance = ELM2<Self, 13, V>;
     }
     impl ELM2Coefficients for Stormer13 {
+        const ORDER: u16 = 13;
+
         const ALPHA: &'static [i128] = &[1, -2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
         const BETA_N: &'static [i128] = &[

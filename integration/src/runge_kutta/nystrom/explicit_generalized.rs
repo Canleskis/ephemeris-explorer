@@ -44,7 +44,9 @@ pub struct ERKNG<C, K, V> {
     _phantom: std::marker::PhantomData<C>,
 }
 
-impl<C, K, V> RKState for ERKNG<C, K, V> {
+impl<C: ERKNGCoefficients, K, V> RKState for ERKNG<C, K, V> {
+    const ORDER: u16 = C::ORDER;
+
     #[inline]
     fn step_count(&self) -> u32 {
         self.i

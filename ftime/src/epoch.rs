@@ -7,6 +7,12 @@ pub struct Epoch {
 }
 
 impl Epoch {
+    pub const ZERO: Self = Epoch::from_offset(Duration::ZERO);
+
+    pub const MIN: Self = Epoch::from_offset(Duration::MIN);
+
+    pub const MAX: Self = Epoch::from_offset(Duration::MAX);
+
     /// Construct from civil date-time components, interpreted on the TAI scale.
     /// Fractional seconds are provided as nanoseconds (0..=999_999_999).
     #[inline]
@@ -40,6 +46,11 @@ impl Epoch {
     #[inline]
     pub const fn from_offset(offset: Duration) -> Self {
         Epoch { offset }
+    }
+
+    #[inline]
+    pub const fn from_offset_seconds(seconds: f64) -> Self {
+        Epoch::from_offset(Duration::from_seconds(seconds))
     }
 
     #[inline]
@@ -200,7 +211,7 @@ impl std::str::FromStr for Epoch {
     }
 }
 
-// Format as "YYYY-MM-DD HH:MM:SS.nnnnnnnnn (TAI)"
+// Format as "YYYY-MM-DD HH:MM:SS.mmm (TAI)"
 impl std::fmt::Display for Epoch {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

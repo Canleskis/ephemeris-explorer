@@ -359,12 +359,7 @@ impl<T> Polynomial<T> {
     where
         T: std::ops::Add<Output = T> + std::ops::Mul<f64, Output = T> + Default + Copy,
     {
-        let mut eval = T::default();
-        for ci in self.0.iter().rev() {
-            eval = eval * t + *ci;
-        }
-
-        eval
+        eval_slice_horner(&self.0, t)
     }
 
     #[inline]
@@ -397,6 +392,7 @@ impl<T> Polynomial<T> {
     }
 }
 
+#[inline]
 pub fn eval_slice_horner<T, U>(coeffs: &[T], t: U) -> T
 where
     T: std::ops::Add<Output = T> + std::ops::Mul<U, Output = T> + Default + Copy,
@@ -414,13 +410,13 @@ where
 pub struct UniformSpline<V> {
     start: Epoch,
     interval: Duration,
-    segments: VecDeque<Polynomial<V>>,
+    polynomials: VecDeque<Polynomial<V>>,
 }
 
 impl<V> DeepSizeOf for UniformSpline<V> {
     #[inline]
     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        self.segments.deep_size_of_children(context)
+        self.polynomials.deep_size_of_children(context)
     }
 }
 
@@ -437,7 +433,7 @@ impl<V> BoundedTrajectory for UniformSpline<V> {
 
     #[inline]
     fn len(&self) -> usize {
-        self.segments.len()
+        self.polynomials.len()
     }
 }
 
@@ -460,7 +456,7 @@ where
     fn state_vector(&self, at: Epoch) -> Option<StateVector<Self::Vector>> {
         self.evaluate(at, Polynomial::eval_and_deriv)
             .map(|(position, velocity)| {
-                // Segment are normalised to τ = t / interval so the derivative is dx/dτ.
+                // Polynomials are normalised to τ = t / interval so the derivative is dx/dτ.
                 // As such, dx/dt = dx/dτ * dτ/dt = dx/dτ * d(t / interval)/dt = dx/dτ / interval.
                 StateVector::new(position, velocity / self.interval.as_seconds())
             })
@@ -472,7 +468,7 @@ impl<V> UniformSpline<V> {
         Self {
             start,
             interval,
-            segments: VecDeque::new(),
+            polynomials: VecDeque::new(),
         }
     }
 
@@ -481,7 +477,7 @@ impl<V> UniformSpline<V> {
     where
         V: Clone,
     {
-        if self.segments.is_empty() {
+        if self.polynomials.is_empty() {
             return None;
         }
 
@@ -491,21 +487,21 @@ impl<V> UniformSpline<V> {
         Some(Self {
             start: self.start + self.interval.scaled(start as f64),
             interval: self.interval,
-            segments: (start..end + 1)
-                .filter_map(|i| self.segments.get(i).cloned())
+            polynomials: (start..end + 1)
+                .filter_map(|i| self.polynomials.get(i).cloned())
                 .collect(),
         })
     }
 
     #[inline]
-    pub fn push_front(&mut self, segment: Polynomial<V>) {
-        self.segments.push_front(segment);
+    pub fn push_front(&mut self, polynomial: Polynomial<V>) {
+        self.polynomials.push_front(polynomial);
         self.start -= self.interval;
     }
 
     #[inline]
-    pub fn push_back(&mut self, segment: Polynomial<V>) {
-        self.segments.push_back(segment);
+    pub fn push_back(&mut self, polynomial: Polynomial<V>) {
+        self.polynomials.push_back(polynomial);
     }
 
     #[inline]
@@ -515,32 +511,32 @@ impl<V> UniformSpline<V> {
 
         self.start = trajectory.start;
 
-        self.segments.reserve(trajectory.segments.len());
-        for segment in trajectory.segments.into_iter().rev() {
-            self.segments.push_front(segment);
+        self.polynomials.reserve(trajectory.polynomials.len());
+        for polynomial in trajectory.polynomials.into_iter().rev() {
+            self.polynomials.push_front(polynomial);
         }
     }
 
     #[inline]
     pub fn append(&mut self, trajectory: Self) {
-        assert_eq!(self.start + self.span(), trajectory.start,);
+        assert_eq!(self.start + self.span(), trajectory.start);
         assert_eq!(self.interval, trajectory.interval);
 
-        self.segments.extend(trajectory.segments);
+        self.polynomials.extend(trajectory.polynomials);
     }
 
     #[inline]
     pub fn clear_before(&mut self, at: Epoch) {
         if let Some(idx) = self.index_exclusive(at + self.interval) {
             self.start += self.interval.scaled(idx as f64);
-            self.segments.drain(0..idx);
+            self.polynomials.drain(0..idx);
         }
     }
 
     #[inline]
     pub fn clear_after(&mut self, at: Epoch) {
         if let Some(idx) = self.index(at) {
-            self.segments.truncate(idx);
+            self.polynomials.truncate(idx);
         }
     }
 
@@ -550,12 +546,12 @@ impl<V> UniformSpline<V> {
         F: Fn(&Polynomial<V>, f64) -> T,
     {
         let local = at - self.start;
-        // Evaluate "previous" segment when at a knot.
+        // Evaluate "previous" polynomial when at a knot.
         let local_index = self.index_local_exclusive(local)?;
-        let local_segment = local - self.interval.scaled(local_index as f64);
-        let normalised = local_segment.as_seconds() / self.interval.as_seconds();
+        let local_polynomial = local - self.interval.scaled(local_index as f64);
+        let normalised = local_polynomial.as_seconds() / self.interval.as_seconds();
 
-        Some(eval(self.segments.get(local_index)?, normalised))
+        Some(eval(self.polynomials.get(local_index)?, normalised))
     }
 
     #[inline]
@@ -598,12 +594,12 @@ impl<V> UniformSpline<V> {
 
     #[inline]
     pub fn span(&self) -> Duration {
-        self.interval.scaled(self.segments.len() as f64)
+        self.interval.scaled(self.polynomials.len() as f64)
     }
 
     #[inline]
-    pub fn segments(&self) -> &VecDeque<Polynomial<V>> {
-        &self.segments
+    pub fn polynomials(&self) -> &VecDeque<Polynomial<V>> {
+        &self.polynomials
     }
 }
 
@@ -788,6 +784,7 @@ impl<V> CubicHermiteSplineSamples<V> {
 
     #[inline]
     pub fn clear_after(&mut self, at: Epoch) {
+        // TODO: Use binary search
         self.0.retain(|(k, _)| &at > k);
     }
 

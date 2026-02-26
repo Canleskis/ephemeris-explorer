@@ -18,7 +18,7 @@ pub struct SelectionPlugin;
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Selected>()
-            .add_systems(PostUpdate, select_hover_clicked.after(PickingSet));
+            .add_systems(PostUpdate, select_hover_clicked.after(PickingSet::Hover));
     }
 }
 

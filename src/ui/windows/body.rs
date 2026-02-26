@@ -1,23 +1,20 @@
 use crate::{
     MainState,
+    analysis::{OrbitPlotConfig, OrbitTarget, OrbitalPlotReference, Primary, Satellites},
     camera::{Followed, SetFollowed},
-    dynamics::{Bodies, SpacecraftPropagator},
+    dynamics::{Bodies, SpacecraftTrajectory, Trajectory},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
-    hierarchy::{HierarchyQueryExt, OrbitedBy, Orbiting},
     load::SystemRoot,
-    prediction::{PredictionContext, Trajectory},
+    prediction::PredictionContext,
     selection::Selected,
     simulation::SimulationTime,
-    ui::{
-        IdentedInfo, PlotConfig, PlotSeparation, PlotSource, PlotSourceOf, WindowsUiSet, get_name,
-        nformat, remove_separation, show_tree,
-    },
+    ui::{IdentedInfo, PlotBound, Position, Velocity, WindowsUiSet, get_name, show_tree},
 };
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
-use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory, RelativeTrajectory};
 use ftime::{Duration, Epoch};
 use std::str::FromStr;
 
@@ -71,82 +68,25 @@ fn ui_coordinate(frame: BurnFrame, ui: &mut egui::Ui, coord: &str) {
         },
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-enum OverwriteKind {
-    Current,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PlotOverwrite {
-    previous: Epoch,
-    kind: OverwriteKind,
-}
-
-impl PlotOverwrite {
-    fn with(&self, sim_time: &SimulationTime, epoch: &mut Epoch) {
-        match self.kind {
-            OverwriteKind::Current => *epoch = sim_time.current(),
-        }
-    }
-}
-
 pub struct ExportShipFile;
 
 #[derive(Component)]
 pub struct BodyInfoWindow {
-    auto_plot_reference: bool,
-    plot_start_overwrite: Option<PlotOverwrite>,
-    plot_end_overwrite: Option<PlotOverwrite>,
     delete_body: Option<bool>,
 }
 
 impl BodyInfoWindow {
-    fn init(
-        mut commands: Commands,
-        query: Query<(Entity, &PlotSourceOf, Option<&FlightPlan>), Without<Self>>,
-        query_plot: Query<&PlotConfig>,
-    ) {
-        for (entity, source_of, flight_plan) in &query {
-            let Some(plot) = source_of.iter().find_map(|e| query_plot.get(e).ok()) else {
-                continue;
-            };
+    fn init(mut commands: Commands, query: Query<(Entity, Option<&FlightPlan>), Without<Self>>) {
+        for (entity, flight_plan) in &query {
             commands.entity(entity).insert(Self {
-                auto_plot_reference: true,
-                plot_start_overwrite: Some(PlotOverwrite {
-                    previous: plot.start,
-                    kind: OverwriteKind::Current,
-                }),
-                plot_end_overwrite: None,
                 delete_body: flight_plan.map(|_| false),
             });
         }
     }
 
-    fn persisting(
-        sim_time: Res<SimulationTime>,
-        selected: Res<Selected>,
-        mut query: Query<(Entity, &Orbiting, &PlotSourceOf, &mut Self)>,
-        mut query_plot: Query<&mut PlotConfig>,
-    ) {
-        for (entity, parent, source_of, mut info) in &mut query {
-            let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(*e)) else {
-                continue;
-            };
-            let mut plot = query_plot.get_mut(plot_entity).unwrap();
-
-            if info.auto_plot_reference {
-                plot.reference = Some(**parent);
-            }
-
-            if let Some(overwrite) = &info.plot_start_overwrite {
-                overwrite.with(&sim_time, &mut plot.start);
-            }
-            if let Some(ovewrite) = &info.plot_end_overwrite {
-                ovewrite.with(&sim_time, &mut plot.end);
-            }
-
-            if info.delete_body.is_some_and(std::convert::identity) && **selected != Some(entity) {
+    fn persisting(selected: Res<Selected>, mut query: Query<(Entity, &mut Self)>) {
+        for (entity, mut info) in &mut query {
+            if info.delete_body.is_some_and(|d| d) && **selected != Some(entity) {
                 info.delete_body = Some(false);
             }
         }
@@ -159,18 +99,17 @@ impl BodyInfoWindow {
         mut selected: ResMut<Selected>,
         followed: Res<Followed>,
         sim_time: Res<SimulationTime>,
-        mut query_hierarchy: Query<(Entity, &Name, Option<&OrbitedBy>)>,
-        query_orbited_by: Query<&OrbitedBy>,
+        mut query_hierarchy: Query<(Entity, &Name, Option<&Satellites>)>,
+        query_satellites: Query<&Satellites>,
         query_trajectory: Query<&Trajectory>,
         mut query: Query<(
-            Option<&Orbiting>,
-            &PlotSourceOf,
-            Option<(&mut FlightPlan, &PredictionContext<SpacecraftPropagator>)>,
+            &Trajectory,
+            &Primary,
+            &mut OrbitPlotConfig,
+            Option<&mut OrbitTarget>,
+            Option<(&mut FlightPlan, &PredictionContext<SpacecraftTrajectory>)>,
             &mut Self,
         )>,
-        mut query_plot: Query<(&mut PlotConfig, &PlotSource)>,
-        mut query_separation: Query<&mut PlotSeparation>,
-        #[expect(unused)] query_source_of: Query<&PlotSourceOf>,
         root: Single<Entity, With<SystemRoot>>,
         mut delete: Local<bevy::platform::collections::hash_set::HashSet<uuid::Uuid>>,
     ) {
@@ -192,21 +131,23 @@ impl BodyInfoWindow {
                 .default_pos([ctx.screen_rect().size().x - 11.0, 33.0])
                 .resizable([false, true])
                 .show(ctx, |ui| {
-                    let Ok((parent, source_of, mut data, mut info)) = query.get_mut(entity) else {
-                        return;
-                    };
-
-                    let Some(plot_entity) = source_of.iter().find(|e| query_plot.contains(*e))
+                    let Ok((trajectory, parent, mut plot, target, mut data, mut info)) =
+                        query.get_mut(entity)
                     else {
                         return;
                     };
-                    let (mut plot, source) = query_plot.get_mut(plot_entity).unwrap();
 
-                    let Some(relative) =
-                        plot.get_relative_trajectory(source.entity(), &query_trajectory)
-                    else {
-                        return;
+                    let reference = match plot.reference {
+                        OrbitalPlotReference::Entity(reference) => reference,
+                        OrbitalPlotReference::Primary => **parent,
                     };
+                    let relative =
+                        RelativeTrajectory::new(trajectory, query_trajectory.get(reference).ok());
+
+                    // let Some(relative) = parent.get_relative_trajectory(entity, &query_trajectory)
+                    // else {
+                    //     return;
+                    // };
 
                     if let Some(((flight_plan, _), delete)) =
                         data.as_mut().zip(info.delete_body.as_mut())
@@ -214,27 +155,24 @@ impl BodyInfoWindow {
                         ui.horizontal(|ui| {
                             if ui.button("Export").clicked() {
                                 let mut names = query_hierarchy.transmute_lens();
-                                let bytes =
-                                    query_trajectory.get(entity).ok().and_then(|trajectory| {
-                                        let start = trajectory.start();
-                                        let sv = trajectory.state_vector(start)?;
-                                        let burns = flight_plan
-                                            .burns
-                                            .iter()
-                                            .map(|burn| burn_to_value(burn, names.query()))
-                                            .collect::<Vec<_>>();
-                                        Some(
-                                            serde_json::to_vec_pretty(&serde_json::json!({
-                                                "name": name,
-                                                "start": start,
-                                                "end": flight_plan.end,
-                                                "position": sv.position,
-                                                "velocity": sv.velocity,
-                                                "burns": burns,
-                                            }))
-                                            .unwrap(),
-                                        )
-                                    });
+                                let start = trajectory.start();
+                                let sv = trajectory.state_vector(start).unwrap();
+                                let burns = flight_plan
+                                    .burns
+                                    .values()
+                                    .map(|burn| burn_to_value(burn, &names.query()))
+                                    .collect::<Vec<_>>();
+                                let bytes = Some(
+                                    serde_json::to_vec_pretty(&serde_json::json!({
+                                        "name": name,
+                                        "start": start,
+                                        "end": flight_plan.end,
+                                        "position": sv.position,
+                                        "velocity": sv.velocity,
+                                        "burns": burns,
+                                    }))
+                                    .unwrap(),
+                                );
 
                                 if let Some(bytes) = bytes {
                                     commands
@@ -265,7 +203,7 @@ impl BodyInfoWindow {
                                     ui.horizontal(|ui| {
                                         if ui.button("Confirm").clicked() {
                                             if followed.is_some_and(|f| f == entity) {
-                                                commands.queue(SetFollowed(parent.map(|p| **p)));
+                                                commands.queue(SetFollowed(Some(**parent)));
                                             }
                                             commands.entity(entity).despawn();
                                         }
@@ -279,18 +217,25 @@ impl BodyInfoWindow {
                         ui.separator();
                     }
 
-                    let plot_reference_name = &plot
-                        .reference
-                        .map(|entity| get_name(entity, &query_hierarchy.transmute_lens().query()))
-                        .unwrap_or_else(|| "None".to_string());
+                    let plot_reference_name =
+                        get_name(reference, &query_hierarchy.transmute_lens().query());
+
+                    let mut plot_config = *plot;
 
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut info.auto_plot_reference, "Auto");
-                        ui.add_enabled_ui(!info.auto_plot_reference, |ui| {
+                        let mut is_auto =
+                            matches!(plot_config.reference, OrbitalPlotReference::Primary);
+                        if ui.checkbox(&mut is_auto, "Auto").changed() {
+                            plot_config.reference = match is_auto {
+                                true => OrbitalPlotReference::Primary,
+                                false => OrbitalPlotReference::Entity(**parent),
+                            };
+                        }
+                        ui.add_enabled_ui(!is_auto, |ui| {
                             ui.label("Reference:");
                             egui::ComboBox::from_id_salt("Reference")
                                 .wrap_mode(egui::TextWrapMode::Extend)
-                                .selected_text(plot_reference_name)
+                                .selected_text(&plot_reference_name)
                                 .show_ui(ui, |ui| {
                                     show_tree(
                                         ui,
@@ -301,8 +246,8 @@ impl BodyInfoWindow {
                                             ui.horizontal(|ui| {
                                                 ui.add_enabled_ui(entity != ref_entity, |ui| {
                                                     ui.selectable_value(
-                                                        &mut plot.reference,
-                                                        Some(ref_entity),
+                                                        &mut plot_config.reference,
+                                                        OrbitalPlotReference::Entity(ref_entity),
                                                         ref_name.as_str(),
                                                     )
                                                     .on_disabled_hover_text(
@@ -331,9 +276,9 @@ impl BodyInfoWindow {
                                 .hover_text(format!("Position relative to {plot_reference_name}"))
                                 .show(ui, |ui, position| {
                                     if let Some(position) = position {
-                                        ui.label(nformat!("x: {:.2} km", position.x));
-                                        ui.label(nformat!("y: {:.2} km", position.y));
-                                        ui.label(nformat!("z: {:.2} km", position.z));
+                                        ui.label(format!("x: {}", Position::km(position.x)));
+                                        ui.label(format!("y: {}", Position::km(position.y)));
+                                        ui.label(format!("z: {}", Position::km(position.z)));
                                     } else {
                                         ui.label("x: N/A");
                                         ui.label("y: N/A");
@@ -344,9 +289,9 @@ impl BodyInfoWindow {
                                 .hover_text(format!("Velocity relative to {plot_reference_name}"))
                                 .show(ui, |ui, velocity| {
                                     if let Some(velocity) = velocity {
-                                        ui.label(nformat!("x: {:.2} km/s", velocity.x));
-                                        ui.label(nformat!("y: {:.2} km/s", velocity.y));
-                                        ui.label(nformat!("z: {:.2} km/s", velocity.z));
+                                        ui.label(format!("x: {}", Velocity::kps(velocity.x)));
+                                        ui.label(format!("y: {}", Velocity::kps(velocity.y)));
+                                        ui.label(format!("z: {}", Velocity::kps(velocity.z)));
                                     } else {
                                         ui.label("x: N/A");
                                         ui.label("y: N/A");
@@ -358,7 +303,7 @@ impl BodyInfoWindow {
                                 .hover_text(format!("Distance relative to {plot_reference_name}"))
                                 .show(ui, |ui, distance| {
                                     if let Some(distance) = distance {
-                                        ui.label(nformat!("{:.2} km", distance));
+                                        ui.label(Position::km(distance).to_string());
                                     } else {
                                         ui.label("N/A");
                                     }
@@ -367,7 +312,7 @@ impl BodyInfoWindow {
                                 .hover_text(format!("Speed relative to {plot_reference_name}"))
                                 .show(ui, |ui, speed| {
                                     if let Some(speed) = speed {
-                                        ui.label(nformat!("{:.2} km/s", speed));
+                                        ui.label(Velocity::kps(speed).to_string());
                                     } else {
                                         ui.label("N/A");
                                     }
@@ -379,36 +324,35 @@ impl BodyInfoWindow {
                     ui.heading("Plotting");
                     ui.add_space(4.0);
 
-                    ui.checkbox(&mut plot.enabled, "Enabled");
+                    ui.checkbox(&mut plot_config.enabled, "Enabled");
 
                     ui.add_space(5.0);
 
                     ui.horizontal(|ui| {
                         ui.label("Max points:");
-                        ui.add(egui::Slider::new(&mut plot.max_points, 1..=100_000));
+                        ui.add(egui::Slider::new(
+                            &mut plot_config.max_points_per_segment,
+                            1..=100_000,
+                        ));
                     });
 
                     ui.horizontal(|ui| {
                         let label = ui
-                            .selectable_label(info.plot_start_overwrite.is_some(), "Start:")
+                            .selectable_label(plot_config.bound.is_start(), "Start:")
                             .on_hover_text("Click to toggle overwrite with current time");
                         if label.clicked() {
-                            match info.plot_start_overwrite.take() {
-                                Some(PlotOverwrite { previous, .. }) => {
-                                    plot.start = previous;
-                                }
-                                None => {
-                                    info.plot_start_overwrite = Some(PlotOverwrite {
-                                        previous: plot.start,
-                                        kind: OverwriteKind::Current,
-                                    });
-                                }
+                            match plot_config.bound {
+                                PlotBound::Start => plot_config.bound = PlotBound::None,
+                                _ => plot_config.bound = PlotBound::Start,
                             }
                         }
-
-                        ui.add_enabled_ui(info.plot_start_overwrite.is_none(), |ui| {
+                        ui.add_enabled_ui(!plot_config.bound.is_start(), |ui| {
+                            let start = match plot_config.bound {
+                                PlotBound::Start => &mut sim_time.current().as_offset_seconds(),
+                                _ => plot_config.start.mut_offset().mut_seconds(),
+                            };
                             ui.add(
-                                egui::DragValue::new(plot.start.mut_offset().mut_seconds())
+                                egui::DragValue::new(start)
                                     .speed(Duration::from_hours(1.0).as_seconds())
                                     .custom_formatter(epoch_formatter)
                                     .custom_parser(epoch_parser),
@@ -420,24 +364,21 @@ impl BodyInfoWindow {
                     ui.add_space(5.0);
                     ui.horizontal(|ui| {
                         let label = ui
-                            .selectable_label(info.plot_end_overwrite.is_some(), "End:  ")
+                            .selectable_label(plot_config.bound.is_end(), "End:")
                             .on_hover_text("Click to toggle overwrite with current time");
                         if label.clicked() {
-                            match info.plot_end_overwrite.take() {
-                                Some(PlotOverwrite { previous, .. }) => {
-                                    plot.end = previous;
-                                }
-                                None => {
-                                    info.plot_end_overwrite = Some(PlotOverwrite {
-                                        previous: plot.end,
-                                        kind: OverwriteKind::Current,
-                                    });
-                                }
+                            match plot_config.bound {
+                                PlotBound::End => plot_config.bound = PlotBound::None,
+                                _ => plot_config.bound = PlotBound::End,
                             }
                         }
-                        ui.add_enabled_ui(info.plot_end_overwrite.is_none(), |ui| {
+                        ui.add_enabled_ui(!plot_config.bound.is_end(), |ui| {
+                            let end = match plot_config.bound {
+                                PlotBound::End => &mut sim_time.current().as_offset_seconds(),
+                                _ => plot_config.end.mut_offset().mut_seconds(),
+                            };
                             ui.add(
-                                egui::DragValue::new(plot.end.mut_offset().mut_seconds())
+                                egui::DragValue::new(end)
                                     .speed(Duration::from_hours(1.0).as_seconds())
                                     .custom_formatter(epoch_formatter)
                                     .custom_parser(epoch_parser),
@@ -452,119 +393,73 @@ impl BodyInfoWindow {
                     ui.horizontal(|ui| {
                         ui.label("Resolution:");
                         ui.add(
-                            egui::Slider::new(&mut plot.threshold, 0.5..=10.0).logarithmic(true),
+                            egui::Slider::new(&mut plot_config.resolution, 0.5..=10.0)
+                                .logarithmic(true),
                         );
 
                         ui.label("Color:");
-                        let mut color = plot.color.to_linear().to_f32_array();
+                        let mut color = plot_config.color.to_linear().to_f32_array();
                         ui.color_edit_button_rgba_unmultiplied(&mut color);
-                        plot.color = Color::LinearRgba(LinearRgba::from_f32_array(color));
+                        plot_config.color = Color::LinearRgba(LinearRgba::from_f32_array(color));
                     });
+
+                    // Prevent change detection from triggering every frame
+                    if plot_config != *plot {
+                        *plot = plot_config;
+                    }
 
                     ui.add_space(5.0);
 
-                    // Reborrow to drop previous mutable borrow of the query.
-                    let (plot, _) = query_plot.get(plot_entity).unwrap();
-
-                    if let Ok(target) = query_separation.get_mut(plot_entity).as_deref_mut() {
-                        let unknown = Name::new("Unknown");
-                        let name = |e| {
-                            query_hierarchy
-                                .get(e)
-                                .map(|(_, name, _)| name)
-                                .unwrap_or(&unknown)
-                        };
-
+                    if let Some(mut target) = target {
+                        let mut plot_target = target.entity();
                         ui.horizontal(|ui| {
-                            ui.label("Separation marker:");
-                            egui::ComboBox::from_id_salt("Separation")
-                                .wrap_mode(egui::TextWrapMode::Extend)
-                                .selected_text(name(target.entity()).as_str())
-                                .show_ui(ui, |ui| {
-                                    show_tree(
-                                        ui,
-                                        PlotSeparation::Trajectory(*root),
-                                        |&item| item,
-                                        |_, _| true,
-                                        |ui, _, separation, _| {
-                                            let ref_entity = separation.entity();
-                                            let color = query_plot
-                                                .get(ref_entity)
-                                                .ok()
-                                                .map(|(plot, _)| {
-                                                    let [r, g, b, a] =
-                                                        plot.color.to_srgba().to_u8_array();
-                                                    egui::Rgba::from_srgba_premultiplied(r, g, b, a)
-                                                        .into()
-                                                })
-                                                .unwrap_or(
-                                                    ui.visuals()
-                                                        .widgets
-                                                        .noninteractive
-                                                        .fg_stroke
-                                                        .color,
-                                                );
+                            if let Some(target) = &mut plot_target {
+                                let name = query_hierarchy
+                                    .get(*target)
+                                    .map(|(_, name, _)| name.as_str())
+                                    .unwrap_or("Unknown");
 
-                                            let name = name(ref_entity);
-                                            let name = name
-                                                .find("Plot")
-                                                .map(|i| {
-                                                    ui.spacing_mut().interact_size.y = 5.0;
-                                                    egui::RichText::new(&name[i..])
-                                                        .size(10.5)
-                                                        .color(color)
-                                                })
-                                                .unwrap_or_else(|| egui::RichText::new(name));
-
-                                            let enabled = entity != ref_entity
-                                                && !source_of.contains(&ref_entity);
-                                            ui.add_enabled_ui(enabled, |ui| {
-                                                ui.vertical(|ui| {
-                                                    ui.selectable_value(target, separation, name);
+                                ui.label("Target:");
+                                egui::ComboBox::from_id_salt("Target")
+                                    .wrap_mode(egui::TextWrapMode::Extend)
+                                    .selected_text(name)
+                                    .show_ui(ui, |ui| {
+                                        show_tree(
+                                            ui,
+                                            query_hierarchy.get(*root).unwrap(),
+                                            |&(e, name, _)| (e, name),
+                                            |_, _| true,
+                                            |ui, _, (ref_entity, ref_name, children), _| {
+                                                ui.horizontal(|ui| {
+                                                    ui.add_enabled_ui(entity != ref_entity, |ui| {
+                                                        ui.selectable_value(
+                                                            target,
+                                                            ref_entity,
+                                                            ref_name.as_str(),
+                                                        )
+                                                        .on_disabled_hover_text(
+                                                            "Cannot target itself",
+                                                        );
+                                                    });
+                                                    ui.add_space(10.0);
                                                 });
 
-                                                ui.add_space(20.0);
-                                            })
-                                            .response
-                                            .on_disabled_hover_text(
-                                                "Cannot use itself as a target",
-                                            );
+                                                children.map(|c| query_hierarchy.iter_many(c))
+                                            },
+                                        );
+                                    });
 
-                                            // Eventually, when we can have multiple plotted trajectories for a body
+                                if ui.button("❌").clicked() {
+                                    plot_target = None;
+                                }
+                            } else if ui.button("Set target").clicked() {
+                                plot_target = Some(**parent);
+                            }
 
-                                            // let plots =
-                                            //     query_source_of.get(ref_entity).ok().map(|c| {
-                                            //         c.iter()
-                                            //             .filter(|e| query_plot.contains(**e))
-                                            //             .map(|e| SeparationPlot::Plot(*e))
-                                            //     });
-
-                                            // let children = query_children.get(ref_entity).ok().map(|c| {
-                                            //     c.iter().map(|e| SeparationPlot::Trajectory(*e))
-                                            // });
-
-                                            // Some(
-                                            //     plots
-                                            //         .into_iter()
-                                            //         .flatten()
-                                            //         .chain(children.into_iter().flatten()),
-                                            // )
-
-                                            query_orbited_by.get(ref_entity).ok().map(|c| {
-                                                c.iter().map(|e| PlotSeparation::Trajectory(*e))
-                                            })
-                                        },
-                                    );
-                                });
-
-                            if ui.button("❌").clicked() {
-                                commands.entity(plot_entity).queue(remove_separation);
+                            if plot_target != target.entity() {
+                                *target = OrbitTarget(plot_target);
                             }
                         });
-                    } else if ui.button("Set separation marker").clicked() {
-                        commands
-                            .entity(plot_entity)
-                            .insert(PlotSeparation::Trajectory(plot.reference.unwrap_or(*root)));
                     }
 
                     let Some((flight_plan, prediction)) = data.as_mut() else {
@@ -580,11 +475,8 @@ impl BodyInfoWindow {
 
                     let mut changed = false;
 
-                    let Ok(trajectory) = query_trajectory.get(entity) else {
-                        return;
-                    };
                     let min_time = trajectory.start();
-                    let max_time = Epoch::from_offset(Duration::MAX);
+                    let max_time = Epoch::MAX;
 
                     ui.horizontal(|ui| {
                         ui.label("Max iterations:");
@@ -606,7 +498,6 @@ impl BodyInfoWindow {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().interact_size.x = 240.0;
                         ui.label("End:");
-
                         if ui
                             .add(
                                 egui::DragValue::new(flight_plan.end.mut_offset().mut_seconds())
@@ -630,15 +521,18 @@ impl BodyInfoWindow {
                         let new_button = ui.button("New burn");
                         if new_button.clicked() {
                             let last_burn = flight_plan.burns.last();
-                            let start = last_burn.map(|b| b.end()).unwrap_or(min_time);
-                            flight_plan.burns.push(Burn::new(
-                                start,
-                                match plot.reference {
-                                    Some(e) if e != *root => BurnFrame::Relative,
-                                    _ => BurnFrame::Inertial,
-                                },
-                                plot.reference.unwrap_or(*root),
-                            ));
+                            let start = last_burn.map(|(_, b)| b.end()).unwrap_or(min_time);
+                            flight_plan.burns.insert(
+                                uuid::Uuid::new_v4(),
+                                Burn::new(
+                                    start,
+                                    match **parent {
+                                        parent if parent == *root => BurnFrame::Relative,
+                                        _ => BurnFrame::Inertial,
+                                    },
+                                    **parent,
+                                ),
+                            );
                             changed = true;
                         }
 
@@ -646,13 +540,13 @@ impl BodyInfoWindow {
                         let delete_button =
                             ui.add_enabled(any_to_delete, egui::Button::new("Delete selected"));
                         if delete_button.clicked() {
-                            flight_plan.burns.retain(|burn| !delete.remove(&burn.id));
+                            flight_plan.burns.retain(|id, _| !delete.remove(id));
                             delete.clear();
                             changed = true;
                         }
 
                         if ui.button("Sort").clicked() {
-                            flight_plan.burns.sort_by_key(|burn| burn.start);
+                            flight_plan.burns.sort_by_key(|_, burn| burn.start);
                         }
                     });
 
@@ -669,22 +563,19 @@ impl BodyInfoWindow {
                         .auto_shrink([false, false])
                         .min_scrolled_height(214.0)
                         .show(ui, |ui| {
-                            flight_plan
-                                .burns
-                                .iter_mut()
-                                .enumerate()
-                                .for_each(|(idx, burn)| {
+                            flight_plan.burns.iter_mut().enumerate().for_each(
+                                |(idx, (&id, burn))| {
                                     ui.scope(|ui| {
-                                        let id = burn.id;
                                         let burn_changed = Self::show_burn_ui(
                                             ui,
+                                            id,
                                             burn,
                                             idx,
                                             *root,
                                             entity,
                                             prediction.propagator.context(),
                                             &mut query_hierarchy,
-                                            &query_orbited_by,
+                                            &query_satellites,
                                             min_time,
                                             || delete.insert(id),
                                         );
@@ -693,7 +584,8 @@ impl BodyInfoWindow {
                                             changed = true;
                                         }
                                     });
-                                })
+                                },
+                            )
                         });
 
                     if changed {
@@ -709,13 +601,14 @@ impl BodyInfoWindow {
 
     fn show_burn_ui(
         ui: &mut egui::Ui,
+        id: uuid::Uuid,
         burn: &mut Burn,
         idx: usize,
         root: Entity,
         selected: Entity,
         context: &Bodies,
-        query_hierarchy: &mut Query<(Entity, &Name, Option<&OrbitedBy>)>,
-        query_orbited_by: &Query<&OrbitedBy>,
+        query_hierarchy: &mut Query<(Entity, &Name, Option<&Satellites>)>,
+        query_orbited_by: &Query<&Satellites>,
         min_time: Epoch,
         mut delete_cb: impl FnMut() -> bool,
     ) -> bool {
@@ -723,7 +616,7 @@ impl BodyInfoWindow {
 
         let mut changed = false;
 
-        let id = burn.id.to_string().into();
+        let id = id.to_string().into();
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
             .show_header(ui, |ui| {
                 ui.scope(|ui| {
@@ -817,7 +710,7 @@ impl BodyInfoWindow {
                             ))
                             .show_ui(ui, |ui| {
                                 let first_in_context = query_orbited_by
-                                    .iter_orbiting_descendants(root)
+                                    .iter_descendants(root)
                                     .find(|e| context.0.contains_key(e));
 
                                 let Some(first_in_context) = first_in_context else {
@@ -908,7 +801,7 @@ impl BodyInfoWindow {
     }
 }
 
-fn burn_to_value(burn: &Burn, query: Query<&Name>) -> serde_json::Value {
+fn burn_to_value(burn: &Burn, query: &Query<&Name>) -> serde_json::Value {
     let mut json = serde_json::json!({
         "start": burn.start,
         "duration": burn.duration,
@@ -931,7 +824,11 @@ fn duration_parser(text: &str) -> Option<f64> {
 }
 
 fn epoch_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
-    Epoch::from_offset(Duration::from_seconds(value)).to_string()
+    match value {
+        f64::MAX | f64::INFINITY => "∞".to_string(),
+        f64::MIN | f64::NEG_INFINITY => "-∞".to_string(),
+        _ => Epoch::from_offset_seconds(value).to_string(),
+    }
 }
 
 fn epoch_parser(text: &str) -> Option<f64> {

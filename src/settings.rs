@@ -1,4 +1,5 @@
 use crate::{
+    analysis::DrawSoiSettings,
     load::LoadSolarSystemEvent,
     ui::{LabelSettings, ManoeuvreDraggingOptions},
 };
@@ -34,6 +35,7 @@ pub struct UserSettings {
     pub fov: f32,
     pub line_width: f32,
     pub show_labels: bool,
+    pub show_soi: bool,
     pub mouse_sensitivity: f64,
     pub manoeuvre_dragging: bool,
 }
@@ -50,7 +52,7 @@ pub struct AppSettings {
     pub window: WindowSettings,
 }
 
-const DEFAULT_SOLAR_SYSTEM_PATH: &str = "systems/full_solar_system_2433282.500372499";
+const DEFAULT_SOLAR_SYSTEM_PATH: &str = "systems/full_solar_system_2433282.5";
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -72,6 +74,7 @@ impl Default for AppSettings {
                     fov: 45.0,
                     show_labels: true,
                     line_width: 1.0,
+                    show_soi: true,
                     mouse_sensitivity: 1.0,
                     manoeuvre_dragging: false,
                 },
@@ -88,6 +91,7 @@ impl AppSettings {
         mut settings: ResMut<AppSettings>,
         label_settings: ResMut<LabelSettings>,
         gizmos_config: ResMut<GizmoConfigStore>,
+        draw_soi_settings: ResMut<DrawSoiSettings>,
         drag_opts: ResMut<ManoeuvreDraggingOptions>,
         mut controller: Query<&mut BigSpaceCameraController>,
         mut window: Query<&mut Window>,
@@ -136,6 +140,9 @@ impl AppSettings {
                 })
                 .set_if_neq(settings.user.fov.to_radians());
         }
+        draw_soi_settings
+            .map_unchanged(|s| &mut s.enabled)
+            .set_if_neq(settings.user.show_soi);
         gizmos_config
             .map_unchanged(|c| &mut c.config_mut::<DefaultGizmoConfigGroup>().0.line.width)
             .set_if_neq(settings.user.line_width);

@@ -1,9 +1,11 @@
 use crate::{
     MainState,
     auto_extend::AutoExtendSettings,
-    dynamics::{Backward, Forward, NBodyPropagator},
+    dynamics::{Backward, CelestialTrajectory, Forward},
     load::SystemRoot,
-    prediction::{ExtendPredictionEvent, PredictionPropagator, PredictionTracker},
+    prediction::{
+        ComputePrediction, PredictionContext, PredictionTracker, PropagationTarget, Synchronisation,
+    },
     simulation::SimulationTime,
     ui::WindowsUiSet,
 };
@@ -30,12 +32,13 @@ impl Plugin for PredictionPlannerPlugin {
 pub struct PredictionPlannerWindow;
 
 impl PredictionPlannerWindow {
-    fn prediction_content<P>(
+    fn prediction_content<T>(
         ui: &mut egui::Ui,
         commands: &mut Commands,
         root: Entity,
-        auto_extend: &mut AutoExtendSettings<P>,
-        prediction: Option<Ref<PredictionTracker<P>>>,
+        auto_extend: &mut AutoExtendSettings<T>,
+        prediction: &PredictionContext<T>,
+        tracker: Option<Ref<PredictionTracker<T>>>,
         buffer: &mut String,
         parser: impl Fn(&str) -> Option<Epoch>,
         response: &egui::Response,
@@ -43,10 +46,10 @@ impl PredictionPlannerWindow {
         time_taken: &mut Option<std::time::Duration>,
         delta: std::time::Duration,
     ) where
-        P: PredictionPropagator,
+        T: PropagationTarget,
     {
         let (backward_duration, backward_label) = match parser(buffer) {
-            Some(start) if prediction.is_none() => {
+            Some(start) if tracker.is_none() => {
                 let duration = (start - default).abs();
                 let label = format!("Planned prediction length: {}", duration);
 
@@ -56,7 +59,7 @@ impl PredictionPlannerWindow {
                 if !response.has_focus() {
                     *buffer = format!("{default}");
                 }
-                let label = if prediction.is_some() {
+                let label = if tracker.is_some() {
                     "Prediction in progress"
                 } else {
                     "No planned prediction"
@@ -66,11 +69,11 @@ impl PredictionPlannerWindow {
             }
         };
 
-        if backward_duration.is_some() || prediction.as_ref().is_some_and(Ref::is_added) {
+        if backward_duration.is_some() || tracker.as_ref().is_some_and(Ref::is_added) {
             *time_taken = None;
         }
 
-        if let Some(prediction) = prediction.as_ref() {
+        if let Some(prediction) = tracker.as_ref() {
             let time_taken = time_taken.get_or_insert_with(Default::default);
             if prediction.is_in_progress() {
                 *time_taken += delta;
@@ -87,13 +90,20 @@ impl PredictionPlannerWindow {
             }
         });
 
-        ui.horizontal(|ui| match prediction {
+        ui.horizontal(|ui| match tracker {
             None => {
                 ui.add_enabled_ui(backward_duration.is_some(), |ui| {
                     if ui.button("Start prediction").clicked()
                         && let Some(duration) = backward_duration
                     {
-                        commands.trigger(ExtendPredictionEvent::<P>::all(duration, 1000));
+                        commands.trigger_targets(
+                            ComputePrediction::<T>::extend(
+                                prediction.propagator.clone(),
+                                duration,
+                                Synchronisation::hertz(100),
+                            ),
+                            root,
+                        );
                     }
                 });
             }
@@ -106,7 +116,7 @@ impl PredictionPlannerWindow {
                 }
                 let button = egui::Button::new("Cancel").min_size(egui::vec2(55.0, 0.0));
                 if ui.add(button).clicked() {
-                    commands.entity(root).remove::<PredictionTracker<P>>();
+                    commands.entity(root).remove::<PredictionTracker<T>>();
                 }
                 ui.add(egui::ProgressBar::new(prediction.progress()).show_percentage());
             }
@@ -119,15 +129,17 @@ impl PredictionPlannerWindow {
         mut commands: Commands,
         window: Option<Res<Self>>,
         sim_time: Res<SimulationTime>,
-        mut auto_extend_forward: ResMut<AutoExtendSettings<NBodyPropagator<Forward>>>,
-        mut auto_extend_backward: ResMut<AutoExtendSettings<NBodyPropagator<Backward>>>,
+        mut auto_extend_forward: ResMut<AutoExtendSettings<CelestialTrajectory<Forward>>>,
+        mut auto_extend_backward: ResMut<AutoExtendSettings<CelestialTrajectory<Backward>>>,
         mut start_buffer: Local<String>,
         mut end_buffer: Local<String>,
         prediction: Query<
             (
                 Entity,
-                Option<Ref<PredictionTracker<NBodyPropagator<Forward>>>>,
-                Option<Ref<PredictionTracker<NBodyPropagator<Backward>>>>,
+                &PredictionContext<CelestialTrajectory<Forward>>,
+                &PredictionContext<CelestialTrajectory<Backward>>,
+                Option<Ref<PredictionTracker<CelestialTrajectory<Forward>>>>,
+                Option<Ref<PredictionTracker<CelestialTrajectory<Backward>>>>,
             ),
             With<SystemRoot>,
         >,
@@ -136,7 +148,8 @@ impl PredictionPlannerWindow {
         mut backward_time: Local<Option<std::time::Duration>>,
     ) {
         // One system for now (maybe ever).
-        let (root, forward, backward) = prediction.single().expect("No root entity found");
+        let (root, forward, backward, forward_tracker, backward_tracker) =
+            prediction.single().expect("No root entity found");
 
         let Ok(ctx) = contexts.ctx_mut() else {
             return;
@@ -153,7 +166,7 @@ impl PredictionPlannerWindow {
 
                 let backward_edit = ui.horizontal(|ui| {
                     ui.label("Start time:");
-                    ui.add_enabled_ui(backward.is_none(), |ui| {
+                    ui.add_enabled_ui(backward_tracker.is_none(), |ui| {
                         ui.add(egui::TextEdit::singleline(&mut *start_buffer))
                     })
                     .inner
@@ -165,6 +178,7 @@ impl PredictionPlannerWindow {
                     root,
                     &mut auto_extend_backward,
                     backward,
+                    backward_tracker,
                     &mut start_buffer,
                     |buf| Epoch::from_str(buf).ok().filter(|e| e < &sim_time.start()),
                     &backward_edit.inner,
@@ -178,7 +192,7 @@ impl PredictionPlannerWindow {
 
                 let forward_edit = ui.horizontal(|ui| {
                     ui.label("End time:  ");
-                    ui.add_enabled_ui(forward.is_none(), |ui| {
+                    ui.add_enabled_ui(forward_tracker.is_none(), |ui| {
                         ui.add(egui::TextEdit::singleline(&mut *end_buffer))
                     })
                     .inner
@@ -190,6 +204,7 @@ impl PredictionPlannerWindow {
                     root,
                     &mut auto_extend_forward,
                     forward,
+                    forward_tracker,
                     &mut end_buffer,
                     |buf| Epoch::from_str(buf).ok().filter(|e| e > &sim_time.end()),
                     &forward_edit.inner,

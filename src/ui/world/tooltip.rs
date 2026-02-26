@@ -1,20 +1,21 @@
 use crate::{
     MainState,
+    analysis::PlotSegment,
+    dynamics::Trajectory,
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
-    prediction::{Predicting, Trajectory},
     simulation::SimulationTime,
     ui::{
         HitData, MANOEUVRE_SIZE, MarkerGizmoConfigGroup, PICK_THRESHOLD, PickingSet, PlotConfig,
-        PlotPoints, PlotSource, PlotSourceOf, PointerHit, PointerHover, WorldInteraction,
-        WorldUiSet, nformat,
+        PlotPoints, PlotSource, PlotSourceOf, PointerHit, PointerHover, Position, WorldInteraction,
+        WorldUiSet,
     },
 };
 
 use bevy::picking::backend::ray::RayMap;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
-use ephemeris::{EvaluateTrajectory, RelativeTrajectory};
+use ephemeris::EvaluateTrajectory;
 use ftime::{Duration, Epoch};
 
 #[derive(Clone, Copy, Debug, Default, Resource)]
@@ -32,24 +33,20 @@ impl Plugin for TooltipPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    // Picking runs after egui has written whether it wants input, which is done
-                    // after the `EguiPrimaryContextPass` schedule, meaning tooltips will be updated
-                    // after they have been rendered (one frame delay).
+                    manoeuvre_dragging.before(bevy_egui::EguiPostUpdateSet::EndPass),
                     (
                         update_manoeuvre_tooltip,
                         update_trajectory_tooltips,
                         update_separation_tooltip,
                     )
-                        .before(bevy_egui::EguiPostUpdateSet::EndPass)
-                        .chain(),
+                        .before(bevy_egui::EguiPostUpdateSet::EndPass),
                     (
                         manoeuvre_tooltip_gizmo,
                         trajectory_tooltips_gizmo.after(bevy_egui::EguiPostUpdateSet::EndPass),
-                        manoeuvre_dragging,
                         separation_tooltip_gizmo,
                     ),
                 )
-                    .after(PickingSet)
+                    .after(PickingSet::Hover)
                     .chain(),
             )
             .add_systems(
@@ -65,7 +62,7 @@ impl Plugin for TooltipPlugin {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ManoeuvreTooltipData {
     pub id: uuid::Uuid,
     pub position: Option<Vec3>,
@@ -73,7 +70,7 @@ pub struct ManoeuvreTooltipData {
 }
 
 #[derive(Clone, Copy, Default, Resource)]
-pub struct ManoeuvreTooltip(pub Option<(Entity, ManoeuvreTooltipData)>);
+pub struct ManoeuvreTooltip(pub Option<(Entity, Entity, ManoeuvreTooltipData)>);
 
 impl ManoeuvreTooltip {
     pub fn clear(&mut self) {
@@ -87,11 +84,15 @@ fn update_manoeuvre_tooltip(
     hover: Res<PointerHover>,
     mut tooltip: ResMut<ManoeuvreTooltip>,
 ) {
-    if !tooltip.0.is_some_and(|(_, data)| data.dragging) {
+    if !tooltip.0.is_some_and(|(.., data)| data.dragging) {
         tooltip.clear();
         if let Some(PointerHit(entity, HitData::Manoeuvre(data))) = &hover.0 {
+            let Ok((_, source)) = query_plot.get(*entity) else {
+                return;
+            };
             tooltip.0 = Some((
                 *entity,
+                source.entity,
                 ManoeuvreTooltipData {
                     id: data.id,
                     position: None,
@@ -101,12 +102,12 @@ fn update_manoeuvre_tooltip(
         }
     }
 
-    if let Some((tooltip_entity, tooltip_data)) = &mut tooltip.0
+    if let Some((tooltip_entity, _, tooltip_data)) = &mut tooltip.0
         && let Ok((points, source)) = query_plot.get(*tooltip_entity)
         && let Some(burn) = query_flight_plan
-            .get(source.entity())
+            .get(source.entity)
             .ok()
-            .and_then(|flight_plan| flight_plan.get_burn(tooltip_data.id))
+            .and_then(|flight_plan| flight_plan.burns.get(&tooltip_data.id))
     {
         tooltip_data.position = points.evaluate(burn.start);
     }
@@ -118,7 +119,7 @@ fn manoeuvre_tooltip_gizmo(
     query_plot: Query<&PlotConfig>,
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
 ) {
-    let Some((tooltip_entity, tooltip_data)) = tooltip.0 else {
+    let Some((tooltip_entity, _, tooltip_data)) = tooltip.0 else {
         return;
     };
 
@@ -155,7 +156,7 @@ fn manoeuvre_tooltip_window(
         return;
     };
 
-    let Some((tooltip_entity, tooltip_data)) = tooltip.0 else {
+    let Some((tooltip_entity, _, tooltip_data)) = tooltip.0 else {
         return;
     };
 
@@ -164,15 +165,10 @@ fn manoeuvre_tooltip_window(
     let Ok((points, source)) = query_plot.get(tooltip_entity) else {
         return;
     };
-    let Ok((name, flight_plan)) = query_flight_plan.get(source.entity()) else {
+    let Ok((name, flight_plan)) = query_flight_plan.get(source.entity) else {
         return;
     };
-    let Some((burn_idx, burn)) = flight_plan
-        .burns
-        .iter()
-        .enumerate()
-        .find(|(_, burn)| burn.id == tooltip_data.id)
-    else {
+    let Some((burn_idx, _, burn)) = flight_plan.burns.get_full(&tooltip_data.id) else {
         return;
     };
 
@@ -214,14 +210,14 @@ fn manoeuvre_dragging(
     mouse: Res<ButtonInput<MouseButton>>,
     mut tooltip: ResMut<ManoeuvreTooltip>,
     mut world_ui: ResMut<WorldInteraction>,
-    query_plot: Query<(&PlotPoints, &PlotSource)>,
-    mut query_flight_plan: Query<&mut FlightPlan>,
+    query_points: Query<&PlotPoints>,
+    mut query_flight_plan: Query<(&mut FlightPlan, &PlotSourceOf)>,
 ) {
     if !drag_opts.enabled {
         return;
     }
 
-    let Some((tooltip_entity, tooltip_data)) = &mut tooltip.0 else {
+    let Some((tooltip_entity, source_entity, tooltip_data)) = &mut tooltip.0 else {
         return;
     };
 
@@ -243,30 +239,34 @@ fn manoeuvre_dragging(
         unreachable!("Camera is not perspective");
     };
 
-    let Ok((points, source)) = query_plot.get(*tooltip_entity) else {
+    let Ok((mut flight_plan, source_of)) = query_flight_plan.get_mut(*source_entity) else {
         return;
     };
+
     let Some((_, ray)) = ray_map.iter().next() else {
         return;
     };
     let ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
 
-    if let Some((mut time, _, _)) = points
-        .ray_distances(&ray)
-        .filter(|hit| hit.1 < hit.2 * perspective.fov * MANOEUVRE_SIZE)
-        .min_by(|a, b| a.0.cmp(&b.0))
+    if let Some((new_entity, (mut time, _, _))) = source_of
+        .iter()
+        .zip(query_points.iter_many(source_of.iter()))
+        .flat_map(|(entity, points)| {
+            points
+                .ray_distances(&ray)
+                .filter(|hit| hit.1 < hit.2 * perspective.fov * MANOEUVRE_SIZE)
+                .min_by(|a, b| a.0.cmp(&b.0))
+                .map(|hit| (entity, hit))
+        })
+        .min_by(|(_, a), (_, b)| a.2.total_cmp(&b.2))
+        && let Some(burn) = flight_plan.burns.get_mut(&tooltip_data.id)
     {
-        let Ok(mut flight_plan) = query_flight_plan.get_mut(source.entity()) else {
-            return;
-        };
-
-        if let Some(burn) = flight_plan.get_burn_mut(tooltip_data.id) {
-            time = time.round(Duration::from_seconds(1.0));
-            if burn.start != time {
-                burn.start = time;
-                commands.trigger_targets(FlightPlanChanged, source.entity());
-            }
+        time = time.round(Duration::from_seconds(1.0));
+        if burn.start != time {
+            burn.start = time;
+            commands.trigger_targets(FlightPlanChanged, *source_entity);
         }
+        *tooltip_entity = new_entity;
     }
 }
 
@@ -375,7 +375,7 @@ fn trajectory_tooltips_gizmo(
                     .to_isometry(),
                 size,
                 plot.color
-                    .with_alpha((data.highlight as usize as f32 + 1.0) / 2.0),
+                    .with_alpha(plot.color.alpha() * (data.highlight as usize as f32 + 1.0) / 2.0),
             );
         }
     }
@@ -385,8 +385,9 @@ fn trajectory_tooltips_window(
     root: Single<Entity, With<SystemRoot>>,
     camera: Single<(&GlobalTransform, &Camera)>,
     mut tooltips: ResMut<TrajectoryTooltips>,
-    query_plot: Query<(&Name, &PlotConfig, &PlotSource)>,
+    query_plot: Query<(&PlotSource, &PlotSegment)>,
     query_trajectory: Query<&Trajectory>,
+    query_name: Query<&Name>,
     mut commands: Commands,
     mut contexts: EguiContexts,
     mut sim_time: ResMut<SimulationTime>,
@@ -403,7 +404,10 @@ fn trajectory_tooltips_window(
             continue;
         };
         let is_pinned = i == 1;
-        let Ok((name, plot, source)) = query_plot.get(*tooltip_entity) else {
+        let Ok((source, segment)) = query_plot.get(*tooltip_entity) else {
+            continue;
+        };
+        let Ok(name) = query_name.get(source.entity) else {
             continue;
         };
 
@@ -416,8 +420,7 @@ fn trajectory_tooltips_window(
             continue;
         };
 
-        let Some(relative) = plot.get_relative_trajectory(source.entity(), &query_trajectory)
-        else {
+        let Some(relative) = source.get_relative_trajectory(&query_trajectory) else {
             continue;
         };
         let window = egui::Window::new(name.as_str())
@@ -434,12 +437,13 @@ fn trajectory_tooltips_window(
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.style_mut().interaction.selectable_labels = false;
-                        let suf = if tooltip_data.len() == 1 { "" } else { "s" };
+                        let suffix = if tooltip_data.len() == 1 { "" } else { "s" };
                         ui.label(format!(
-                            "{} — {} crossing{}",
+                            "{} — {} crossing{} ({})",
                             name.as_str(),
                             tooltip_data.len(),
-                            suf
+                            suffix,
+                            segment
                         ));
 
                         if is_pinned {
@@ -476,9 +480,9 @@ fn trajectory_tooltips_window(
                                             .id_salt(format!("{name}#{time}#{j}"))
                                             .show(ui, |ui| {
                                                 if let Some(position) = relative.position(time) {
-                                                    ui.label(nformat!(
-                                                        "Distance: {:.2} km",
-                                                        position.length()
+                                                    ui.label(format!(
+                                                        "Distance: {}",
+                                                        Position::km(position.length())
                                                     ));
                                                 }
                                                 ui.horizontal(|ui| {
@@ -487,22 +491,25 @@ fn trajectory_tooltips_window(
                                                     }
 
                                                     if let Ok(mut flight_plan) =
-                                                        query_flight_plan.get_mut(source.entity())
+                                                        query_flight_plan.get_mut(source.entity)
                                                         && ui.button("Add manoeuvre").clicked()
                                                     {
-                                                        flight_plan.burns.push(Burn::new(
-                                                            time,
-                                                            match plot.reference {
-                                                                Some(e) if e != *root => {
-                                                                    BurnFrame::Relative
-                                                                }
-                                                                _ => BurnFrame::Inertial,
-                                                            },
-                                                            plot.reference.unwrap_or(*root),
-                                                        ));
+                                                        flight_plan.burns.insert(
+                                                            uuid::Uuid::new_v4(),
+                                                            Burn::new(
+                                                                time,
+                                                                match source.reference {
+                                                                    Some(e) if e != *root => {
+                                                                        BurnFrame::Relative
+                                                                    }
+                                                                    _ => BurnFrame::Inertial,
+                                                                },
+                                                                source.reference.unwrap_or(*root),
+                                                            ),
+                                                        );
                                                         commands.trigger_targets(
                                                             FlightPlanChanged,
-                                                            source.entity(),
+                                                            source.entity,
                                                         );
                                                     }
                                                 })
@@ -548,19 +555,11 @@ fn close_button(ui: &mut egui::Ui) -> egui::Response {
     response
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Component, Hash)]
-pub enum PlotSeparation {
-    Trajectory(Entity),
-    Plot(Entity),
-}
-
-impl PlotSeparation {
-    pub fn entity(&self) -> Entity {
-        match self {
-            PlotSeparation::Trajectory(entity) => *entity,
-            PlotSeparation::Plot(entity) => *entity,
-        }
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Component)]
+pub struct PlotSeparation {
+    pub entity: Entity,
+    pub time: Epoch,
+    pub distance: f64,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -577,89 +576,48 @@ pub struct SeparationTooltip {
     pub target: Entity,
     pub data: SeparationTooltipData,
     pub show_separation_line: bool,
+    pub show_window: bool,
 }
 
 fn update_separation_tooltip(
     mut commands: Commands,
     query_plot: Query<(
         Entity,
-        &PlotConfig,
-        &PlotPoints,
         &PlotSource,
+        &PlotPoints,
+        &PlotSegment,
         Option<&PlotSeparation>,
     )>,
-    query_trajectory: Query<&Trajectory, Without<Predicting>>,
-    query_source_of: Query<&PlotSourceOf>,
+    mut query_tooltip: Query<&mut SeparationTooltip>,
 ) {
-    for (entity, plot, points, source, separation) in query_plot.iter() {
+    for (entity, source, points, segment, separation) in query_plot.iter() {
         let Some(separation) = separation else {
             continue;
         };
 
-        let Ok(trajectory) = query_trajectory.get(source.entity()) else {
+        let Ok((_, target_source, target_points, ..)) = query_plot.get(separation.entity) else {
             continue;
         };
 
-        let (target_trajectory, target_data) = match separation {
-            PlotSeparation::Trajectory(entity) => (query_trajectory.get(*entity), None),
-            PlotSeparation::Plot(entity) => {
-                let Ok((_, target_plot, target_points, target_source, _)) = query_plot.get(*entity)
-                else {
-                    continue;
-                };
-                (
-                    query_trajectory.get(target_source.entity()),
-                    Some((target_plot, target_points)),
-                )
-            }
-        };
-        let Ok(target_trajectory) = target_trajectory else {
-            continue;
-        };
-
-        const EPOCH_MIN: Epoch = Epoch::from_offset(Duration::MIN);
-        let target_start = target_data.map_or(EPOCH_MIN, |(plot, _)| plot.start);
-        const EPOCH_MAX: Epoch = Epoch::from_offset(Duration::MAX);
-        let target_end = target_data.map_or(EPOCH_MAX, |(plot, _)| plot.end);
-
-        let relative = RelativeTrajectory::new(trajectory, Some(target_trajectory));
-        if let Some(at) = relative.closest_separation_between(
-            plot.start.max(target_start),
-            plot.end.min(target_end),
-            0.001,
-            1000,
-            |t1, t2, at| {
-                t1.position(at)
-                    .unwrap()
-                    .distance_squared(t2.position(at).unwrap())
+        let updated_tooltip = SeparationTooltip {
+            entity,
+            target: separation.entity,
+            data: SeparationTooltipData {
+                time: separation.time,
+                distance: separation.distance,
+                position: points.evaluate(separation.time),
+                target_position: target_points.evaluate(separation.time),
             },
-        ) {
-            // If there is no target data, that means the target is a trajectory.
-            // Find the first plotted trajectory that contains the time of closest separation.
-            let target_data = target_data.or_else(|| {
-                let source_of = query_source_of.get(separation.entity()).ok()?;
-                source_of.iter().find_map(|plot_entity| {
-                    query_plot
-                        .get(plot_entity)
-                        .ok()
-                        .map(|(_, plot, points, ..)| (plot, points))
-                        .filter(|(plot, _)| plot.start <= at && plot.end >= at)
-                })
-            });
+            show_separation_line: source.reference == target_source.reference,
+            show_window: source.reference == target_source.reference
+                || !matches!(segment, PlotSegment::Flyby),
+        };
 
-            commands.entity(entity).insert(SeparationTooltip {
-                entity,
-                target: separation.entity(),
-                data: SeparationTooltipData {
-                    time: at,
-                    distance: relative.position(at).unwrap().length(),
-                    position: points.evaluate(at),
-                    target_position: target_data.and_then(|(_, points)| points.evaluate(at)),
-                },
-                show_separation_line: target_data
-                    .is_some_and(|(target_plot, _)| target_plot.reference == plot.reference),
-            });
-        }
+        let Ok(mut tooltip) = query_tooltip.get_mut(entity) else {
+            commands.entity(entity).insert(updated_tooltip);
+            continue;
+        };
+        *tooltip = updated_tooltip;
     }
 }
 
@@ -718,6 +676,10 @@ fn separation_tooltip_window(
     let (camera_transform, camera) = *camera;
 
     for (name, tooltip) in query.iter() {
+        if !tooltip.show_window {
+            continue;
+        }
+
         let Some(position) = tooltip.data.position else {
             return;
         };
@@ -736,7 +698,9 @@ fn separation_tooltip_window(
         };
 
         egui::Window::new(name.as_str())
-            .id(egui::Id::new(name.to_string() + "#separation"))
+            .id(egui::Id::new(
+                tooltip.entity.to_bits() + tooltip.target.to_bits(),
+            ))
             .collapsible(false)
             .resizable(false)
             .fade_in(false)
@@ -746,12 +710,15 @@ fn separation_tooltip_window(
             .fixed_pos(window_position.to_array())
             .fixed_size([200.0, 200.0])
             .show(ctx, |ui| {
-                ui.label(nformat!("Separation: {:.2} km", tooltip.data.distance));
+                ui.label(format!(
+                    "Separation: {}",
+                    Position::km(tooltip.data.distance)
+                ));
             });
     }
 }
 
-pub fn remove_separation(mut entity: EntityWorldMut) {
+pub fn remove_tooltip(mut entity: EntityWorldMut) {
     entity.remove::<SeparationTooltip>();
     entity.remove::<PlotSeparation>();
 }

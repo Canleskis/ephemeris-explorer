@@ -5,8 +5,6 @@ use crate::{
 
 use ftime::{Duration, Epoch};
 use integration::prelude::*;
-use num_traits::bounds::UpperBounded;
-use std::ops::Div;
 
 pub trait AccelerationModel {
     type Vector;
@@ -14,7 +12,7 @@ pub trait AccelerationModel {
     fn acceleration(&self, t: Epoch, state: &StateVector<Self::Vector>) -> Option<Self::Vector>;
 }
 
-pub trait PropagationContext {
+pub trait PropagationEnvironment {
     fn max_time(&self) -> Epoch;
 }
 
@@ -22,13 +20,13 @@ pub trait Transform<V> {
     fn to_inertial(&self, v: &V) -> V;
 }
 
-pub trait ManoeuvreFrame<V> {
+pub trait Frame<V> {
     type Transform;
 
     fn transform(&self, t: Epoch, sv: &StateVector<V>) -> Option<Self::Transform>;
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug, PartialEq)]
 pub enum ReferenceKind<T> {
     /// Relative to a reference trajectory.
     Relative(T),
@@ -36,7 +34,7 @@ pub enum ReferenceKind<T> {
     Inertial,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReferenceFrame<T, F> {
     reference: ReferenceKind<T>,
     _frame: std::marker::PhantomData<F>,
@@ -60,7 +58,7 @@ impl<T, F> ReferenceFrame<T, F> {
     }
 }
 
-impl<T, F> ManoeuvreFrame<T::Vector> for ReferenceFrame<T, F>
+impl<T, F> Frame<T::Vector> for ReferenceFrame<T, F>
 where
     T: EvaluateTrajectory,
     T::Vector: std::ops::Sub<Output = T::Vector> + Copy,
@@ -77,213 +75,252 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ConstantThrust<V, F> {
-    pub start: Epoch,
-    pub duration: Duration,
     pub acceleration: V,
     pub frame: F,
 }
 
 impl<V, F> ConstantThrust<V, F> {
     #[inline]
-    pub fn new(start: Epoch, duration: Duration, acceleration: V, frame: F) -> Self {
+    pub fn new(acceleration: V, frame: F) -> Self {
         Self {
-            start,
-            duration,
             acceleration,
             frame,
         }
-    }
-
-    #[inline]
-    pub fn end(&self) -> Epoch {
-        self.start + self.duration
     }
 }
 
 impl<V, F> AccelerationModel for ConstantThrust<V, F>
 where
-    F: ManoeuvreFrame<V>,
+    F: Frame<V>,
     F::Transform: Transform<V>,
 {
     type Vector = V;
 
     #[inline]
     fn acceleration(&self, t: Epoch, sv: &StateVector<Self::Vector>) -> Option<Self::Vector> {
-        // We leave time bounds checking as a responsibility of the caller
         Some(self.frame.transform(t, sv)?.to_inertial(&self.acceleration))
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum ManoeuvreEvent<V, F> {
-    Start {
-        time: Epoch,
-        manoeuvre: ConstantThrust<V, F>,
-    },
-    Stop {
-        time: Epoch,
-    },
-}
-
-impl<V, F> ManoeuvreEvent<V, F> {
-    #[inline]
-    pub fn time(&self) -> Epoch {
-        match self {
-            Self::Start { time, .. } | Self::Stop { time } => *time,
-        }
-    }
-
-    #[inline]
-    pub fn manoeuvre(&self) -> Option<&ConstantThrust<V, F>> {
-        match self {
-            Self::Start { manoeuvre, .. } => Some(manoeuvre),
-            Self::Stop { .. } => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-pub struct ManoeuvreSchedule<V, F> {
-    events: Vec<ManoeuvreEvent<V, F>>,
-    idx: usize,
+pub enum Segment<V, F> {
+    Burn {
+        start: Epoch,
+        end: Epoch,
+        thrust: ConstantThrust<V, F>,
+    },
+    Coast {
+        start: Epoch,
+        end: Epoch,
+    },
 }
 
-impl<V, F> Default for ManoeuvreSchedule<V, F> {
+impl<V, F> Segment<V, F> {
     #[inline]
-    fn default() -> Self {
-        Self {
-            events: vec![ManoeuvreEvent::Stop {
-                time: Epoch::from_offset(Duration::MIN),
-            }],
-            idx: 0,
+    pub fn start(&self) -> Epoch {
+        match self {
+            Segment::Burn { start, .. } | Segment::Coast { start, .. } => *start,
+        }
+    }
+
+    #[inline]
+    pub fn end(&self) -> Epoch {
+        match self {
+            Segment::Burn { end, .. } | Segment::Coast { end, .. } => *end,
+        }
+    }
+
+    #[inline]
+    pub fn thrust(&self) -> Option<&ConstantThrust<V, F>> {
+        match self {
+            Segment::Burn { thrust, .. } => Some(thrust),
+            Segment::Coast { .. } => None,
         }
     }
 }
 
-impl<V, F> ManoeuvreSchedule<V, F> {
-    #[inline]
-    pub fn binary_search(&self, time: Epoch) -> Result<usize, usize> {
-        self.events
-            .binary_search_by(|event| event.time().cmp(&time))
-    }
-
-    #[inline]
-    fn last_event_at_idx(&self, time: Epoch) -> usize {
-        self.binary_search(time)
-            .unwrap_or_else(|i| i.saturating_sub(1))
-    }
-
-    #[inline]
-    fn last_event_at_exclusive_idx(&self, time: Epoch) -> usize {
-        self.binary_search(time)
-            .unwrap_or_else(|i| i)
-            .saturating_sub(1)
-    }
-
-    #[inline]
-    fn next_event_at_idx(&self, time: Epoch) -> Option<usize> {
-        self.binary_search(time)
-            .map(|i| i + 1)
-            .map_or_else(Some, Some)
-            .filter(|&i| i < self.events.len())
-    }
-
-    #[inline]
-    pub fn last_event_at(&self, time: Epoch) -> &ManoeuvreEvent<V, F> {
-        &self.events[self.last_event_at_idx(time)]
-    }
-
-    #[inline]
-    pub fn last_event_at_exclusive(&self, time: Epoch) -> &ManoeuvreEvent<V, F> {
-        &self.events[self.last_event_at_exclusive_idx(time)]
-    }
-
-    #[inline]
-    pub fn next_event_at(&self, time: Epoch) -> Option<&ManoeuvreEvent<V, F>> {
-        self.next_event_at_idx(time)
-            .and_then(|i| self.events.get(i))
-    }
-
-    /// Updates the schedule to the current time and returns true if the current manoeuvre has
-    /// changed.
-    #[inline]
-    pub fn update(&mut self, time: Epoch) -> bool {
-        let old_idx = self.idx;
-        self.idx = self.last_event_at_idx(time);
-
-        old_idx != self.idx
-    }
-
-    #[inline]
-    pub fn current(&self) -> &ManoeuvreEvent<V, F> {
-        &self.events[self.idx]
-    }
-
-    #[inline]
-    pub fn next_event(&self) -> Option<&ManoeuvreEvent<V, F>> {
-        self.events.get(self.idx + 1)
-    }
-
-    #[inline]
-    pub fn next_event_time(&self) -> Option<Epoch> {
-        self.events.get(self.idx + 1).map(ManoeuvreEvent::time)
-    }
-
-    #[inline]
-    pub fn insert(&mut self, manoeuvre: ConstantThrust<V, F>) {
-        let index = self.binary_search(manoeuvre.start).unwrap_or_else(|i| i);
-        self.events.insert(
-            index,
-            ManoeuvreEvent::Stop {
-                time: manoeuvre.end(),
-            },
-        );
-        self.events.insert(
-            index,
-            ManoeuvreEvent::Start {
-                time: manoeuvre.start,
-                manoeuvre,
-            },
-        );
-    }
-
-    #[inline]
-    pub fn clear(&mut self) {
-        self.events.truncate(1);
-        self.idx = 0;
-    }
-}
-
-impl<V, F> AccelerationModel for ManoeuvreSchedule<V, F>
+impl<V, F> AccelerationModel for Segment<V, F>
 where
     V: Default,
-    F: ManoeuvreFrame<V>,
+    F: Frame<V>,
     F::Transform: Transform<V>,
 {
     type Vector = V;
 
     #[inline]
     fn acceleration(&self, t: Epoch, state: &StateVector<Self::Vector>) -> Option<Self::Vector> {
-        if let ManoeuvreEvent::Start { manoeuvre, .. } = self.current() {
-            return manoeuvre.acceleration(t, state);
+        match self {
+            Segment::Burn { thrust, .. } => thrust.acceleration(t, state),
+            _ => Some(V::default()),
         }
-        Some(V::default())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Timeline<V, F>(Vec<Segment<V, F>>);
+
+impl<V, F> Default for Timeline<V, F> {
+    #[inline]
+    fn default() -> Self {
+        Self::new(vec![])
+    }
+}
+
+impl<V, F> Timeline<V, F> {
+    #[inline]
+    pub fn new(mut burns: Vec<(Epoch, Epoch, ConstantThrust<V, F>)>) -> Self {
+        burns.sort_by_key(|(start, ..)| *start);
+
+        let mut timeline = Vec::with_capacity(burns.len() * 2 + 1);
+        let mut cursor = Epoch::MIN;
+
+        for (start, end, thrust) in burns {
+            if start > cursor {
+                timeline.push(Segment::Coast {
+                    start: cursor,
+                    end: start,
+                });
+            }
+            cursor = end;
+            timeline.push(Segment::Burn { start, end, thrust });
+        }
+
+        // If final burn is finite.
+        if cursor < Epoch::MAX {
+            timeline.push(Segment::Coast {
+                start: cursor,
+                end: Epoch::MAX,
+            });
+        }
+
+        Self(timeline)
+    }
+
+    #[inline]
+    pub fn segments(&self) -> &[Segment<V, F>] {
+        &self.0
+    }
+
+    #[inline]
+    pub fn segment_idx_at(&self, time: Epoch) -> usize {
+        self.0.partition_point(|seg| seg.end() <= time)
+    }
+
+    #[inline]
+    pub fn segment_at(&self, time: Epoch) -> &Segment<V, F> {
+        &self.0[self.segment_idx_at(time)]
+    }
+
+    #[inline]
+    pub fn common_times(&self, other: &Self) -> impl Iterator<Item = Epoch>
+    where
+        V: PartialEq,
+        F: PartialEq,
+    {
+        self.0
+            .iter()
+            .zip(other.0.iter())
+            .scan(false, |done, (s1, s2)| {
+                if *done || s1.start() != s2.start() {
+                    return None;
+                }
+                let result = Some(s1.start());
+
+                if s1.thrust() != s2.thrust() {
+                    *done = true;
+                }
+
+                result
+            })
+    }
+
+    #[inline]
+    pub fn divergence_time_before(&self, other: &Self, before: Epoch) -> Epoch
+    where
+        V: PartialEq,
+        F: PartialEq,
+    {
+        self.common_times(other)
+            .take_while(|&t| t < before)
+            .last()
+            .unwrap()
+    }
+
+    #[inline]
+    pub fn divergence_time(&self, other: &Self) -> Epoch
+    where
+        V: PartialEq,
+        F: PartialEq,
+    {
+        self.common_times(other).last().unwrap()
     }
 }
 
 #[derive(Clone)]
 pub struct SpacecraftModel<C, V, F> {
-    pub context: C,
-    pub manoeuvres: ManoeuvreSchedule<V, F>,
+    pub environment: C,
+    pub current_segment: usize,
+    pub timeline: Timeline<V, F>,
+}
+
+impl<C, V, F> SpacecraftModel<C, V, F> {
+    #[inline]
+    pub fn new(time: Epoch, environment: C, timeline: Timeline<V, F>) -> Self {
+        Self {
+            environment,
+            current_segment: timeline.segment_idx_at(time),
+            timeline,
+        }
+    }
+
+    #[inline]
+    pub fn update_index(&mut self, time: Epoch) -> bool {
+        let old_index = self.current_segment;
+        self.current_segment = self.timeline.segment_idx_at(time);
+
+        old_index != self.current_segment
+    }
+
+    #[inline]
+    pub fn advance_timeline(&mut self, time: Epoch) -> Option<Epoch> {
+        if time >= self.current_segment().end() {
+            self.current_segment += 1;
+            return Some(self.current_segment().end());
+        }
+        None
+    }
+
+    #[inline]
+    pub fn current_segment(&self) -> &Segment<V, F> {
+        &self.timeline.0[self.current_segment]
+    }
+
+    #[inline]
+    pub fn environment_acceleration(&self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
+    where
+        C: AccelerationModel<Vector = V>,
+    {
+        self.environment.acceleration(t, sv).ok_or(EvalFailed)
+    }
+
+    #[inline]
+    pub fn manoeuvre_acceleration(&self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
+    where
+        V: Default,
+        F: Frame<V>,
+        F::Transform: Transform<V>,
+    {
+        self.current_segment().acceleration(t, sv).ok_or(EvalFailed)
+    }
 }
 
 impl<C, V, F> FirstOrderODE<f64, [StateVector<V>; 1]> for SpacecraftModel<C, V, F>
 where
     C: AccelerationModel<Vector = V>,
     V: std::ops::Add<Output = V> + Default + Copy,
-    F: ManoeuvreFrame<V>,
+    F: Frame<V>,
     F::Transform: Transform<V>,
 {
     #[inline]
@@ -294,8 +331,7 @@ where
         [dy]: &mut [StateVector<V>; 1],
     ) -> Result<(), EvalFailed> {
         let t = Epoch::from_offset(Duration::from_seconds(t));
-        dy.velocity = self.context.acceleration(t, y).ok_or(EvalFailed)?
-            + self.manoeuvres.acceleration(t, y).ok_or(EvalFailed)?;
+        dy.velocity = self.environment_acceleration(t, y)? + self.manoeuvre_acceleration(t, y)?;
         dy.position = y.velocity;
 
         Ok(())
@@ -306,27 +342,35 @@ pub type SpacecraftProblem<C, V, F> =
     ODEProblem<f64, [StateVector<V>; 1], SpacecraftModel<C, V, F>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpacecraftPropagationError {
+pub enum SpacecraftPropagatorError {
     IntegrationError(StepError),
 }
-impl std::fmt::Display for SpacecraftPropagationError {
+impl std::fmt::Display for SpacecraftPropagatorError {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SpacecraftPropagationError::IntegrationError(e) => write!(f, "integration failed: {e}"),
+            SpacecraftPropagatorError::IntegrationError(e) => write!(f, "integration failed: {e}"),
         }
     }
 }
-impl std::error::Error for SpacecraftPropagationError {}
+impl std::error::Error for SpacecraftPropagatorError {}
 
-impl From<StepError> for SpacecraftPropagationError {
+impl From<StepError> for SpacecraftPropagatorError {
     #[inline]
     fn from(err: StepError) -> Self {
-        SpacecraftPropagationError::IntegrationError(err)
+        SpacecraftPropagatorError::IntegrationError(err)
+    }
+}
+
+impl From<EvalFailed> for SpacecraftPropagatorError {
+    #[inline]
+    fn from(_: EvalFailed) -> Self {
+        SpacecraftPropagatorError::from(StepError::EvalFailed)
     }
 }
 
 pub struct SpacecraftPropagator<C, V, F, M: Method<SpacecraftProblem<C, V, F>>> {
+    method: M,
     integration: Integration<SpacecraftProblem<C, V, F>, M>,
 }
 
@@ -335,12 +379,13 @@ where
     C: Clone,
     V: Clone,
     F: Clone,
-    M: Method<SpacecraftProblem<C, V, F>>,
+    M: Method<SpacecraftProblem<C, V, F>> + Clone,
     M::Integrator: IntegratorState + Clone,
 {
     #[inline]
     fn clone(&self) -> Self {
         Self {
+            method: self.method.clone(),
             integration: self.integration.clone(),
         }
     }
@@ -357,22 +402,43 @@ where
         initial_state: StateVector<V>,
         params: Params,
         context: C,
+        timeline: Timeline<V, F>,
     ) -> Self
     where
-        C: PropagationContext,
+        C: PropagationEnvironment,
         M: NewMethod<Params>,
+        Params: Clone,
     {
         Self {
+            method: M::new(params.clone()),
             integration: M::new(params).integrate(SpacecraftProblem {
                 time: initial_time.as_offset_seconds(),
-                bound: context.max_time().as_offset_seconds(),
+                bound: timeline.segment_at(initial_time).end().as_offset_seconds(),
                 state: [initial_state],
-                ode: SpacecraftModel {
-                    context,
-                    manoeuvres: Default::default(),
-                },
+                ode: SpacecraftModel::new(initial_time, context, timeline),
             }),
         }
+    }
+
+    #[inline]
+    pub fn reset_integrator(&mut self)
+    where
+        M: Clone,
+    {
+        self.integration.integrator = self.method.clone().init(&self.integration.problem);
+    }
+
+    #[inline]
+    pub fn integration(&self) -> &Integration<SpacecraftProblem<C, V, F>, M> {
+        &self.integration
+    }
+
+    #[inline]
+    pub fn max_iterations(&self) -> usize
+    where
+        M::Integrator: AdaptiveRKState,
+    {
+        self.integration.integrator.n_max() as usize
     }
 
     #[inline]
@@ -406,49 +472,26 @@ where
 
     #[inline]
     pub fn context(&self) -> &C {
-        &self.integration.problem.ode.context
+        &self.integration.problem.ode.environment
     }
 
     #[inline]
-    pub fn schedule(&self) -> &ManoeuvreSchedule<V, F> {
-        &self.integration.problem.ode.manoeuvres
+    pub fn timeline(&self) -> &Timeline<V, F> {
+        &self.integration.problem.ode.timeline
     }
 
     #[inline]
-    pub fn clear_manoeuvres(&mut self) {
-        self.integration.problem.ode.manoeuvres.clear();
+    pub fn join(lhs: &mut CubicHermiteSplineSamples<V>, rhs: CubicHermiteSplineSamples<V>) {
+        lhs.clear_after(rhs.start());
+        lhs.extend(rhs);
     }
 
     #[inline]
-    pub fn insert_manoeuvre(&mut self, manoeuvre: ConstantThrust<V, F>) {
-        self.integration.problem.ode.manoeuvres.insert(manoeuvre);
-    }
-
-    #[inline]
-    pub fn set_initial_state(&mut self, time: Epoch, state_vector: StateVector<V>)
+    fn set_bound(&mut self, bound: Epoch)
     where
-        Integration<SpacecraftProblem<C, V, F>, M>: ResetIntegration,
+        C: PropagationEnvironment,
     {
-        self.integration.problem.time = time.as_offset_seconds();
-        self.integration.problem.state[0] = state_vector;
-        self.integration.reset();
-    }
-
-    #[inline]
-    pub fn set_bound(&mut self, bound: Epoch)
-    where
-        C: PropagationContext,
-    {
-        let max = self.integration.problem.ode.context.max_time();
-        self.integration.problem.bound = bound.min(max).as_offset_seconds();
-    }
-
-    #[inline]
-    pub fn set_max_iterations(&mut self, max_iterations: usize)
-    where
-        M::Integrator: AdaptiveRKState,
-    {
-        self.integration.integrator.set_n_max(max_iterations as _);
+        self.integration.problem.bound = bound.as_offset_seconds();
     }
 }
 
@@ -464,26 +507,23 @@ where
 impl<C, V, F, M> IncrementalPropagator for SpacecraftPropagator<C, V, F, M>
 where
     V: Clone,
-    C: PropagationContext,
-    M: Method<SpacecraftProblem<C, V, F>>,
+    C: PropagationEnvironment,
+    M: Method<SpacecraftProblem<C, V, F>> + Clone,
     M::Integrator: Integrator<SpacecraftProblem<C, V, F>> + IntegratorState,
-    Integration<SpacecraftProblem<C, V, F>, M>: ResetIntegration,
 {
-    type Error = SpacecraftPropagationError;
+    type Error = SpacecraftPropagatorError;
 
     #[inline]
-    fn step(
-        &mut self,
-        [trajectory]: &mut Self::Trajectories,
-    ) -> Result<(), SpacecraftPropagationError> {
-        let manoeuvre_changed = self.integration.problem.ode.manoeuvres.update(self.time());
-        let next_manoeuvre_change = self.integration.problem.ode.manoeuvres.next_event_time();
-        self.set_bound(next_manoeuvre_change.unwrap_or(Epoch::from_offset(Duration::MAX)));
+    fn step(&mut self, [trajectory]: &mut Self::Trajectories) -> Result<(), Self::Error> {
         // A manoeuvre change essentially means the problem definition has changed; we reset the
-        // integrator so it can be re-initialised with the new problem definition so that
-        // potentially cached information is forgotten.
-        if manoeuvre_changed {
-            self.integration.reset();
+        // integrator to re-initialise it with the new problem definition so that potentially cached
+        // information is forgotten. This also means that depending on the specific details of the
+        // integrator used, propagation may only be restarted at these manoeuvre changes (in this
+        // context, restarting means creating a new integrator from the current problem and
+        // expecting the same subsequent steps).
+        if let Some(new_end) = self.integration.problem.ode.advance_timeline(self.time()) {
+            self.set_bound(new_end);
+            self.reset_integrator();
         }
         self.integration.step()?;
 
@@ -496,10 +536,9 @@ where
 impl<C, V, F, M> DirectionalPropagator for SpacecraftPropagator<C, V, F, M>
 where
     V: Clone,
-    C: PropagationContext,
+    C: PropagationEnvironment,
     M: Method<SpacecraftProblem<C, V, F>>,
     M::Integrator: Integrator<SpacecraftProblem<C, V, F>>,
-    Integration<SpacecraftProblem<C, V, F>, M>: ResetIntegration,
 {
     #[inline]
     fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
@@ -520,10 +559,9 @@ where
 impl<C, V, F, M> BranchingPropagator for SpacecraftPropagator<C, V, F, M>
 where
     V: Clone,
-    C: PropagationContext,
+    C: PropagationEnvironment,
     M: Method<SpacecraftProblem<C, V, F>>,
     M::Integrator: Integrator<SpacecraftProblem<C, V, F>>,
-    Integration<SpacecraftProblem<C, V, F>, M>: ResetIntegration,
 {
     #[inline]
     fn branch(&self) -> Self::Trajectories {
@@ -532,59 +570,5 @@ where
             self.position(),
             self.velocity(),
         )]
-    }
-
-    #[inline]
-    fn merge(lhs: &mut Self::Trajectory, rhs: Self::Trajectory) {
-        lhs.clear_after(rhs.start());
-        lhs.extend(rhs);
-    }
-}
-
-pub trait ResetIntegration {
-    fn reset(&mut self);
-}
-
-impl<P, C, T, I> ResetIntegration for Integration<P, FixedRungeKutta<C, T>>
-where
-    FixedRungeKutta<C, T>: Method<P, Integrator = I>,
-    I: IntegratorState<Time = T>,
-{
-    #[inline]
-    fn reset(&mut self) {
-        self.integrator = FixedRungeKutta::new(FixedMethodParams::new(self.integrator.step_size()))
-            .init(&self.problem);
-    }
-}
-
-impl<P, C, T, Tol, U, I> ResetIntegration for Integration<P, AdaptiveRungeKutta<C, T, Tol, U>>
-where
-    AdaptiveRungeKutta<C, T, Tol, U>: Method<P, Integrator = I>,
-    T: UpperBounded + Default,
-    Tol: Clone,
-    U: Div<Output = U> + From<u16>,
-    I: AdaptiveRKState<Tolerance = Tol> + IntegratorState<Time = T>,
-{
-    #[inline]
-    fn reset(&mut self) {
-        self.integrator = AdaptiveRungeKutta::new(AdaptiveMethodParams::new(
-            self.integrator.tolerance().clone(),
-            self.integrator.n_max() - self.integrator.n(),
-        ))
-        .init(&self.problem);
-    }
-}
-
-impl<P, C, T, S, I> ResetIntegration for Integration<P, LinearMultistep<C, T, S>>
-where
-    LinearMultistep<C, T, S>: Method<P, Integrator = I>,
-    T: Copy,
-    S: NewMethod<FixedMethodParams<T>>,
-    I: IntegratorState<Time = T>,
-{
-    #[inline]
-    fn reset(&mut self) {
-        self.integrator = LinearMultistep::new(FixedMethodParams::new(self.integrator.step_size()))
-            .init(&self.problem);
     }
 }

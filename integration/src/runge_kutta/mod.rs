@@ -19,6 +19,8 @@ pub trait RKCoefficients<P> {
 }
 
 pub trait RKState {
+    const ORDER: u16;
+
     fn step_count(&self) -> u32;
 }
 
@@ -72,6 +74,8 @@ where
     R: RKState,
     T: Sub<Output = T> + DivCeil + Copy,
 {
+    const ORDER: u16 = R::ORDER;
+
     type Time = T;
 
     #[inline]
@@ -218,7 +222,7 @@ impl<T, U> IController<T, U> {
     }
 
     #[inline]
-    pub fn step(&mut self, err: U, h: &mut T, order: u16) -> bool
+    pub fn step(&self, err: U, h: &mut T, order: u16) -> bool
     where
         U: Pow<U, Output = U>
             + Mul<Output = U>
@@ -292,6 +296,16 @@ pub struct AdaptiveRungeKuttaIntegrator<R, T, Tol, U, V = <R as RKEmbedded<T>>::
     pub n_max: u32,
 }
 
+impl<R, T, Tol, U, V> AdaptiveRungeKuttaIntegrator<R, T, Tol, U, V> {
+    #[inline]
+    pub fn next_step_size(&self) -> T
+    where
+        T: Copy,
+    {
+        self.next_h
+    }
+}
+
 impl<C, P, Tol, U> Method<P> for AdaptiveRungeKutta<C, P::Time, Tol, U>
 where
     P: Problem,
@@ -328,6 +342,8 @@ where
     R: RKState,
     T: Copy,
 {
+    const ORDER: u16 = R::ORDER;
+
     type Time = T;
 
     #[inline]

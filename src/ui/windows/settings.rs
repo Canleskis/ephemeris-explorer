@@ -14,7 +14,6 @@ impl Plugin for SettingsPlugin {
         app.add_systems(
             EguiPrimaryContextPass,
             SettingsWindow::show
-                // .never_param_warn()
                 .in_set(WindowsUiSet)
                 .run_if(in_state(MainState::Running)),
         );
@@ -74,6 +73,7 @@ impl SettingsWindow {
                                     .text("Line width"),
                             )
                             | ui.checkbox(&mut settings.user.show_labels, "Show labels")
+                            | ui.checkbox(&mut settings.user.show_soi, "Show spheres of influence")
                             | ui.heading("Input settings")
                             | ui.separator()
                             | ui.add(

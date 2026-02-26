@@ -1,9 +1,9 @@
 use crate::{
+    analysis::{OrbitPlotConfig, Satellites},
     camera::Followed,
-    hierarchy::OrbitedBy,
     load::SystemRoot,
     selection::{Selectable, Selected},
-    ui::{PlotConfig, PlotSourceOf, show_tree},
+    ui::show_tree,
 };
 
 use bevy::prelude::*;
@@ -13,9 +13,8 @@ pub fn solar_system_hierarchy(
     mut contexts: EguiContexts,
     mut followed: ResMut<Followed>,
     mut selected: ResMut<Selected>,
-    query_hierarchy: Query<(Entity, &Name, Option<&OrbitedBy>)>,
-    mut query_plot: Query<&mut PlotConfig>,
-    query_source_of: Query<&PlotSourceOf>,
+    query_hierarchy: Query<(Entity, &Name, Option<&Satellites>)>,
+    mut query_plot: Query<&mut OrbitPlotConfig>,
     query_selectable: Query<&Selectable>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
@@ -62,26 +61,16 @@ pub fn solar_system_hierarchy(
 
                             // Plot toggle
                             ui.scope(|ui| {
-                                if let Ok(source_of) = query_source_of.get(entity) {
-                                    if let Some(first) =
-                                        source_of.first().and_then(|e| query_plot.get(*e).ok())
-                                    {
-                                        let [r, g, b, _a] = first.color.to_srgba().to_u8_array();
-                                        ui.visuals_mut().selection.bg_fill =
-                                            egui::Color32::from_gray(80);
-                                        ui.visuals_mut().selection.stroke.color =
-                                            egui::Color32::from_rgb(r, g, b);
-                                    }
+                                let Ok(mut plot_config) = query_plot.get_mut(entity) else {
+                                    return;
+                                };
+                                let [r, g, b, _a] = plot_config.color.to_srgba().to_u8_array();
+                                ui.visuals_mut().selection.bg_fill = egui::Color32::from_gray(80);
+                                ui.visuals_mut().selection.stroke.color =
+                                    egui::Color32::from_rgb(r, g, b);
 
-                                    let enabled =
-                                        query_plot.iter_many(source_of.iter()).any(|p| p.enabled);
-
-                                    if ui.selectable_label(enabled, "○").clicked() {
-                                        let mut iter = query_plot.iter_many_mut(source_of.iter());
-                                        while let Some(mut plot) = iter.fetch_next() {
-                                            plot.enabled = !enabled;
-                                        }
-                                    }
+                                if ui.selectable_label(plot_config.enabled, "○").clicked() {
+                                    plot_config.enabled = !plot_config.enabled;
                                 }
                             });
 

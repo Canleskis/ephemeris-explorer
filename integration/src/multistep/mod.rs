@@ -18,12 +18,12 @@ pub trait LMCoefficients<P> {
 }
 
 pub trait LMState {
+    const ORDER: u16;
+
     fn step_count(&self) -> u32;
 }
 
 pub trait LMInstance<P: Problem>: LMState {
-    const ORDER: usize;
-
     fn from_problem(problem: &P) -> Self;
 
     fn advance(&mut self, h: P::Time, problem: &mut P) -> Result<(), EvalFailed>;
@@ -79,6 +79,8 @@ where
     S: IntegratorState,
     S::Time: Mul<Ratio, Output = S::Time>,
 {
+    const ORDER: u16 = S::ORDER;
+
     type Time = S::Time;
 
     #[inline]
@@ -159,6 +161,8 @@ where
     T: Sub<Output = T> + DivCeil + Copy,
     S: IntegratorState,
 {
+    const ORDER: u16 = L::ORDER;
+
     type Time = T;
 
     #[inline]

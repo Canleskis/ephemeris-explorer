@@ -61,6 +61,7 @@ particular = { git = "https://github.com/Canleskis/particular.git", features = [
 smallvec = { version = "1.13.2", features = ["serde"] }
 uuid = { version = "1.1", features = ["v4"] }
 
+uom = "0.38"
 thousands = "0.2.0"
 pretty-type-name = "1.0.1"
 

@@ -21,6 +21,7 @@ impl<T> LMBuffer<T> {
         &self.data[self.head]
     }
 
+    #[inline]
     pub fn front_mut(&mut self) -> &mut T {
         &mut self.data[self.head]
     }

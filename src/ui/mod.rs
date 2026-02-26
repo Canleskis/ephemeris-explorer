@@ -363,4 +363,54 @@ macro_rules! nformat {
         thousands::Separable::separate_with_commas(&std::fmt::format(format_args!($($arg)*)))
     }
 }
-use nformat;
+
+use uom::si::{
+    length::{astronomical_unit as au, kilometer as km, light_year as ly, meter as m},
+    velocity::{kilometer_per_second as kps, meter_per_second as mps},
+};
+
+pub struct Position(uom::si::f64::Length);
+
+impl Position {
+    #[inline]
+    pub fn km(position: f64) -> Self {
+        Self(uom::si::f64::Length::new::<km>(position))
+    }
+}
+
+impl std::fmt::Display for Position {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let base = &self.0;
+        if base.abs() < uom::si::f64::Length::new::<m>(1000.0) {
+            write!(f, "{} m", nformat!("{:.2}", base.get::<m>()))
+        } else if base.abs() < uom::si::f64::Length::new::<au>(0.1) {
+            write!(f, "{} km", nformat!("{:.2}", base.get::<km>()))
+        } else if base.abs() < uom::si::f64::Length::new::<au>(1_000.0) {
+            write!(f, "{} AU", nformat!("{:.2}", base.get::<au>()))
+        } else {
+            write!(f, "{} ly", nformat!("{:.2}", base.get::<ly>()))
+        }
+    }
+}
+
+pub struct Velocity(uom::si::f64::Velocity);
+
+impl Velocity {
+    #[inline]
+    pub fn kps(velocity: f64) -> Self {
+        Self(uom::si::f64::Velocity::new::<kps>(velocity))
+    }
+}
+
+impl std::fmt::Display for Velocity {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let base = &self.0;
+        if base.abs() < uom::si::f64::Velocity::new::<mps>(1000.0) {
+            write!(f, "{} m/s", nformat!("{:.2}", base.get::<mps>()))
+        } else {
+            write!(f, "{} km/s", nformat!("{:.2}", base.get::<kps>()))
+        }
+    }
+}

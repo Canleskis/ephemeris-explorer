@@ -11,6 +11,8 @@ use num_traits::One;
 use std::ops::{Add, Div, Mul, Sub};
 
 pub trait ELM2Coefficients {
+    const ORDER: u16;
+
     const ALPHA: &'static [i128];
 
     const BETA_N: &'static [i128];
@@ -44,6 +46,8 @@ impl<C, const ORDER: usize, V> ELM2<C, ORDER, V> {
 }
 
 impl<C, const ORDER: usize, V> LMState for ELM2<C, ORDER, V> {
+    const ORDER: u16 = ORDER as _;
+
     #[inline]
     fn step_count(&self) -> u32 {
         self.i
@@ -66,8 +70,6 @@ where
     P::ODE: SecondOrderODE<P::Time, V>,
     Cowell<ORDER>: CowellVelocityCoefficients,
 {
-    const ORDER: usize = ORDER;
-
     #[inline]
     fn from_problem(problem: &P) -> Self {
         Self {

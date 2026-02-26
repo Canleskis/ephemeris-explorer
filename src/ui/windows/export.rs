@@ -1,10 +1,9 @@
 use crate::{
     MainState,
-    dynamics::Mu,
+    analysis::Satellites,
+    dynamics::{Mu, Trajectory},
     flight_plan::FlightPlan,
-    hierarchy::OrbitedBy,
     load::SystemRoot,
-    prediction::Trajectory,
     simulation::SimulationTime,
     ui::{WindowsUiSet, epoch_clamped_parser, show_tree},
 };
@@ -56,7 +55,7 @@ impl ExportWindow {
         sim_time: Res<SimulationTime>,
         query_trajectory: Query<Entity, With<Trajectory>>,
         query_hierarchy: Query<
-            (Entity, &Name, Option<&OrbitedBy>),
+            (Entity, &Name, Option<&Satellites>),
             Or<(With<SystemRoot>, Without<FlightPlan>)>,
         >,
         root: Single<Entity, With<SystemRoot>>,

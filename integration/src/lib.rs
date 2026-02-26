@@ -28,12 +28,12 @@ pub trait Method<P> {
     }
 }
 
-/// Common parameters for fixed step size methods.
 pub trait NewMethod<Params> {
     fn new(params: Params) -> Self;
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Common parameters for fixed step size methods.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FixedMethodParams<T> {
     pub h: T,
 }
@@ -47,6 +47,7 @@ impl<T> FixedMethodParams<T> {
 
 /// Common parameters for adaptive step size methods. Implementations are free to use or ignore any
 /// of these parameters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AdaptiveMethodParams<T, Tol, U> {
     pub h_init: T,
     pub h_max: T,
@@ -57,9 +58,9 @@ pub struct AdaptiveMethodParams<T, Tol, U> {
     pub n_max: u32,
 }
 
-pub const FAC_MIN_DEFAULT: Ratio<u16> = Ratio::new_raw(1, 5);
-pub const FAC_MAX_DEFAULT: Ratio<u16> = Ratio::new_raw(5, 1);
-pub const FAC_DEFAULT: Ratio<u16> = Ratio::new_raw(9, 10);
+pub const DEFAULT_FAC_MIN: Ratio<u16> = Ratio::new_raw(1, 5);
+pub const DEFAULT_FAC_MAX: Ratio<u16> = Ratio::new_raw(5, 1);
+pub const DEFAULT_FAC: Ratio<u16> = Ratio::new_raw(9, 10);
 
 impl<T, Tol, U> AdaptiveMethodParams<T, Tol, U> {
     #[inline]
@@ -117,9 +118,9 @@ impl<T, Tol, U> AdaptiveMethodParams<T, Tol, U> {
             T::max_value(),
             T::max_value(),
             tol,
-            FAC_MIN_DEFAULT,
-            FAC_MAX_DEFAULT,
-            FAC_DEFAULT,
+            DEFAULT_FAC_MIN,
+            DEFAULT_FAC_MAX,
+            DEFAULT_FAC,
             n_max,
         )
     }
@@ -137,13 +138,21 @@ impl<T, Tol, U> AdaptiveMethodParams<T, Tol, U> {
     }
 
     #[inline]
-    pub fn init_h(mut self, init_h: T) -> Self {
-        self.h_init = init_h;
+    pub fn h_init(mut self, h_init: T) -> Self {
+        self.h_init = h_init;
+        self
+    }
+
+    #[inline]
+    pub fn h_max(mut self, h_max: T) -> Self {
+        self.h_max = h_max;
         self
     }
 }
 
 pub trait IntegratorState {
+    const ORDER: u16;
+
     type Time;
 
     fn step_size(&self) -> Self::Time;
@@ -213,6 +222,8 @@ pub trait Integrator<P> {
         P: Problem,
         P::Time: PartialOrd,
     {
+        // If the bound is already reached, `step` should return an error and so we don't need to
+        // check it here.
         loop {
             self.step(problem)?;
             if problem.as_ref().time >= problem.as_ref().bound {

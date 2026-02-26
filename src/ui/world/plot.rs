@@ -1,58 +1,81 @@
 use crate::{
     MainState,
-    dynamics::{CubicHermiteSplineSamples, UniformSpline},
+    dynamics::{CubicHermiteSplineSamples, Trajectory, UniformSpline},
     flight_plan::FlightPlan,
     floating_origin::{BigSpace, Grid},
-    prediction::Trajectory,
     simulation::SimulationTime,
     ui::{MANOEUVRE_SIZE, WorldUiSet},
 };
 
 use bevy::prelude::*;
 use bevy::{math::DVec3, math::bounding::RayCast3d};
-use ephemeris::{
-    BoundedTrajectory, EvaluateTrajectory, ManoeuvreFrame, RelativeTrajectory, StateVector,
-};
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory, Frame, RelativeTrajectory, StateVector};
 use ftime::Epoch;
 
 #[derive(Default, Debug, PartialEq, Eq, Component, Deref)]
-#[relationship_target(relationship = PlotSource)]
+#[relationship_target(relationship = PlotSource, linked_spawn)]
 pub struct PlotSourceOf(Vec<Entity>);
 
-#[derive(Component)]
+#[derive(Clone, Copy, Debug, Component)]
 #[relationship(relationship_target = PlotSourceOf)]
-pub struct PlotSource(pub Entity);
+pub struct PlotSource {
+    #[relationship]
+    pub entity: Entity,
+    pub reference: Option<Entity>,
+}
 
 impl PlotSource {
-    pub fn entity(&self) -> Entity {
-        self.0
+    #[inline]
+    pub fn new(entity: Entity, reference: Option<Entity>) -> Self {
+        Self { entity, reference }
+    }
+
+    #[inline]
+    pub fn get_relative_trajectory<'w>(
+        &self,
+        query_trajectory: &'w Query<&Trajectory>,
+    ) -> Option<RelativeTrajectory<&'w Trajectory>> {
+        Some(RelativeTrajectory::new(
+            query_trajectory.get(self.entity).ok()?,
+            self.reference.and_then(|e| query_trajectory.get(e).ok()),
+        ))
     }
 }
 
-#[derive(Component)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlotBound {
+    None,
+    Start,
+    End,
+}
+
+impl PlotBound {
+    #[inline]
+    pub fn is_start(&self) -> bool {
+        matches!(self, Self::Start)
+    }
+
+    #[inline]
+    pub fn is_end(&self) -> bool {
+        matches!(self, Self::End)
+    }
+
+    #[inline]
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
+#[derive(Clone, Copy, Component)]
 #[require(PlotPoints)]
 pub struct PlotConfig {
     pub enabled: bool,
     pub start: Epoch,
     pub end: Epoch,
+    pub bound: PlotBound,
     pub color: Color,
     pub threshold: f32,
     pub max_points: usize,
-    pub reference: Option<Entity>,
-}
-
-impl PlotConfig {
-    #[inline]
-    pub fn get_relative_trajectory<'w>(
-        &self,
-        source: Entity,
-        query_trajectory: &'w Query<&Trajectory>,
-    ) -> Option<RelativeTrajectory<&'w Trajectory>> {
-        Some(RelativeTrajectory::new(
-            query_trajectory.get(source).ok()?,
-            self.reference.and_then(|e| query_trajectory.get(e).ok()),
-        ))
-    }
 }
 
 /// Global space position of the points for a plotted trajectory.
@@ -65,18 +88,20 @@ impl PlotPoints {
     // TODO: Rewrite this into more idiomatic Rust.
     #[inline]
     pub fn new(
-        eval: impl Fn(Epoch) -> StateVector<DVec3>,
+        eval: impl Fn(Epoch) -> Option<StateVector<DVec3>>,
         min: Epoch,
         max: Epoch,
         camera_transform: &GlobalTransform,
         tan2_angular_resolution: f64,
         max_points: usize,
-    ) -> Self {
+    ) -> Result<Self, Epoch> {
+        let eval = |t| eval(t).ok_or(t);
+
         let tan2_angular_resolution = tan2_angular_resolution * tan2_angular_resolution;
         let final_time = max;
         let mut previous_time = min;
 
-        let mut previous = eval(previous_time);
+        let mut previous = eval(previous_time)?;
         let mut delta = final_time - previous_time;
 
         let mut points = Vec::new();
@@ -105,7 +130,7 @@ impl PlotPoints {
 
                 let extrapolated_position =
                     previous.position + previous.velocity * delta.as_seconds();
-                current = eval(t);
+                current = eval(t)?;
 
                 // Prevent catastrophic retries
                 if estimated_tan2_error.is_some_and(|error| error == 0.0) {
@@ -127,9 +152,10 @@ impl PlotPoints {
             points.push((t, current.position.as_vec3()));
         }
 
-        Self(points)
+        Ok(Self(points))
     }
 
+    #[inline]
     pub fn evaluate(&self, at: Epoch) -> Option<Vec3> {
         match self.binary_search_by(|(t, _)| t.cmp(&at)) {
             Ok(i) => Some(self[i].1),
@@ -143,6 +169,7 @@ impl PlotPoints {
         }
     }
 
+    #[inline]
     pub fn ray_distances<'a>(
         &'a self,
         ray: &'a RayCast3d,
@@ -288,7 +315,7 @@ pub fn compute_plot_points_parallel(
                 });
             });
 
-            if let Some(relative) = plot.get_relative_trajectory(source.entity(), &query_trajectory)
+            if let Some(relative) = source.get_relative_trajectory(&query_trajectory)
                 && plot.enabled
                 && !relative.is_empty()
                 && plot.start < plot.end
@@ -300,34 +327,33 @@ pub fn compute_plot_points_parallel(
                 let start = relative.start();
                 let end = relative.end();
 
-                let min = plot.start.clamp(start, end);
-                let max = plot.end.clamp(start, end);
+                let current = sim_time.current();
+                let current_clamped = current.clamp(relative.start(), relative.end());
 
-                let current = sim_time.current().clamp(relative.start(), relative.end());
+                let mut min = plot.start.clamp(start, end);
+                let mut max = plot.end.clamp(start, end);
+                match plot.bound {
+                    PlotBound::Start => min = min.max(current_clamped),
+                    PlotBound::End => max = max.min(current_clamped),
+                    PlotBound::None => (),
+                }
+
                 let translation = StateVector::from_position(
                     relative
                         .reference
-                        .map(|r| r.position(current).unwrap())
+                        .map(|r| r.position(current.clamp(r.start(), r.end())).unwrap())
                         .unwrap_or_default(),
                 );
 
-                // TODO: Make new fallible
                 let new_points = PlotPoints::new(
-                    |at| {
-                        to_global_sv(
-                            relative
-                                .state_vector(at)
-                                .unwrap_or_else(|| panic!("No state vector at {at}"))
-                                + translation,
-                            *root,
-                        )
-                    },
+                    |t| Some(to_global_sv(relative.state_vector(t)? + translation, *root)),
                     min,
                     max,
                     camera_transform,
                     tan2_angular_resolution,
                     plot.max_points,
-                );
+                )
+                .unwrap_or_else(|t| panic!("Failed to evaluate state vector at {t}"));
 
                 commands.command_scope(move |mut commands| {
                     commands.queue(move |world: &mut World| {
@@ -364,7 +390,7 @@ fn plot_manoeuvres(
                 continue;
             }
 
-            for burn in flight_plan.burns.iter() {
+            for burn in flight_plan.burns.values() {
                 if !burn.enabled || burn.overlaps {
                     continue;
                 }
@@ -434,7 +460,7 @@ fn plot_knots(
         if !plot.enabled {
             continue;
         }
-        let Ok(trajectory) = query_trajectory.get(source.entity()) else {
+        let Ok(trajectory) = query_trajectory.get(source.entity) else {
             continue;
         };
         let traj = trajectory.read();

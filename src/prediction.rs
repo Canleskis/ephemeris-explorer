@@ -1,261 +1,172 @@
 //! Asynchronous trajectory prediction plugin.
 //!
 //! This module provides the [`PredictionPlugin`], designed to compute trajectories on a background
-//! thread and stream incremental results back to the Bevy ECS. This allows for progressive
-//! visualisation without blocking the main thread.
+//! thread and stream incremental results back to the Bevy ECS allowing progressive visualisation
+//! without blocking the main thread.
 //!
-//! The prediction process requires attaching a [`PredictionContext<P>`] component to a "controller"
-//! entity. This context groups a set of target entities (each with a [`Trajectory`] component) and
-//! a specific [`Propagator`] `P` that defines the prediction logic.
+//! The prediction process requires attaching a [`PredictionContext<T>`] component to a "controller"
+//! entity. This context groups a [`Propagator`] `P` that defines the prediction logic for a set of
+//! target `entities`.
 //!
-//! To start a prediction, a [`ComputePredictionEvent<P>`] is sent. This triggers the creation of an
-//! asynchronous task for each matching [`PredictionContext<P>`].
+//! To start a prediction, a [`ComputePrediction<T>`] event is sent. This triggers the creation of
+//! an asynchronous task for the matching [`PredictionContext<T>`].
 //!
-//! Inside the task, a [`Propagation`] is created and used to extend the trajectories. Periodically,
-//! it sends a snapshot of its current state back to the main thread (the periodicity is as
-//! frequently as possible, but is also determined by the `min_steps` parameter).
+//! Inside the task, the given [`Propagation`] is used to extend the trajectories. Periodically,
+//! snapshots are sent back to the main thread (the periodicity is as frequently as possible, but is
+//! also determined by the `min_steps` parameter).
 //!
 //! On the main thread, the [`process_prediction_data`] system receives these snapshots and merges
-//! them into the corresponding [`Trajectory`] components in the Bevy ECS.
+//! them into the corresponding components in the Bevy ECS.
 //!
-//! While a prediction is running, a [`PredictionTracker<P>`] component is added to the controller
+//! While a prediction is running, a [`PredictionTracker<T>`] component is added to the controller
 //! entity, allowing for progress monitoring and control (e.g., pausing). Target entities are also
-//! marked with a [`Predicting<P>`] component.
+//! marked with a [`Predicting<T>`].
 
-use bevy::math::DVec3;
+use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
-use deepsize::DeepSizeOf;
 use ephemeris::{
-    BoundedTrajectory, BranchingPropagator, DirectionalPropagator, EvaluateTrajectory,
-    IncrementalPropagator, Iterable, Propagation, Propagator, StateVector,
+    BranchingPropagator, DirectionalPropagator, IncrementalPropagator, Iterable, Propagation,
+    Propagator,
 };
 use ftime::{Duration, Epoch};
 
-pub trait PredictionTrajectory:
-    BoundedTrajectory + EvaluateTrajectory<Vector = DVec3> + DeepSizeOf + Send + Sync
-{
-    fn as_any(&self) -> &dyn std::any::Any;
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+/// Context linking a propagator to the ECS trajectories it propagates (via entities).
+#[derive(Clone, Component)]
+pub struct PredictionContext<T: PropagationTarget> {
+    pub entities: Vec<Entity>,
+    pub propagator: T::Propagator,
 }
 
-impl<T> PredictionTrajectory for T
-where
-    T: BoundedTrajectory + EvaluateTrajectory<Vector = DVec3> + DeepSizeOf + Send + Sync + 'static,
-{
+impl<T: PropagationTarget> PredictionContext<T> {
     #[inline]
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    #[inline]
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    pub fn new(entities: Vec<Entity>, propagator: T::Propagator) -> Self {
+        Self {
+            entities,
+            propagator,
+        }
     }
 }
 
-#[derive(Component, Clone)]
-pub struct Trajectory(std::sync::Arc<std::sync::RwLock<dyn PredictionTrajectory>>);
+/// Computes the prediction for the given duration.
+///
+/// If `overwrite` is `false`, the previous prediction will be discarded. Otherwise, the propagator
+/// will only discard the part of the previous prediction that overlaps with the new prediction.
+#[derive(Clone, Copy, Event)]
+pub struct ComputePrediction<T: PropagationTarget> {
+    pub propagator: T::Propagator,
+    pub duration: Duration,
+    pub synchronisation: Synchronisation,
+    pub overwrite: bool,
+}
 
-impl Trajectory {
+impl<T: PropagationTarget> ComputePrediction<T> {
     #[inline]
-    pub fn new<T: PredictionTrajectory + 'static>(trajectory: T) -> Self {
-        Self(std::sync::Arc::new(std::sync::RwLock::new(trajectory)))
+    pub fn new(
+        propagator: T::Propagator,
+        duration: Duration,
+        synchronisation: Synchronisation,
+        overwrite: bool,
+    ) -> Self {
+        Self {
+            propagator,
+            duration,
+            synchronisation,
+            overwrite,
+        }
     }
 
     #[inline]
-    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, dyn PredictionTrajectory> {
-        self.0.read().unwrap()
-    }
-
-    #[inline]
-    pub fn write(&mut self, f: impl FnOnce(&mut dyn PredictionTrajectory)) {
-        f(&mut *self.0.write().unwrap())
-    }
-
-    #[inline]
-    pub fn heap_size(&self) -> usize {
-        self.read().deep_size_of()
+    pub fn extend(
+        propagator: T::Propagator,
+        duration: Duration,
+        synchronisation: Synchronisation,
+    ) -> Self {
+        Self::new(propagator, duration, synchronisation, false)
     }
 }
 
-impl BoundedTrajectory for Trajectory {
-    #[inline]
-    fn start(&self) -> Epoch {
-        self.read().start()
-    }
+pub trait PropagationTarget: QueryData + 'static {
+    type Propagator: PredictionPropagator;
 
-    #[inline]
-    fn end(&self) -> Epoch {
-        self.read().end()
-    }
+    fn merge(item: &mut Self::Item<'_>, propagated: <Self::Propagator as Propagator>::Trajectory);
 
-    #[inline]
-    fn contains(&self, time: Epoch) -> bool {
-        self.read().contains(time)
-    }
-
-    #[inline]
-    fn len(&self) -> usize {
-        self.read().len()
-    }
-}
-
-impl EvaluateTrajectory for Trajectory {
-    type Vector = DVec3;
-
-    #[inline]
-    fn position(&self, at: Epoch) -> Option<Self::Vector> {
-        self.read().position(at)
-    }
-
-    #[inline]
-    fn state_vector(&self, at: Epoch) -> Option<StateVector<Self::Vector>> {
-        self.read().state_vector(at)
-    }
+    fn overwrite(
+        item: &mut Self::Item<'_>,
+        propagated: <Self::Propagator as Propagator>::Trajectory,
+    );
 }
 
 /// Trait for propagators that can be used for predictions.
 pub trait PredictionPropagator:
-    Propagator<Trajectories: IntoIterator<Item = Self::Trajectory> + Send>
+    Propagator<Trajectories: IntoIterator<Item = Self::Trajectory> + Send + Sync>
     + IncrementalPropagator<Error: std::error::Error>
     + DirectionalPropagator
     + BranchingPropagator
     + Clone
     + Send
     + Sync
-    + 'static
 {
 }
 impl<P> PredictionPropagator for P where
-    P: Propagator<Trajectories: IntoIterator<Item = P::Trajectory> + Send>
+    P: Propagator<Trajectories: IntoIterator<Item = P::Trajectory> + Send + Sync>
         + IncrementalPropagator<Error: std::error::Error>
         + DirectionalPropagator
         + BranchingPropagator
         + Clone
         + Send
         + Sync
-        + 'static
 {
 }
 
-/// Context linking a propagator to the ECS trajectories it propagates (via entities).
-#[derive(Clone, Component)]
-pub struct PredictionContext<P> {
-    pub entities: Vec<Entity>,
-    pub propagator: P,
-}
-
-impl<P> PredictionContext<P> {
-    #[inline]
-    pub fn new(entities: Vec<Entity>, propagator: P) -> Self {
-        Self {
-            entities,
-            propagator,
-        }
-    }
-
-    #[inline]
-    pub fn to_propagation(&self) -> Propagation<P>
-    where
-        P: BranchingPropagator + Clone,
-    {
-        Propagation::new(self.propagator.clone())
-    }
-}
-
-/// Computes the prediction for the given duration for all target entities associated with matching
-/// [`PredictionContext<P>`] components.
-///
-/// If `EXTEND` is `false`, the previous prediction will be discarded. Otherwise, the propagator
-/// will only discard the part of the previous prediction that overlaps with the new prediction.
-#[derive(Event)]
-pub struct ComputePredictionEvent<P, const EXTEND: bool = false> {
-    pub entities: bevy::ecs::entity::EntityHashSet,
-    pub duration: Duration,
-    /// Minimum propagation steps between streamed snapshots.
-    pub min_steps: usize,
-    pub _marker: std::marker::PhantomData<P>,
-}
-
-impl<P, const EXTEND: bool> Clone for ComputePredictionEvent<P, EXTEND> {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self {
-            entities: self.entities.clone(),
-            ..*self
-        }
-    }
-}
-
-impl<P, const EXTEND: bool> ComputePredictionEvent<P, EXTEND> {
-    #[inline]
-    pub fn all(duration: Duration, min_steps: usize) -> Self {
-        Self::with([], duration, min_steps)
-    }
-
-    #[inline]
-    pub fn with<I>(entities: I, duration: Duration, min_steps: usize) -> Self
-    where
-        I: IntoIterator<Item = Entity>,
-    {
-        Self {
-            entities: entities.into_iter().collect(),
-            duration,
-            min_steps,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-pub type ExtendPredictionEvent<P> = ComputePredictionEvent<P, true>;
-
-/// Marker component to indicate that an entity's trajectory prediction is being computed.
+/// Component to indicate how many predictions are currently being computed for an entity.
 #[derive(Clone, Copy, Component)]
-pub struct Predicting;
+pub struct Predicting(pub usize);
 
 /// Marker component to indicate that an entity's trajectory prediction of type `P` is being
 /// computed.
 #[derive(Clone, Copy, Component)]
-pub struct PredictingWith<P>(std::marker::PhantomData<P>);
+pub struct PredictingWith<T>(std::marker::PhantomData<fn(T)>);
 
-pub struct PredictionPlugin<P>(std::marker::PhantomData<fn(P)>);
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
+pub struct PredictionSystems;
 
-impl<P> Default for PredictionPlugin<P> {
+pub struct PredictionPlugin<T>(std::marker::PhantomData<fn(T)>);
+
+impl<T> Default for PredictionPlugin<T> {
     #[inline]
     fn default() -> Self {
         Self(std::marker::PhantomData)
     }
 }
 
-impl<P> Plugin for PredictionPlugin<P>
+impl<T> Plugin for PredictionPlugin<T>
 where
-    P: PredictionPropagator,
+    T: PropagationTarget + 'static,
 {
     fn build(&self, app: &mut App) {
-        app.add_event::<ExtendPredictionEvent<P>>()
-            .add_observer(dispatch_predictions::<P, true>)
-            .add_observer(dispatch_predictions::<P, false>)
-            .add_observer(add_predicting_marker::<P>)
-            .add_observer(remove_predicting_marker::<P>)
-            .add_systems(PreUpdate, process_prediction_data::<P>);
+        app.add_observer(dispatch_predictions::<T>)
+            .add_observer(add_predicting_marker::<T>)
+            .add_observer(remove_predicting_marker::<T>)
+            .add_systems(
+                PreUpdate,
+                process_prediction_data::<T>.in_set(PredictionSystems),
+            );
     }
 }
 
 /// Tracks an asynchronous prediction for a specific propagator of type `P`.
-#[derive(Component, Debug)]
-pub struct PredictionTracker<P: Propagator> {
+#[derive(Component)]
+pub struct PredictionTracker<T: PropagationTarget> {
     thread: bevy::tasks::Task<()>,
-    recver: async_channel::Receiver<Propagation<P>>,
+    recver: async_channel::Receiver<Propagation<T::Propagator>>,
     paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    extend: bool,
+    overwrite: bool,
     current: Epoch,
     start: Epoch,
     target: Epoch,
-    _marker: std::marker::PhantomData<fn(P)>,
 }
 
-impl<P: Propagator> PredictionTracker<P> {
+impl<T: PropagationTarget> PredictionTracker<T> {
     #[inline]
     pub fn progress(&self) -> f32 {
         ((self.current - self.start).as_seconds() / (self.target - self.start).as_seconds())
@@ -282,105 +193,179 @@ impl<P: Propagator> PredictionTracker<P> {
     }
 }
 
-/// Starts async tasks for each targeted [`PredictionContext<P>`] that step the propagator and batch
-/// these steps before sending snapshots (based on `min_steps`).
-fn dispatch_predictions<P, const EXTEND: bool>(
-    trigger: Trigger<ComputePredictionEvent<P, EXTEND>>,
-    mut commands: Commands,
-    query_prediction: Query<(Entity, &PredictionContext<P>)>,
-) where
-    P: PredictionPropagator,
-{
-    let ComputePredictionEvent {
-        entities,
-        duration,
-        min_steps,
-        ..
-    } = trigger.event();
+#[derive(Clone, Copy, Debug)]
+pub enum Synchronisation {
+    Steps {
+        minimum: usize,
+        remaining: usize,
+    },
+    Frequency {
+        time: std::time::Duration,
+        last: std::time::Instant,
+    },
+}
 
-    let duration = *duration;
-    let min_steps = 1.max(*min_steps);
-
-    if duration.is_negative() || duration == Duration::ZERO {
-        bevy::log::error!("invalid duration: {}", duration);
-        return;
-    }
-
-    let predictions: Vec<(Entity, &PredictionContext<P>)> = match entities.len() {
-        0 => query_prediction.iter().collect(),
-        _ => query_prediction.iter_many(entities).collect(),
-    };
-
-    for (entity, prediction) in predictions.iter() {
-        let mut propagation = prediction.to_propagation();
-
-        let current = propagation.time();
-        let mut end = P::offset(current, duration);
-
-        let (sender, recver) = async_channel::bounded(1);
-
-        let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let thread = bevy::tasks::AsyncComputeTaskPool::get().spawn({
-            let paused = std::sync::Arc::downgrade(&paused);
-
-            async move {
-                let name = pretty_type_name::pretty_type_name::<P>();
-                bevy::log::debug!("Computing {name} prediction for {duration}");
-                let t0 = std::time::Instant::now();
-
-                let mut remaining = min_steps;
-                let propagation = &mut propagation;
-                loop {
-                    if let Some(paused) = paused.upgrade() {
-                        while paused.load(std::sync::atomic::Ordering::Relaxed) {
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
-                    }
-
-                    if let Err(err) = propagation.step() {
-                        bevy::log::warn!("{name}: {err}");
-                        end = propagation.time();
-                    }
-                    remaining = remaining.saturating_sub(1);
-
-                    let reached_end = propagation.reached(end);
-                    if (remaining == 0 && sender.is_empty()) || reached_end || sender.is_closed() {
-                        let completed = std::mem::replace(propagation, propagation.branch());
-                        if sender.send(completed).await.is_err() || reached_end {
-                            break;
-                        }
-                        remaining = min_steps;
-                    }
-                }
-
-                bevy::log::debug!("Stopping {} prediction thread", name);
-                bevy::log::debug!("Computing {} prediction took: {:?}", name, t0.elapsed());
-            }
-        });
-
-        commands.entity(*entity).insert(PredictionTracker::<P> {
-            thread,
-            recver,
-            paused,
-            current,
-            extend: EXTEND,
-            start: current,
-            target: end,
-            _marker: std::marker::PhantomData,
-        });
+impl Default for Synchronisation {
+    #[inline]
+    fn default() -> Self {
+        Self::steps(1000)
     }
 }
 
-/// Inserts streamed propagator snapshots back into the ECS.
-pub fn process_prediction_data<P>(
-    mut commands: Commands,
-    mut query_prediction: Query<(Entity, &mut PredictionContext<P>, &mut PredictionTracker<P>)>,
-    mut query_trajectory: Query<&mut Trajectory>,
+impl Synchronisation {
+    #[inline]
+    pub fn steps(minimum: usize) -> Self {
+        let minimum = 1.max(minimum);
+        Self::Steps {
+            minimum,
+            remaining: minimum,
+        }
+    }
+
+    #[inline]
+    pub fn frequency(time: std::time::Duration) -> Self {
+        Self::Frequency {
+            time,
+            last: std::time::Instant::now(),
+        }
+    }
+
+    #[inline]
+    pub fn hertz(hertz: usize) -> Self {
+        Self::frequency(std::time::Duration::from_secs_f64(1.0 / hertz as f64))
+    }
+
+    #[inline]
+    pub fn increment(&mut self) {
+        match self {
+            Synchronisation::Steps { remaining, .. } => *remaining = remaining.saturating_sub(1),
+            Synchronisation::Frequency { .. } => (),
+        }
+    }
+
+    #[inline]
+    pub fn is_ready(&self) -> bool {
+        match self {
+            Synchronisation::Steps { remaining, .. } => *remaining == 0,
+            Synchronisation::Frequency { time, last } => last.elapsed() >= *time,
+        }
+    }
+
+    #[inline]
+    pub fn reset(&mut self) {
+        match self {
+            Synchronisation::Steps { remaining, minimum } => *remaining = *minimum,
+            Synchronisation::Frequency { last, .. } => *last = std::time::Instant::now(),
+        }
+    }
+}
+
+/// Steps the propagator and batches these steps before sending snapshots (based on `min_steps`).
+#[inline]
+async fn prediction_task<P>(
+    mut propagation: Propagation<P>,
+    mut end: Epoch,
+    mut sync: Synchronisation,
+    sender: async_channel::Sender<Propagation<P>>,
+    paused: std::sync::Weak<std::sync::atomic::AtomicBool>,
 ) where
     P: PredictionPropagator,
 {
+    let name = pretty_type_name::pretty_type_name::<P>();
+    bevy::log::debug!("Computing {name} prediction until {end}");
+    let t0 = std::time::Instant::now();
+
+    let propagation = &mut propagation;
+    loop {
+        if let Some(paused) = paused.upgrade() {
+            while paused.load(std::sync::atomic::Ordering::Relaxed) {
+                bevy::tasks::futures_lite::future::yield_now().await;
+            }
+        }
+
+        if let Err(err) = propagation.step() {
+            bevy::log::warn!("{name}: {err}");
+            end = propagation.time();
+        }
+        sync.increment();
+
+        let reached_end = propagation.has_reached(end);
+        if (sync.is_ready() && sender.is_empty()) || reached_end || sender.is_closed() {
+            let completed = std::mem::replace(propagation, propagation.branch());
+            if sender.send(completed).await.is_err() || reached_end {
+                break;
+            }
+            sync.reset();
+        }
+    }
+
+    bevy::log::info!("Computing {name} prediction took: {:?}", t0.elapsed());
+}
+
+/// Starts async task for the targeted [`PredictionContext<P>`].
+fn dispatch_predictions<T>(trigger: Trigger<ComputePrediction<T>>, mut commands: Commands)
+where
+    T: PropagationTarget,
+{
+    let name = pretty_type_name::pretty_type_name::<T::Propagator>();
+
+    let ComputePrediction {
+        propagator,
+        duration,
+        synchronisation,
+        overwrite,
+        ..
+    } = trigger.event();
+    let entity = trigger.target();
+
+    let duration = *duration;
+
+    if duration.is_negative() || duration == Duration::ZERO {
+        bevy::log::error!("Cancelled {name} prediction: invalid duration: {duration}");
+        return;
+    }
+
+    bevy::log::debug!("Starting {name} prediction for {duration}",);
+
+    let propagation = Propagation::new(propagator.clone());
+
+    let current = propagation.time();
+    let end = T::Propagator::offset(current, duration);
+
+    let (sender, recver) = async_channel::bounded(1);
+
+    let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let thread = bevy::tasks::AsyncComputeTaskPool::get().spawn(prediction_task::<T::Propagator>(
+        propagation,
+        end,
+        *synchronisation,
+        sender,
+        std::sync::Arc::downgrade(&paused),
+    ));
+
+    commands.entity(entity).insert(PredictionTracker::<T> {
+        thread,
+        recver,
+        paused,
+        current,
+        overwrite: *overwrite,
+        start: current,
+        target: end,
+    });
+}
+
+/// Inserts streamed propagator snapshots back into the ECS.
+pub fn process_prediction_data<T>(
+    mut commands: Commands,
+    mut query_prediction: Query<(Entity, &mut PredictionContext<T>, &mut PredictionTracker<T>)>,
+    mut query_trajectory: Query<T>,
+) where
+    T: PropagationTarget,
+{
     for (entity, mut prediction, mut tracker) in &mut query_prediction {
-        let is_finished = tracker.thread.is_finished();
+        if tracker.thread.is_finished() {
+            commands.entity(entity).remove::<PredictionTracker<T>>();
+        }
 
         if let Ok(recv) = tracker.recver.try_recv() {
             tracker.current = recv.time();
@@ -389,56 +374,61 @@ pub fn process_prediction_data<P>(
             prediction.propagator = propagator;
             for (entity, recv_trajectory) in prediction.entities.iter().zip(trajectories) {
                 if let Ok(mut trajectory) = query_trajectory.get_mut(*entity) {
-                    trajectory.write(|trajectory| {
-                        if tracker.extend {
-                            P::merge(
-                                trajectory.as_any_mut().downcast_mut().unwrap(),
-                                recv_trajectory,
-                            )
-                        } else {
-                            *trajectory.as_any_mut().downcast_mut().unwrap() = recv_trajectory;
-                            tracker.extend = true;
-                        }
-                    });
+                    if tracker.overwrite {
+                        T::overwrite(&mut trajectory, recv_trajectory);
+                        tracker.overwrite = false;
+                    } else {
+                        T::merge(&mut trajectory, recv_trajectory);
+                    }
                 }
             }
-        }
-
-        if is_finished {
-            commands.entity(entity).remove::<PredictionTracker<P>>();
         }
     }
 }
 
-fn add_predicting_marker<P>(
-    trigger: Trigger<OnInsert, PredictionTracker<P>>,
+fn add_predicting_marker<T>(
+    trigger: Trigger<OnAdd, PredictionTracker<T>>,
     mut commands: Commands,
-    query_prediction: Query<&PredictionContext<P>>,
+    query_prediction: Query<&PredictionContext<T>>,
 ) where
-    P: PredictionPropagator,
+    T: PropagationTarget,
 {
     if let Ok(prediction) = query_prediction.get(trigger.target()) {
         for entity in &prediction.entities {
             if let Ok(mut entity) = commands.get_entity(*entity) {
-                entity.insert(Predicting);
-                entity.insert(PredictingWith::<P>(std::marker::PhantomData));
+                entity.queue(|mut entity: EntityWorldMut| {
+                    entity.insert(PredictingWith::<T>(Default::default()));
+                    match entity.get_mut::<Predicting>().as_deref_mut() {
+                        Some(Predicting(count)) => *count += 1,
+                        None => {
+                            entity.insert(Predicting(1));
+                        }
+                    }
+                });
             }
         }
     };
 }
 
-fn remove_predicting_marker<P>(
-    trigger: Trigger<OnRemove, PredictionTracker<P>>,
+fn remove_predicting_marker<T>(
+    trigger: Trigger<OnRemove, PredictionTracker<T>>,
     mut commands: Commands,
-    query_prediction: Query<&PredictionContext<P>>,
+    query_prediction: Query<&PredictionContext<T>>,
 ) where
-    P: PredictionPropagator,
+    T: PropagationTarget,
 {
     if let Ok(prediction) = query_prediction.get(trigger.target()) {
         for entity in &prediction.entities {
             if let Ok(mut entity) = commands.get_entity(*entity) {
-                entity.remove::<Predicting>();
-                entity.remove::<PredictingWith<P>>();
+                entity.queue(|mut entity: EntityWorldMut| {
+                    entity.remove::<PredictingWith<T>>();
+                    if let Some(Predicting(count)) = entity.get_mut::<Predicting>().as_deref_mut() {
+                        *count -= 1;
+                        if *count == 0 {
+                            entity.remove::<Predicting>();
+                        }
+                    }
+                });
             }
         }
     };

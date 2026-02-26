@@ -164,6 +164,7 @@ pub trait Problem:
 
     type ODE;
 }
+
 impl<P> Problem for &mut P
 where
     P: Problem,

@@ -1,7 +1,7 @@
 use crate::{
     MainState,
+    dynamics::Trajectory,
     floating_origin::{BigSpace, Grid, GridCell},
-    prediction::Trajectory,
     rotation::Rotating,
 };
 
@@ -60,6 +60,9 @@ impl SimulationTime {
     }
 }
 
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
+pub struct SimulationTimeSet;
+
 #[derive(Default)]
 pub struct SimulationTimePlugin;
 
@@ -70,6 +73,7 @@ impl Plugin for SimulationTimePlugin {
             (sync_bounds, flow_time)
                 .chain()
                 .after(bevy::time::TimeSystem)
+                .in_set(SimulationTimeSet)
                 .run_if(in_state(MainState::Running)),
         )
         .add_systems(
@@ -80,16 +84,8 @@ impl Plugin for SimulationTimePlugin {
 }
 
 fn sync_bounds(mut sim_time: ResMut<SimulationTime>, query: Query<&Trajectory, With<BoundsTime>>) {
-    sim_time.start = query
-        .iter()
-        .map(|e| e.start())
-        .max()
-        .unwrap_or_else(|| Epoch::from_offset(Duration::MIN));
-    sim_time.end = query
-        .iter()
-        .map(|e| e.end())
-        .min()
-        .unwrap_or_else(|| Epoch::from_offset(Duration::MAX));
+    sim_time.start = query.iter().map(|e| e.start()).max().unwrap_or(Epoch::MIN);
+    sim_time.end = query.iter().map(|e| e.end()).min().unwrap_or(Epoch::MAX);
 }
 
 fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {

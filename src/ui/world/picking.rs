@@ -79,7 +79,10 @@ pub struct PointerHit(pub Entity, pub HitData);
 pub struct PointerHover(pub Option<PointerHit>);
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
-pub struct PickingSet;
+pub enum PickingSet {
+    Backend,
+    Hover,
+}
 
 pub struct CustomPickingPlugin;
 
@@ -89,7 +92,13 @@ impl Plugin for CustomPickingPlugin {
             .init_resource::<PointerHover>()
             .configure_sets(
                 PostUpdate,
-                PickingSet.run_if(not(crate::camera::using_pointer)),
+                (
+                    PickingSet::Backend.run_if(not(
+                        crate::camera::using_pointer.or(crate::ui::world_ui_using_pointer)
+                    )),
+                    PickingSet::Hover,
+                )
+                    .chain(),
             )
             .add_systems(
                 PostUpdate,
@@ -103,11 +112,10 @@ impl Plugin for CustomPickingPlugin {
                         // forcing all systems that need to run after picking to run after egui's
                         // end pass.
                         egui_picking,
-                    ),
-                    update_pointer_hover,
-                )
-                    .chain()
-                    .in_set(PickingSet),
+                    )
+                        .in_set(PickingSet::Backend),
+                    update_pointer_hover.in_set(PickingSet::Hover),
+                ),
             );
     }
 }
@@ -194,8 +202,8 @@ pub fn trajectory_picking(
 
 pub const MANOEUVRE_SIZE: f32 = 2e-2;
 
-// We don't have a `ManoeuvrePlotPoint` component like we have for trajectories, so we recompute the
-// manoeuvre positions here.
+// We don't have a component for world positions like we have for trajectories with `PlotPoints`, so
+// we recompute the manoeuvre positions here.
 pub fn manoeuvre_picking(
     ray_map: Res<RayMap>,
     query: Query<(&FlightPlan, &PlotSourceOf)>,
@@ -210,7 +218,7 @@ pub fn manoeuvre_picking(
     let Some((_, ray)) = ray_map.iter().next() else {
         return;
     };
-    let ray = bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+    let ray = &bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
 
     if let Some((entity, data)) = query
         .iter()
@@ -218,8 +226,7 @@ pub fn manoeuvre_picking(
             query_plot
                 .iter_many(source_of.iter())
                 .flat_map(|(entity, points)| {
-                    let ray = &ray;
-                    flight_plan.burns.iter().filter_map(move |burn| {
+                    flight_plan.burns.iter().filter_map(move |(&id, burn)| {
                         if !burn.enabled || burn.overlaps {
                             return None;
                         }
@@ -230,7 +237,7 @@ pub fn manoeuvre_picking(
                             world_pos,
                             r * perspective.fov * MANOEUVRE_SIZE / 2.0,
                         ))
-                        .map(|depth| (entity, ManoeuvreHit { id: burn.id, depth }))
+                        .map(|depth| (entity, ManoeuvreHit { id, depth }))
                     })
                 })
         })

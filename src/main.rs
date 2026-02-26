@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 pub mod analysis;
 pub mod auto_extend;
@@ -20,7 +20,7 @@ use crate::{
     analysis::OrbitalAnalysisPlugin,
     auto_extend::AutoExtendPlugin,
     camera::CameraPlugin,
-    dynamics::{Backward, Forward, NBodyPropagator, SpacecraftPropagator},
+    dynamics::{Backward, CelestialTrajectory, Forward, SpacecraftTrajectory},
     flight_plan::FlightPlanPlugin,
     floating_origin::{BigSpaceCorePlugin, BigSpacePropagationPlugin, BigSpaceValidationPlugin},
     load::{LoadSolarSystemEvent, LoadSystemPlugin},
@@ -95,12 +95,12 @@ impl PluginGroup for MainPlugins {
             .add(OrbitalAnalysisPlugin)
             .add(UiPlugin)
             .add(LoadSystemPlugin)
+            .add(PredictionPlugin::<CelestialTrajectory<Forward>>::default())
+            .add(PredictionPlugin::<CelestialTrajectory<Backward>>::default())
+            .add(PredictionPlugin::<SpacecraftTrajectory>::default())
+            .add(AutoExtendPlugin::<CelestialTrajectory<Forward>>::default())
+            .add(AutoExtendPlugin::<CelestialTrajectory<Backward>>::default())
             .add(FlightPlanPlugin)
-            .add(PredictionPlugin::<NBodyPropagator<Forward>>::default())
-            .add(PredictionPlugin::<NBodyPropagator<Backward>>::default())
-            .add(PredictionPlugin::<SpacecraftPropagator>::default())
-            .add(AutoExtendPlugin::<NBodyPropagator<Forward>>::default())
-            .add(AutoExtendPlugin::<NBodyPropagator<Backward>>::default())
     }
 }
 
@@ -111,7 +111,11 @@ fn main() {
             #[cfg(debug_assertions)]
             bevy::remote::RemotePlugin::default(),
             #[cfg(debug_assertions)]
-            bevy::remote::http::RemoteHttpPlugin::default(),
+            bevy::remote::http::RemoteHttpPlugin::default().with_headers(
+                bevy::remote::http::Headers::new()
+                    .insert("Access-Control-Allow-Origin", "https://doup.github.io")
+                    .insert("Access-Control-Allow-Headers", "Content-Type"),
+            ),
         ))
         .init_state::<MainState>()
         .enable_state_scoped_entities::<MainState>()

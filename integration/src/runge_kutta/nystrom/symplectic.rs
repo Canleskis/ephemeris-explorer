@@ -39,7 +39,9 @@ pub struct SRKN<C, V> {
     _phantom: std::marker::PhantomData<C>,
 }
 
-impl<C, V> RKState for SRKN<C, V> {
+impl<C: SRKNCoefficients, V> RKState for SRKN<C, V> {
+    const ORDER: u16 = C::A.len() as u16;
+
     #[inline]
     fn step_count(&self) -> u32 {
         self.i

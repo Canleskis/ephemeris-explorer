@@ -1,21 +1,23 @@
 use crate::{
     MainState,
     prediction::{
-        ExtendPredictionEvent, PredictionContext, PredictionPropagator, PredictionTracker,
+        ComputePrediction, PredictionContext, PredictionPropagator, PredictionTracker,
+        PropagationTarget, Synchronisation,
     },
-    simulation::SimulationTime,
+    simulation::{SimulationTime, SimulationTimeSet},
 };
 
 use bevy::prelude::*;
+use ephemeris::DirectionalPropagator;
 use ftime::Duration;
 
 #[derive(Resource)]
-pub struct AutoExtendSettings<P> {
+pub struct AutoExtendSettings<T> {
     pub enabled: bool,
-    pub _marker: std::marker::PhantomData<fn(P)>,
+    pub _marker: std::marker::PhantomData<fn(T)>,
 }
 
-impl<P> Default for AutoExtendSettings<P> {
+impl<T> Default for AutoExtendSettings<T> {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -24,7 +26,7 @@ impl<P> Default for AutoExtendSettings<P> {
     }
 }
 
-impl<P> AutoExtendSettings<P> {
+impl<T> AutoExtendSettings<T> {
     pub fn new(enabled: bool) -> Self {
         Self {
             enabled,
@@ -33,58 +35,66 @@ impl<P> AutoExtendSettings<P> {
     }
 }
 
-pub struct AutoExtendPlugin<P>(pub std::marker::PhantomData<fn(P)>);
+pub struct AutoExtendPlugin<T>(pub std::marker::PhantomData<fn(T)>);
 
-impl<P> Default for AutoExtendPlugin<P> {
+impl<T> Default for AutoExtendPlugin<T> {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl<P> Plugin for AutoExtendPlugin<P>
+impl<T> Plugin for AutoExtendPlugin<T>
 where
-    P: PredictionPropagator,
+    T: PropagationTarget + 'static,
+    T::Propagator: PredictionPropagator,
 {
     fn build(&self, app: &mut App) {
-        app.insert_resource(AutoExtendSettings::<P>::new(true))
+        app.insert_resource(AutoExtendSettings::<T>::new(true))
             .add_systems(
                 First,
-                auto_extend::<P>
-                    .after(bevy::time::TimeSystem)
+                auto_extend::<T>
+                    .after(SimulationTimeSet)
                     .run_if(in_state(MainState::Running)),
             );
     }
 }
 
-fn auto_extend<P>(
+#[allow(clippy::type_complexity)]
+fn auto_extend<T>(
     mut commands: Commands,
-    time: Res<Time>,
     sim_time: Res<SimulationTime>,
-    auto_extend: Res<AutoExtendSettings<P>>,
-    query_tracker: Query<Option<&PredictionTracker<P>>, With<PredictionContext<P>>>,
+    auto_extend: Res<AutoExtendSettings<T>>,
+    query_tracker: Query<(Entity, &PredictionContext<T>, Has<PredictionTracker<T>>)>,
+    mut last_time_scale: Local<f64>,
 ) where
-    P: PredictionPropagator,
+    T: PropagationTarget,
 {
     if !auto_extend.enabled || sim_time.paused {
         return;
     }
 
-    let boundary = std::cmp::max_by(sim_time.start(), sim_time.end(), P::cmp);
-    let delta = Duration::from_seconds(1.0) * sim_time.time_scale;
+    let look_ahead = Duration::from_seconds(2.0);
+    let delta = look_ahead * sim_time.time_scale;
+
     let next = sim_time.current() + delta;
-    if !P::cmp(&next, &boundary).is_ge() {
+    let boundary = std::cmp::max_by(sim_time.start(), sim_time.end(), T::Propagator::cmp);
+    if T::Propagator::cmp(&next, &boundary).is_lt() {
         return;
     }
-    // TODO: Make this configurable or based on the system somehow.
-    let min = Duration::from_days(1.0);
-    let duration = (delta.abs() * time.delta_secs_f64()).max(min);
 
-    for tracker in query_tracker.iter() {
-        if tracker.is_some() {
-            return;
+    for (entity, prediction, has_tracker) in query_tracker.iter() {
+        if has_tracker && *last_time_scale == sim_time.time_scale {
+            continue;
         }
 
-        // Synchronisation every 100 step.
-        commands.trigger(ExtendPredictionEvent::<P>::all(duration, 100));
+        commands.trigger_targets(
+            ComputePrediction::<T>::extend(
+                prediction.propagator.clone(),
+                delta.abs(),
+                Synchronisation::hertz(200),
+            ),
+            entity,
+        );
     }
+    *last_time_scale = sim_time.time_scale;
 }

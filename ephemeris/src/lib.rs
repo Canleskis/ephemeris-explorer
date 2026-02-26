@@ -70,7 +70,7 @@ pub trait DirectionalPropagator: Propagator {
 
     /// Returns true if the trajectory has reached the specified epoch.
     #[inline]
-    fn reached(trajectory: &Self::Trajectory, time: Epoch) -> bool {
+    fn has_reached(trajectory: &Self::Trajectory, time: Epoch) -> bool {
         Self::cmp(&Self::boundary(trajectory), &time).is_ge()
     }
 }
@@ -80,10 +80,6 @@ pub trait BranchingPropagator: Propagator {
     /// Returns a new collection of trajectory that form an independent branch starting at the
     /// propagator's current boundary.
     fn branch(&self) -> Self::Trajectories;
-
-    /// Merges the `rhs` trajectory into the `lhs` one. If the two trajectories overlap in time,
-    /// the rhs trajectory overwrites the overlapping portion in the lhs trajectory.
-    fn merge(lhs: &mut Self::Trajectory, rhs: Self::Trajectory);
 }
 
 pub trait IncrementalPropagator: Propagator {
@@ -98,17 +94,10 @@ pub trait IncrementalPropagator: Propagator {
     where
         Self: DirectionalPropagator,
     {
-        if trajs.iter().all(|traj| Self::reached(traj, to)) {
-            return Ok(());
-        }
-
-        loop {
+        while !trajs.iter().all(|traj| Self::has_reached(traj, to)) {
             self.step(trajs)?;
-
-            if trajs.iter().all(|traj| Self::reached(traj, to)) {
-                return Ok(());
-            }
         }
+        Ok(())
     }
 }
 
@@ -131,6 +120,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct Propagation<P: Propagator> {
     propagator: P,
     trajectories: P::Trajectories,
@@ -171,11 +161,13 @@ impl<P: Propagator> Propagation<P> {
     }
 
     #[inline]
-    pub fn reached(&self, time: Epoch) -> bool
+    pub fn has_reached(&self, time: Epoch) -> bool
     where
         P: DirectionalPropagator,
     {
-        self.trajectories.iter().all(|traj| P::reached(traj, time))
+        self.trajectories
+            .iter()
+            .all(|traj| P::has_reached(traj, time))
     }
 
     /// Returns the current time of the propagation.

@@ -6,28 +6,29 @@ pub use ui::*;
 
 use crate::{
     MainState,
-    analysis::{SphereOfInfluence, under_soi},
+    analysis::{OrbitPlotConfig, OrbitTarget, OrbitalPlotReference, SoiTransitionsAnalysis},
     camera::{BigSpaceCameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
-        Backward, Bodies, CubicHermiteSplineSamples, DEFAULT_PARAMS, Forward, LeastSquaresFit, Mu,
-        NBodyPropagator, SpacecraftPropagator, StateVector, UniformSpline,
+        Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, DEFAULT_ADAPTIVE_PARAMS,
+        Forward, GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator,
+        SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, SphereOfInfluence, StateVector,
+        Timeline, Trajectory, UniformSpline,
     },
-    flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
+    flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
-    hierarchy::AddOrbit,
-    prediction::{ExtendPredictionEvent, PredictionContext, PredictionTracker, Trajectory},
+    prediction::{ComputePrediction, PredictionContext, PredictionTracker, Synchronisation},
     rotation::Rotating,
     selection::Selectable,
     simulation::{BoundsTime, SimulationTime},
     starlight::Star,
-    ui::{Labelled, PlotConfig, PlotSource},
+    ui::{Id, Labelled, PlotBound},
 };
 
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::core_pipeline::Skybox;
 use bevy::platform::hash::FixedState;
 use bevy::prelude::*;
-use ephemeris::{DIV, EvaluateTrajectory};
+use ephemeris::DIV;
 use ftime::Duration;
 use std::hash::{BuildHasher, Hash};
 
@@ -295,6 +296,7 @@ fn spawn_loaded_bodies(
 
     #[expect(clippy::type_complexity)]
     fn spawn_from_hierarchy(
+        id: &mut u64,
         depth: usize,
         root: Entity,
         commands: &mut Commands,
@@ -334,14 +336,14 @@ fn spawn_loaded_bodies(
                         *parent_mu,
                     )
                 })
-                .unwrap_or(SphereOfInfluence::Fixed(f64::INFINITY));
+                .unwrap_or(SphereOfInfluence::INFINITY);
 
             let sample_period = eph_settings.dt * settings.count as f64;
 
-            let mut entity = commands.spawn_empty();
-            entity.insert((
+            let mut entity = commands.spawn((
                 // No state scope needed as it is always a child of the root.
                 Name::new(name.clone()),
+                Id(*id),
                 BigGridBundle {
                     transform: Transform::from_translation(body.position.as_vec3()),
                     ..default()
@@ -366,7 +368,19 @@ fn spawn_loaded_bodies(
                     sample_period * DIV as f64,
                 )),
                 BoundsTime,
+                FlightPlanDependency,
                 soi,
+                SoiTransitionsAnalysis::Static,
+                OrbitPlotConfig {
+                    enabled: depth <= 1,
+                    start: solar_system.epoch - Duration::from_years(1000.0),
+                    end: solar_system.epoch + Duration::from_years(1000.0),
+                    color: visual.orbit.color,
+                    bound: PlotBound::Start,
+                    resolution: 0.5,
+                    max_points_per_segment: 10_000,
+                    reference: OrbitalPlotReference::Primary,
+                },
             ));
 
             spawn_data.push((
@@ -382,20 +396,6 @@ fn spawn_loaded_bodies(
             ));
 
             entity.with_children(|cmds| {
-                cmds.spawn((
-                    Name::new(name.to_string()),
-                    PlotSource(cmds.target_entity()),
-                    PlotConfig {
-                        enabled: depth <= 1,
-                        color: visual.orbit.color,
-                        start: solar_system.epoch - Duration::from_years(1000.0),
-                        end: solar_system.epoch + Duration::from_years(1000.0),
-                        threshold: 0.5,
-                        max_points: 10_000,
-                        reference: Some(parent),
-                    },
-                ));
-
                 let mut child = cmds.spawn((
                     Transform::from_scale(visual.radii.as_vec3() / radius),
                     Mesh3d(visual.mesh.clone()),
@@ -422,12 +422,11 @@ fn spawn_loaded_bodies(
 
             let entity = entity.id();
             commands.entity(root).add_child(entity);
-            commands.queue(AddOrbit {
-                orbiting: parent,
-                body: entity,
-            });
+
+            *id += 1;
 
             errors.extend(spawn_from_hierarchy(
+                id,
                 depth + 1,
                 root,
                 commands,
@@ -437,13 +436,14 @@ fn spawn_loaded_bodies(
                 eph_settings,
                 solar_system,
                 visuals,
-            ))
+            ));
         }
 
         errors
     }
 
     let spawn_errors = spawn_from_hierarchy(
+        &mut 0,
         0,
         root,
         &mut commands,
@@ -469,11 +469,11 @@ fn spawn_loaded_bodies(
     let (entities, states): (Vec<_>, Vec<_>) = spawn_data.into_iter().collect();
     let dt = settings.dt;
     commands.entity(root).insert((
-        PredictionContext::new(
+        PredictionContext::<CelestialTrajectory<Forward>>::new(
             entities.clone(),
             NBodyPropagator::new(Forward::new(dt), system.epoch, states.clone()),
         ),
-        PredictionContext::new(
+        PredictionContext::<CelestialTrajectory<Backward>>::new(
             entities,
             NBodyPropagator::new(Backward::new(dt), system.epoch, states),
         ),
@@ -510,8 +510,8 @@ fn spawn_ship(
     trigger: Trigger<SpawnShip>,
     mut commands: Commands,
     query_name: Query<(Entity, &Name), With<Mu>>,
-    query_soi: Query<(Entity, &Trajectory, &SphereOfInfluence)>,
-    query_context: Query<(Entity, &Trajectory, &Mu)>,
+    query_context: Query<(Entity, &Trajectory, &Mu, &SphereOfInfluence)>,
+    query_ids: Query<&Id>,
     root: Single<Entity, With<SystemRoot>>,
     mut errors: ResMut<LoadingErrors>,
 ) {
@@ -519,16 +519,9 @@ fn spawn_ship(
 
     let radius = 0.01;
 
-    let parent = under_soi(
-        query_soi.iter().filter_map(|(entity, trajectory, soi)| {
-            Some((entity, trajectory.position(ship.start)?, soi))
-        }),
-        ship.position,
-    );
-
     let context = query_context
         .iter()
-        .map(|(e, traj, mu)| (e, (traj.clone(), *mu)))
+        .map(|(e, traj, mu, soi)| (e, GravitationalBody::new(traj.clone(), *mu, *soi)))
         .collect();
 
     let mut entity = match trigger.target() {
@@ -576,62 +569,63 @@ fn spawn_ship(
         ((hash >> 4) & 0xFF) as f32 / 255.0,
         ((hash >> 8) & 0xFF) as f32 / 255.0,
         1.0,
-    );
+    )
+    .into();
 
-    entity
-        .insert((
-            // No state scope needed as it is always a child of the root.
-            Name::new(ship.name.to_string()),
-            BigGridBundle {
-                transform: Transform::from_translation(ship.position.as_vec3()),
-                ..default()
-            },
-            Selectable { radius, index: 99 },
-            CanFollow {
-                min_distance: radius as f64 * 1.05,
-                max_distance: 5e10,
-            },
-            Labelled {
-                font: TextFont::from_font_size(12.0),
-                colour: TextColor(Color::WHITE),
-                offset: Vec2::new(0.0, radius) * 1.1,
-                index: 99,
-            },
-            Trajectory::new(CubicHermiteSplineSamples::new(
+    entity.insert((
+        // No state scope needed as this is always a child of the root.
+        Name::new(ship.name.to_string()),
+        Id(query_ids.iter().map(|id| id.0 + 1).max().unwrap_or(0)),
+        BigGridBundle {
+            transform: Transform::from_translation(ship.position.as_vec3()),
+            ..default()
+        },
+        Selectable { radius, index: 99 },
+        CanFollow {
+            min_distance: radius as f64 * 1.05,
+            max_distance: 5e10,
+        },
+        Labelled {
+            font: TextFont::from_font_size(12.0),
+            colour: TextColor(Color::WHITE),
+            offset: Vec2::new(0.0, radius) * 1.1,
+            index: 99,
+        },
+        Trajectory::new(CubicHermiteSplineSamples::new(
+            ship.start,
+            ship.position,
+            ship.velocity,
+        )),
+        PredictionContext::<SpacecraftTrajectory>::new(
+            vec![id],
+            SpacecraftPropagatorSoiDetection::new(
                 ship.start,
-                ship.position,
-                ship.velocity,
-            )),
-            PredictionContext::new(
-                vec![id],
-                SpacecraftPropagator::new(
-                    ship.start,
-                    StateVector::new(ship.position, ship.velocity),
-                    DEFAULT_PARAMS,
-                    Bodies(context),
-                ),
+                StateVector::new(ship.position, ship.velocity),
+                DEFAULT_ADAPTIVE_PARAMS,
+                Bodies(context),
+                Timeline::default(),
             ),
-            FlightPlan::new(ship.end, DEFAULT_PARAMS.n_max as usize, mapped_burns),
-        ))
-        .with_child((
-            Name::new(ship.name.to_string()),
-            PlotSource(id),
-            PlotConfig {
-                enabled: true,
-                color: color.into(),
-                start: ship.start - Duration::from_years(1000.0),
-                end: ship.start + Duration::from_years(1000.0),
-                threshold: 0.5,
-                max_points: 10_000,
-                reference: parent,
-            },
-        ));
+        ),
+        FlightPlan::new(
+            ship.end,
+            DEFAULT_ADAPTIVE_PARAMS.n_max as usize,
+            mapped_burns,
+        ),
+        SoiTransitionsAnalysis::Dynamic,
+        OrbitPlotConfig {
+            enabled: true,
+            start: ship.start - Duration::from_years(1000.0),
+            end: ship.start + Duration::from_years(1000.0),
+            color,
+            bound: PlotBound::Start,
+            resolution: 0.5,
+            max_points_per_segment: 10_000,
+            reference: OrbitalPlotReference::Primary,
+        },
+        OrbitTarget(None),
+    ));
 
     commands.entity(*root).add_child(id);
-    commands.queue(AddOrbit {
-        orbiting: parent.unwrap_or(*root),
-        body: id,
-    });
 
     commands.trigger_targets(FlightPlanChanged, id);
 }
@@ -643,7 +637,7 @@ fn setup_camera(
 ) {
     commands
         .spawn((
-            // No state scope needed as it is always a child of the root.
+            // No state scope needed as this is always a child of the root.
             bevy_egui::PrimaryEguiContext,
             Camera3d::default(),
             Camera {
@@ -685,24 +679,46 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
     }
 }
 
-fn compute_ephemerides_bodies(mut commands: Commands) {
-    let min_steps = 1000;
+#[expect(clippy::type_complexity)]
+fn compute_ephemerides_bodies(
+    mut commands: Commands,
+    root: Single<
+        (
+            Entity,
+            &PredictionContext<CelestialTrajectory<Forward>>,
+            &PredictionContext<CelestialTrajectory<Backward>>,
+        ),
+        With<SystemRoot>,
+    >,
+) {
+    let (root, forward, backward) = *root;
 
-    commands.trigger(ExtendPredictionEvent::<NBodyPropagator<Forward>>::all(
-        Duration::from_days(365.0 * 2.0),
-        min_steps,
-    ));
-    commands.trigger(ExtendPredictionEvent::<NBodyPropagator<Backward>>::all(
-        Duration::from_days(365.0 * 2.0),
-        min_steps,
-    ));
+    let duration = Duration::from_days(365.0 * 2.0);
+    let synchronisation = Synchronisation::hertz(100);
+
+    commands.trigger_targets(
+        ComputePrediction::<CelestialTrajectory<Forward>>::extend(
+            forward.propagator.clone(),
+            duration,
+            synchronisation,
+        ),
+        root,
+    );
+    commands.trigger_targets(
+        ComputePrediction::<CelestialTrajectory<Backward>>::extend(
+            backward.propagator.clone(),
+            duration,
+            synchronisation,
+        ),
+        root,
+    );
 }
 
 fn ephemerides_bodies_progress(
     mut state: ResMut<NextState<SpawnStage>>,
     mut query: Query<&mut Text, With<LoadingText>>,
-    forward: Query<&PredictionTracker<NBodyPropagator<Forward>>>,
-    backward: Query<&PredictionTracker<NBodyPropagator<Backward>>>,
+    forward: Query<&PredictionTracker<CelestialTrajectory<Forward>>>,
+    backward: Query<&PredictionTracker<CelestialTrajectory<Backward>>>,
 ) {
     if forward.is_empty() && backward.is_empty() {
         state.set(SpawnStage::Ships);
@@ -727,10 +743,11 @@ fn ephemerides_ships_progress(
     mut state: ResMut<NextState<MainState>>,
     mut query: Query<&mut Text, With<LoadingText>>,
     query_tracker: Query<
-        Option<&PredictionTracker<SpacecraftPropagator>>,
-        With<PredictionContext<SpacecraftPropagator>>,
+        Option<&PredictionTracker<SpacecraftTrajectory>>,
+        With<PredictionContext<SpacecraftTrajectory>>,
     >,
 ) {
+    state.set(MainState::Running);
     if query_tracker.iter().all(|t| t.is_none()) {
         state.set(MainState::Running);
         return;
