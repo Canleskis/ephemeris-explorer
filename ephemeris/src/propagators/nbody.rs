@@ -129,7 +129,7 @@ impl<const LEN: usize, V, A> Interpolation<LEN, V, A> {
     }
 }
 
-pub trait Direction {
+pub trait PropagationDirection {
     fn signed_delta(&self) -> Duration;
 }
 
@@ -145,7 +145,7 @@ impl Forward {
     }
 }
 
-impl Direction for Forward {
+impl PropagationDirection for Forward {
     #[inline]
     fn signed_delta(&self) -> Duration {
         self.delta
@@ -164,7 +164,7 @@ impl Backward {
     }
 }
 
-impl Direction for Backward {
+impl PropagationDirection for Backward {
     #[inline]
     fn signed_delta(&self) -> Duration {
         -self.delta
@@ -230,7 +230,7 @@ where
     ) -> Self
     where
         V: Copy,
-        D: Direction,
+        D: PropagationDirection,
         M: NewMethod<FixedMethodParams<f64>>,
         M::Integrator: Integrator<NBodyProblem<V>>,
     {
@@ -316,12 +316,11 @@ where
     }
 }
 
+
 impl<D, V, M, A> Propagator for NBodyPropagator<D, V, M, A>
 where
     M: Method<NBodyProblem<V>>,
 {
-    type Trajectory = <Self::Trajectories as Iterable>::Item;
-
     type Trajectories = Vec<UniformSpline<V>>;
 }
 
@@ -365,8 +364,8 @@ where
     }
 
     #[inline]
-    fn boundary(trajectory: &Self::Trajectory) -> Epoch {
-        trajectory.end()
+    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
+        trajectory.iter().map(|traj| traj.end())
     }
 }
 
@@ -431,8 +430,8 @@ where
     }
 
     #[inline]
-    fn boundary(trajectory: &Self::Trajectory) -> Epoch {
-        trajectory.start()
+    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
+        trajectory.iter().map(|traj| traj.start())
     }
 }
 

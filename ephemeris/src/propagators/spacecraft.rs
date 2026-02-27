@@ -499,8 +499,6 @@ impl<C, V, F, M> Propagator for SpacecraftPropagator<C, V, F, M>
 where
     M: Method<SpacecraftProblem<C, V, F>>,
 {
-    type Trajectory = <Self::Trajectories as Iterable>::Item;
-
     type Trajectories = [CubicHermiteSplineSamples<V>; 1];
 }
 
@@ -551,8 +549,8 @@ where
     }
 
     #[inline]
-    fn boundary(trajectory: &Self::Trajectory) -> Epoch {
-        trajectory.end()
+    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
+        trajectory.iter().map(|traj| traj.end())
     }
 }
 

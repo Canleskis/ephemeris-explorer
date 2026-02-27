@@ -51,9 +51,7 @@ where
 }
 
 pub trait Propagator {
-    type Trajectory;
-
-    type Trajectories: Iterable<Item = Self::Trajectory>;
+    type Trajectories;
 }
 
 /// Trait for propagators that have a defined direction. Useful for tracking the progress of the
@@ -65,13 +63,13 @@ pub trait DirectionalPropagator: Propagator {
     /// Offsets an epoch in time relative to the propagator's direction.
     fn offset(time: Epoch, duration: Duration) -> Epoch;
 
-    /// Returns the time boundary of the trajectory from which propagation will continue.
-    fn boundary(trajectory: &Self::Trajectory) -> Epoch;
+    /// Returns the time boundary of the trajectories.
+    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_;
 
-    /// Returns true if the trajectory has reached the specified epoch.
+    /// Returns true if the trajectories have reached the specified epoch.
     #[inline]
-    fn has_reached(trajectory: &Self::Trajectory, time: Epoch) -> bool {
-        Self::cmp(&Self::boundary(trajectory), &time).is_ge()
+    fn has_reached(trajectory: &Self::Trajectories, time: Epoch) -> bool {
+        Self::boundaries(trajectory).all(|boundary| Self::cmp(&boundary, &time).is_ge())
     }
 }
 
@@ -94,7 +92,7 @@ pub trait IncrementalPropagator: Propagator {
     where
         Self: DirectionalPropagator,
     {
-        while !trajs.iter().all(|traj| Self::has_reached(traj, to)) {
+        while !Self::has_reached(trajs, to) {
             self.step(trajs)?;
         }
         Ok(())
@@ -157,7 +155,7 @@ impl<P: Propagator> Propagation<P> {
     where
         P: DirectionalPropagator,
     {
-        self.trajectories.iter().map(P::boundary)
+        P::boundaries(&self.trajectories)
     }
 
     #[inline]
@@ -165,9 +163,7 @@ impl<P: Propagator> Propagation<P> {
     where
         P: DirectionalPropagator,
     {
-        self.trajectories
-            .iter()
-            .all(|traj| P::has_reached(traj, time))
+        P::has_reached(&self.trajectories, time)
     }
 
     /// Returns the current time of the propagation.

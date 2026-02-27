@@ -672,8 +672,6 @@ impl SpacecraftPropagatorSoiDetection {
 }
 
 impl Propagator for SpacecraftPropagatorSoiDetection {
-    type Trajectory = (CubicHermiteSplineSamples, SoiTransitions);
-
     type Trajectories = [(CubicHermiteSplineSamples, SoiTransitions); 1];
 }
 
@@ -714,8 +712,8 @@ impl DirectionalPropagator for SpacecraftPropagatorSoiDetection {
     }
 
     #[inline]
-    fn boundary((trajectory, _): &Self::Trajectory) -> Epoch {
-        SpacecraftPropagator::boundary(trajectory)
+    fn boundaries([(trajectory, _)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
+        SpacecraftPropagator::boundaries(std::array::from_ref(trajectory))
     }
 }
 
@@ -742,7 +740,7 @@ impl PropagationTarget for SpacecraftTrajectory {
     #[inline]
     fn merge(
         item: &mut Self::Item<'_>,
-        (trajectory, transitions): <Self::Propagator as Propagator>::Trajectory,
+        (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
         item.transitions.clear_after(trajectory.start());
         item.transitions.extend(transitions);
@@ -757,7 +755,7 @@ impl PropagationTarget for SpacecraftTrajectory {
     #[inline]
     fn overwrite(
         item: &mut Self::Item<'_>,
-        (trajectory, transitions): <Self::Propagator as Propagator>::Trajectory,
+        (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
         *item.transitions = transitions;
         item.trajectory.write(|t| {

@@ -30,6 +30,20 @@ use ephemeris::{
 };
 use ftime::{Duration, Epoch};
 
+pub trait PropagationTarget: QueryData + 'static {
+    type Propagator: PredictionPropagator;
+
+    fn merge(
+        item: &mut Self::Item<'_>,
+        propagated: <Self::Propagator as PredictionPropagator>::Trajectory,
+    );
+
+    fn overwrite(
+        item: &mut Self::Item<'_>,
+        propagated: <Self::Propagator as PredictionPropagator>::Trajectory,
+    );
+}
+
 /// Context linking a propagator to the ECS trajectories it propagates (via entities).
 #[derive(Clone, Component)]
 pub struct PredictionContext<T: PropagationTarget> {
@@ -85,17 +99,6 @@ impl<T: PropagationTarget> ComputePrediction<T> {
     }
 }
 
-pub trait PropagationTarget: QueryData + 'static {
-    type Propagator: PredictionPropagator;
-
-    fn merge(item: &mut Self::Item<'_>, propagated: <Self::Propagator as Propagator>::Trajectory);
-
-    fn overwrite(
-        item: &mut Self::Item<'_>,
-        propagated: <Self::Propagator as Propagator>::Trajectory,
-    );
-}
-
 /// Trait for propagators that can be used for predictions.
 pub trait PredictionPropagator:
     Propagator<Trajectories: IntoIterator<Item = Self::Trajectory> + Send + Sync>
@@ -106,16 +109,19 @@ pub trait PredictionPropagator:
     + Send
     + Sync
 {
+    type Trajectory;
 }
-impl<P> PredictionPropagator for P where
-    P: Propagator<Trajectories: IntoIterator<Item = P::Trajectory> + Send + Sync>
+impl<P> PredictionPropagator for P
+where
+    P: Propagator<Trajectories: IntoIterator + Send + Sync>
         + IncrementalPropagator<Error: std::error::Error>
         + DirectionalPropagator
         + BranchingPropagator
         + Clone
         + Send
-        + Sync
+        + Sync,
 {
+    type Trajectory = <Self::Trajectories as IntoIterator>::Item;
 }
 
 /// Component to indicate how many predictions are currently being computed for an entity.
@@ -141,7 +147,7 @@ impl<T> Default for PredictionPlugin<T> {
 
 impl<T> Plugin for PredictionPlugin<T>
 where
-    T: PropagationTarget + 'static,
+    T: PropagationTarget,
 {
     fn build(&self, app: &mut App) {
         app.add_observer(dispatch_predictions::<T>)
@@ -316,11 +322,8 @@ where
         overwrite,
         ..
     } = trigger.event();
-    let entity = trigger.target();
 
-    let duration = *duration;
-
-    if duration.is_negative() || duration == Duration::ZERO {
+    if duration.is_negative() || *duration == Duration::ZERO {
         bevy::log::error!("Cancelled {name} prediction: invalid duration: {duration}");
         return;
     }
@@ -328,13 +331,12 @@ where
     bevy::log::debug!("Starting {name} prediction for {duration}",);
 
     let propagation = Propagation::new(propagator.clone());
-
     let current = propagation.time();
-    let end = T::Propagator::offset(current, duration);
+    let end = T::Propagator::offset(current, *duration);
 
     let (sender, recver) = async_channel::bounded(1);
-
     let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     let thread = bevy::tasks::AsyncComputeTaskPool::get().spawn(prediction_task::<T::Propagator>(
         propagation,
         end,
@@ -343,22 +345,24 @@ where
         std::sync::Arc::downgrade(&paused),
     ));
 
-    commands.entity(entity).insert(PredictionTracker::<T> {
-        thread,
-        recver,
-        paused,
-        current,
-        overwrite: *overwrite,
-        start: current,
-        target: end,
-    });
+    commands
+        .entity(trigger.target())
+        .insert(PredictionTracker::<T> {
+            thread,
+            recver,
+            paused,
+            current,
+            overwrite: *overwrite,
+            start: current,
+            target: end,
+        });
 }
 
 /// Inserts streamed propagator snapshots back into the ECS.
 pub fn process_prediction_data<T>(
     mut commands: Commands,
     mut query_prediction: Query<(Entity, &mut PredictionContext<T>, &mut PredictionTracker<T>)>,
-    mut query_trajectory: Query<T>,
+    mut query_target: Query<T>,
 ) where
     T: PropagationTarget,
 {
@@ -373,14 +377,16 @@ pub fn process_prediction_data<T>(
 
             prediction.propagator = propagator;
             for (entity, recv_trajectory) in prediction.entities.iter().zip(trajectories) {
-                if let Ok(mut trajectory) = query_trajectory.get_mut(*entity) {
+                if let Ok(mut target) = query_target.get_mut(*entity) {
                     if tracker.overwrite {
-                        T::overwrite(&mut trajectory, recv_trajectory);
-                        tracker.overwrite = false;
+                        T::overwrite(&mut target, recv_trajectory);
                     } else {
-                        T::merge(&mut trajectory, recv_trajectory);
+                        T::merge(&mut target, recv_trajectory);
                     }
                 }
+            }
+            if tracker.overwrite {
+                tracker.overwrite = false;
             }
         }
     }
