@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    dynamics::{CubicHermiteSplineSamples, Trajectory, UniformSpline},
+    dynamics::{CubicHermiteSplineSamples, SoiTransitions, Trajectory, UniformSpline},
     flight_plan::FlightPlan,
     floating_origin::{BigSpace, Grid},
     simulation::SimulationTime,
@@ -256,8 +256,9 @@ impl Plugin for PlotPlugin {
                     compute_plot_points_parallel,
                     (
                         // plot_knots,
-                        plot_trajectories,
+                        plot_lines,
                         plot_manoeuvres,
+                        plot_transitions,
                     ),
                 )
                     .chain()
@@ -366,7 +367,7 @@ pub fn compute_plot_points_parallel(
         });
 }
 
-fn plot_trajectories(mut gizmos: Gizmos, query: Query<(&PlotPoints, &PlotConfig)>) {
+fn plot_lines(mut gizmos: Gizmos, query: Query<(&PlotPoints, &PlotConfig)>) {
     for (points, plot) in query.iter() {
         gizmos.linestrip(points.iter().map(|(_, p)| *p), plot.color);
     }
@@ -376,7 +377,7 @@ fn plot_manoeuvres(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&Trajectory, &FlightPlan, &PlotSourceOf)>,
     query_trajectory: Query<&Trajectory>,
-    query_plot: Query<(&PlotPoints, &PlotConfig)>,
+    query_plot: Query<&PlotPoints>,
     root: Single<&Grid, With<BigSpace>>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
@@ -385,39 +386,64 @@ fn plot_manoeuvres(
     };
 
     for (trajectory, flight_plan, source_of) in query.iter() {
-        for (points, plot) in query_plot.iter_many(source_of.iter()) {
-            if !plot.enabled || trajectory.is_empty() {
+        for burn in flight_plan.burns.values() {
+            if !burn.enabled || burn.overlaps {
                 continue;
             }
-
-            for burn in flight_plan.burns.values() {
-                if !burn.enabled || burn.overlaps {
-                    continue;
-                }
-
-                let Some(sv) = trajectory.state_vector(burn.start) else {
-                    continue;
-                };
-                let Some(transform) = burn
-                    .try_reference_frame(&query_trajectory)
-                    .expect("invalid burn reference entity")
-                    .transform(burn.start, &sv)
-                else {
-                    continue;
-                };
-                let prograde = transform_vector3(transform.0.x_axis, *root);
-                let radial = transform_vector3(transform.0.y_axis, *root);
-                let normal = transform_vector3(transform.0.z_axis, *root);
-
+            for points in query_plot.iter_many(source_of.iter()) {
                 let Some(world_pos) = points.evaluate(burn.start) else {
                     continue;
                 };
-                let size = camera_transform.translation().distance(world_pos)
-                    * perspective.fov
-                    * MANOEUVRE_SIZE;
-                gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
-                gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
-                gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);
+
+                if let Some(transform) = trajectory.state_vector(burn.start).and_then(|sv| {
+                    burn.try_reference_frame(&query_trajectory)
+                        .expect("invalid burn reference entity")
+                        .transform(burn.start, &sv)
+                }) {
+                    let prograde = transform_vector3(transform.0.x_axis, *root);
+                    let radial = transform_vector3(transform.0.y_axis, *root);
+                    let normal = transform_vector3(transform.0.z_axis, *root);
+
+                    let size = camera_transform.translation().distance(world_pos)
+                        * perspective.fov
+                        * MANOEUVRE_SIZE;
+                        
+                    gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
+                    gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
+                    gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);
+                }
+            }
+        }
+    }
+}
+
+fn plot_transitions(
+    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
+    query: Query<(&SoiTransitions, &PlotSourceOf)>,
+    query_plot: Query<(&PlotPoints, &PlotConfig)>,
+    camera: Single<(&GlobalTransform, &Projection)>,
+) {
+    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
+
+    for (transitions, source_of) in query.iter() {
+        for &(time, _entity) in transitions.iter() {
+            for (points, plot) in query_plot.iter_many(source_of.iter()) {
+                let Some(world_pos) = points.evaluate(time) else {
+                    continue;
+                };
+
+                let direction = camera_transform.translation() - world_pos;
+                let size = direction.length() * perspective.fov * 0.006;
+
+                gizmos.circle(
+                    Transform::from_translation(world_pos)
+                        .looking_to(direction, camera_transform.up())
+                        .to_isometry(),
+                    size,
+                    plot.color,
+                );
             }
         }
     }

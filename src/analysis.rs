@@ -1,5 +1,6 @@
 use crate::{
     MainState,
+    camera::CameraProximityIgnore,
     dynamics::{SoiTransitions, SphereOfInfluence, Trajectory, find_soi},
     load::SystemRoot,
     prediction::PredictionSystems,
@@ -359,34 +360,35 @@ fn spawn_drawn_soi(
         commands
             .entity(entity)
             .insert(IsSoiDrawn)
-            .with_child((
-                Mesh3d(meshes.add(Sphere::new(soi.radius as f32).mesh().uv(144, 72))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::linear_rgba(0.08, 0.13, 0.28, -0.135),
-                    alpha_mode: AlphaMode::Add,
-                    unlit: true,
-                    ..default()
-                })),
-                bevy::pbr::NotShadowReceiver,
-                bevy::pbr::NotShadowCaster,
-                // Doesn't take any space.
-                bevy::render::primitives::Aabb::default(),
-                DrawnSoiOf(entity),
-            ))
-            .with_child((
-                Mesh3d(meshes.add(Sphere::new(soi.radius as f32 * 1.002).mesh().uv(144, 72))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::linear_rgba(0.08, 0.13, 0.28, 0.15),
-                    alpha_mode: AlphaMode::Add,
-                    unlit: true,
-                    ..default()
-                })),
-                bevy::pbr::NotShadowReceiver,
-                bevy::pbr::NotShadowCaster,
-                // Doesn't take any space.
-                bevy::render::primitives::Aabb::default(),
-                DrawnSoiOf(entity),
-            ));
+            .with_children(|cmds| {
+                cmds.spawn((
+                    Mesh3d(meshes.add(Sphere::new(soi.radius as f32).mesh().uv(144, 72))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::linear_rgba(0.08, 0.13, 0.28, -0.135),
+                        alpha_mode: AlphaMode::Add,
+                        unlit: true,
+                        ..default()
+                    })),
+                    bevy::pbr::NotShadowReceiver,
+                    bevy::pbr::NotShadowCaster,
+                    CameraProximityIgnore,
+                    DrawnSoiOf(entity),
+                ));
+
+                cmds.spawn((
+                    Mesh3d(meshes.add(Sphere::new(soi.radius as f32 * 1.002).mesh().uv(144, 72))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::linear_rgba(0.08, 0.13, 0.28, 0.15),
+                        alpha_mode: AlphaMode::Add,
+                        unlit: true,
+                        ..default()
+                    })),
+                    bevy::pbr::NotShadowReceiver,
+                    bevy::pbr::NotShadowCaster,
+                    CameraProximityIgnore,
+                    DrawnSoiOf(entity),
+                ));
+            });
     }
 }
 

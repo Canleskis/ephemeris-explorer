@@ -1,6 +1,7 @@
 use crate::{
     MainState,
     analysis::PlotSegment,
+    camera::CameraProximityIgnore,
     dynamics::Trajectory,
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     load::SystemRoot,
@@ -30,19 +31,19 @@ impl Plugin for TooltipPlugin {
         app.init_resource::<TrajectoryTooltips>()
             .init_resource::<ManoeuvreTooltip>()
             .init_resource::<ManoeuvreDraggingOptions>()
+            .add_systems(Startup, prepare_tooltip_caches)
             .add_systems(
                 PostUpdate,
                 (
                     manoeuvre_dragging.before(bevy_egui::EguiPostUpdateSet::EndPass),
                     (
-                        update_manoeuvre_tooltip,
-                        update_trajectory_tooltips,
+                        (update_trajectory_tooltips, update_manoeuvre_tooltip).chain(),
                         update_separation_tooltip,
                     )
                         .before(bevy_egui::EguiPostUpdateSet::EndPass),
                     (
-                        manoeuvre_tooltip_gizmo,
-                        trajectory_tooltips_gizmo.after(bevy_egui::EguiPostUpdateSet::EndPass),
+                        manoeuvre_tooltip_world,
+                        trajectory_tooltips_world.after(bevy_egui::EguiPostUpdateSet::EndPass),
                         separation_tooltip_gizmo,
                     ),
                 )
@@ -65,6 +66,7 @@ impl Plugin for TooltipPlugin {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ManoeuvreTooltipData {
     pub id: uuid::Uuid,
+    time: Epoch,
     pub position: Option<Vec3>,
     pub dragging: bool,
 }
@@ -95,6 +97,7 @@ fn update_manoeuvre_tooltip(
                 source.entity,
                 ManoeuvreTooltipData {
                     id: data.id,
+                    time: Epoch::default(), // placeholder value
                     position: None,
                     dragging: false,
                 },
@@ -109,40 +112,27 @@ fn update_manoeuvre_tooltip(
             .ok()
             .and_then(|flight_plan| flight_plan.burns.get(&tooltip_data.id))
     {
+        tooltip_data.time = burn.start;
         tooltip_data.position = points.evaluate(burn.start);
     }
 }
 
-fn manoeuvre_tooltip_gizmo(
+fn manoeuvre_tooltip_world(
     tooltip: Res<ManoeuvreTooltip>,
-    camera: Single<(&GlobalTransform, &Projection)>,
-    query_plot: Query<&PlotConfig>,
-    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
+    mut trajectory_tooltips: ResMut<TrajectoryTooltips>,
 ) {
     let Some((tooltip_entity, _, tooltip_data)) = tooltip.0 else {
         return;
     };
 
-    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
-        unreachable!("Camera is not perspective");
-    };
-
-    let Ok(plot) = query_plot.get(tooltip_entity) else {
-        return;
-    };
-
-    if let Some(position) = tooltip_data.position {
-        let direction = camera_transform.translation() - position;
-        let size = direction.length() * perspective.fov * PICK_THRESHOLD;
-
-        gizmos.circle(
-            Transform::from_translation(position)
-                .looking_to(direction, Vec3::Y)
-                .to_isometry(),
-            size,
-            plot.color,
-        );
-    }
+    trajectory_tooltips.hovered = TrajectoryTooltip(Some((
+        tooltip_entity,
+        vec![TrajectoryTooltipData {
+            time: tooltip_data.time,
+            position: tooltip_data.position,
+            selected: false,
+        }],
+    )));
 }
 
 fn manoeuvre_tooltip_window(
@@ -274,7 +264,7 @@ fn manoeuvre_dragging(
 pub struct TrajectoryTooltipData {
     pub time: Epoch,
     pub position: Option<Vec3>,
-    pub highlight: bool,
+    pub selected: bool,
 }
 
 #[derive(Clone, Default)]
@@ -322,7 +312,7 @@ fn update_trajectory_tooltips(
                 .map(|hit| TrajectoryTooltipData {
                     time: hit.time,
                     position: None,
-                    highlight: false,
+                    selected: false,
                 })
                 .collect(),
         ));
@@ -345,38 +335,118 @@ fn update_trajectory_tooltips(
     }
 }
 
-fn trajectory_tooltips_gizmo(
+#[derive(Clone, Copy, Debug, Component)]
+struct TooltipMesh;
+
+pub struct TrajectoryTooltipCache {
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    entities: Vec<Entity>,
+}
+
+#[derive(Component)]
+#[require(Transform, Visibility)]
+pub struct TrajectoryTooltipCaches {
+    hovered: TrajectoryTooltipCache,
+    pinned: TrajectoryTooltipCache,
+}
+
+impl TrajectoryTooltipCaches {
+    #[inline]
+    fn iter_mut(&mut self) -> impl Iterator<Item = &mut TrajectoryTooltipCache> {
+        [&mut self.hovered, &mut self.pinned].into_iter()
+    }
+}
+
+fn prepare_tooltip_caches(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.spawn(TrajectoryTooltipCaches {
+        hovered: TrajectoryTooltipCache {
+            mesh: meshes.add(Sphere::new(1.0).mesh().uv(16, 8)),
+            material: materials.add(StandardMaterial {
+                unlit: true,
+                ..default()
+            }),
+            entities: Vec::new(),
+        },
+        pinned: TrajectoryTooltipCache {
+            mesh: meshes.add(Sphere::new(1.0).mesh().uv(16, 8)),
+            material: materials.add(StandardMaterial {
+                unlit: true,
+                ..default()
+            }),
+            entities: Vec::new(),
+        },
+    });
+}
+
+// This uses a pool of entities to display (the shared) sphere meshes for the two tooltips.
+fn trajectory_tooltips_world(
     tooltips: Res<TrajectoryTooltips>,
-    camera: Single<(&GlobalTransform, &Projection)>,
+    camera: Single<(&GlobalTransform, &Projection), Without<TooltipMesh>>,
     query_plot: Query<&PlotConfig>,
-    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
+    mut query_sphere: Query<(&mut GlobalTransform, &mut Visibility), With<TooltipMesh>>,
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut caches: Single<(Entity, &mut TrajectoryTooltipCaches)>,
 ) {
     let (camera_transform, Projection::Perspective(perspective)) = *camera else {
         unreachable!("Camera is not perspective");
     };
+    let (cache_entity, caches) = &mut *caches;
+    for (tooltip, cache) in tooltips.iter().zip(caches.iter_mut()) {
+        for entity in cache.entities.iter() {
+            if let Ok((_, mut visibility)) = query_sphere.get_mut(*entity) {
+                *visibility = Visibility::Hidden;
+            }
+        }
 
-    for tooltip in tooltips.iter() {
         let Some((tooltip_entity, tooltip_data)) = &tooltip.0 else {
             continue;
         };
-        let Some(plot) = query_plot.get(*tooltip_entity).ok() else {
+        let Ok(plot) = query_plot.get(*tooltip_entity) else {
             continue;
         };
-        for data in tooltip_data.iter() {
+
+        materials.get_mut(&cache.material).unwrap().base_color = plot.color;
+
+        for (i, data) in tooltip_data.iter().enumerate() {
             let Some(world_position) = data.position else {
                 continue;
             };
-            let direction = camera_transform.translation() - world_position;
-            let size = direction.length() * perspective.fov * PICK_THRESHOLD;
 
-            gizmos.circle(
-                Transform::from_translation(world_position)
-                    .looking_to(direction, Vec3::Y)
-                    .to_isometry(),
-                size,
-                plot.color
-                    .with_alpha(plot.color.alpha() * (data.highlight as usize as f32 + 1.0) / 2.0),
+            let direction = camera_transform.translation() - world_position;
+            let radius = if data.selected { 1.3 } else { 1.0 };
+            let size = direction.length() * perspective.fov * PICK_THRESHOLD * radius;
+            let transform = GlobalTransform::from(
+                Transform::from_translation(world_position).with_scale(Vec3::splat(size)),
             );
+
+            let Some(&entity) = cache.entities.get(i) else {
+                let entity = commands
+                    .spawn((
+                        transform,
+                        Visibility::Visible,
+                        Mesh3d(cache.mesh.clone()),
+                        MeshMaterial3d(cache.material.clone()),
+                        bevy::pbr::NotShadowReceiver,
+                        bevy::pbr::NotShadowCaster,
+                        CameraProximityIgnore,
+                        TooltipMesh,
+                        ChildOf(*cache_entity),
+                    ))
+                    .id();
+                cache.entities.push(entity);
+                continue;
+            };
+
+            if let Ok((mut tooltip_transform, mut visibility)) = query_sphere.get_mut(entity) {
+                *tooltip_transform = transform;
+                *visibility = Visibility::Visible;
+            }
         }
     }
 }
@@ -468,7 +538,7 @@ fn trajectory_tooltips_window(
                         tooltip_data.len(),
                         |ui, range| {
                             for (j, data) in tooltip_data.iter_mut().enumerate() {
-                                data.highlight = if range.contains(&j) {
+                                data.selected = if range.contains(&j) {
                                     ui.scope(|ui| {
                                         let time = data.time;
                                         let is_current = time == sim_time.current();

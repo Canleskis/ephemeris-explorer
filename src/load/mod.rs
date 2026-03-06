@@ -7,7 +7,7 @@ pub use ui::*;
 use crate::{
     MainState,
     analysis::{OrbitPlotConfig, OrbitTarget, OrbitalPlotReference, SoiTransitionsAnalysis},
-    camera::{BigSpaceCameraController, CanFollow, Followed, OrbitCamera},
+    camera::{CameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
         Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, DEFAULT_ADAPTIVE_PARAMS,
         Forward, GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator,
@@ -659,7 +659,7 @@ fn setup_camera(
             FloatingOrigin,
             GridCell::default(),
             OrbitCamera::default().with_distance(5e4),
-            BigSpaceCameraController::default()
+            CameraController::default()
                 .with_speed_bounds([1e-17, 10e35])
                 .with_smoothness(0.0, 0.0)
                 .with_speed(1.0)
