@@ -33,7 +33,7 @@ impl Plugin for LabelsPlugin {
                 )
                     .in_set(WorldUiSet)
                     .run_if(in_state(MainState::Running))
-                    .after(bevy::transform::TransformSystem::TransformPropagate),
+                    .after(TransformSystems::Propagate),
             );
     }
 }
@@ -133,7 +133,7 @@ fn update_labels_position(
 fn update_labels_visibility(
     settings: Res<LabelSettings>,
     query_camera: Query<&GlobalTransform, With<IsDefaultUiCamera>>,
-    query_labels: Query<(&GlobalTransform, &ComputedNode), With<Label>>,
+    query_labels: Query<(&UiGlobalTransform, &ComputedNode), With<Label>>,
     query_labelled: Query<(&GlobalTransform, &Labelled, &LabelEntity)>,
     mut query_visibility: Query<&mut Visibility, With<Label>>,
 ) {
@@ -158,7 +158,7 @@ fn update_labels_visibility(
         };
 
         let distance = pos.translation().distance(camera_transform.translation());
-        let rect = Rect::from_center_size(transform.translation().truncate(), node.size());
+        let rect = Rect::from_center_size(transform.translation, node.size());
 
         let is_overlapped = query_labelled
             .iter()
@@ -177,10 +177,8 @@ fn update_labels_visibility(
                         .translation()
                         .distance(camera_transform.translation());
 
-                    let other_rect = Rect::from_center_size(
-                        other_transform.translation().truncate(),
-                        other_node.size(),
-                    );
+                    let other_rect =
+                        Rect::from_center_size(other_transform.translation, other_node.size());
 
                     *other_vis != Visibility::Hidden
                         && !rect.intersect(other_rect).is_empty()

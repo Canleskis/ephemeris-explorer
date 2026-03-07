@@ -5,8 +5,7 @@ pub mod auto_extend;
 pub mod camera;
 pub mod dynamics;
 pub mod flight_plan;
-pub mod floating_origin;
-pub mod hierarchy;
+pub mod floating_origin; 
 pub mod load;
 pub mod prediction;
 pub mod rotation;
@@ -23,12 +22,12 @@ use crate::{
     dynamics::{Backward, CelestialTrajectory, Forward, SpacecraftTrajectory},
     flight_plan::FlightPlanPlugin,
     floating_origin::{BigSpaceCorePlugin, BigSpacePropagationPlugin, BigSpaceValidationPlugin},
-    load::{LoadSolarSystemEvent, LoadSystemPlugin},
+    load::{LoadSolarSystem, LoadSystemPlugin},
     prediction::PredictionPlugin,
     selection::SelectionPlugin,
     settings::{AppSettings, PersistentSettingsPlugin},
     simulation::SimulationTimePlugin,
-    starlight::StarLightPlugin,
+    starlight::StarlightPlugin,
     ui::UiPlugin,
 };
 
@@ -47,8 +46,8 @@ impl PluginGroup for MainPlugins {
     fn build(self) -> bevy::app::PluginGroupBuilder {
         bevy::app::PluginGroupBuilder::start::<Self>()
             .add(bevy::app::PanicHandlerPlugin)
-            .add(bevy::app::TaskPoolPlugin::default())
             .add(bevy::log::LogPlugin::default())
+            .add(bevy::app::TaskPoolPlugin::default())
             .add(bevy::diagnostic::FrameCountPlugin)
             .add(bevy::time::TimePlugin)
             .add(bevy::diagnostic::DiagnosticsPlugin)
@@ -70,24 +69,31 @@ impl PluginGroup for MainPlugins {
                 unapproved_path_mode: bevy::asset::UnapprovedPathMode::Allow,
                 ..default()
             })
-            .add(bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default())
+            .add(bevy::winit::WinitPlugin::default())
             .add(bevy::render::RenderPlugin::default())
-            .add(bevy::render::texture::ImagePlugin::default())
+            .add(bevy::image::ImagePlugin::default())
+            .add(bevy::mesh::MeshPlugin)
+            .add(bevy::camera::CameraPlugin)
+            .add(bevy::light::LightPlugin)
             .add(bevy::render::pipelined_rendering::PipelinedRenderingPlugin)
             .add(bevy::core_pipeline::CorePipelinePlugin)
+            .add(bevy::post_process::PostProcessPlugin)
+            .add(bevy::anti_alias::AntiAliasPlugin)
             .add(bevy::sprite::SpritePlugin)
+            .add(bevy::sprite_render::SpriteRenderPlugin)
             .add(bevy::text::TextPlugin)
             .add(bevy::pbr::PbrPlugin::default())
             .add(bevy::gizmos::GizmoPlugin)
+            .add(bevy::gizmos_render::GizmoRenderPlugin)
             .add(bevy::state::app::StatesPlugin)
-            .add(bevy::picking::input::PointerInputPlugin::default())
-            .add(bevy::picking::PickingPlugin::default())
+            .add(bevy::picking::input::PointerInputPlugin)
+            .add(bevy::picking::PickingPlugin)
             .add(bevy::picking::InteractionPlugin)
             .add(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
             .add(PersistentSettingsPlugin)
             .add(CameraPlugin)
             .add(SelectionPlugin)
-            .add(StarLightPlugin)
+            .add(StarlightPlugin)
             .add(BigSpaceCorePlugin)
             .add(BigSpacePropagationPlugin)
             .add(BigSpaceValidationPlugin)
@@ -118,7 +124,6 @@ fn main() {
             ),
         ))
         .init_state::<MainState>()
-        .enable_state_scoped_entities::<MainState>()
         .add_systems(Startup, (set_window_icon, load_initial_solar_system))
         .add_systems(First, delay_window_visiblity)
         .add_systems(PreUpdate, toggle_full_screen)
@@ -127,33 +132,36 @@ fn main() {
 
 // Sets the icon on windows and X11
 fn set_window_icon(
-    windows: NonSend<bevy::winit::WinitWindows>,
-    primary_window: Query<Entity, With<bevy::window::PrimaryWindow>>,
-) {
-    let primary_entity = primary_window.single().unwrap();
-    let Some(primary) = windows.get_window(primary_entity) else {
-        return;
-    };
-    let icon_buf = std::io::Cursor::new(include_bytes!(
-        "../build/macos/AppIcon.iconset/icon_256x256.png"
-    ));
-    if let Ok(image) = image::load(icon_buf, image::ImageFormat::Png) {
-        let image = image.into_rgba8();
-        let (width, height) = image.dimensions();
-        let rgba = image.into_raw();
-        let icon = winit::window::Icon::from_rgba(rgba, width, height).unwrap();
-        primary.set_window_icon(Some(icon));
-    };
+    primary_window: Single<Entity, With<bevy::window::PrimaryWindow>>,
+    _non_send_marker: bevy::ecs::system::NonSendMarker,
+) -> Result {
+    bevy::winit::WINIT_WINDOWS.with_borrow(|windows| {
+        let Some(primary) = windows.get_window(*primary_window) else {
+            return Err(BevyError::from("No primary window!"));
+        };
+        let icon_buf = std::io::Cursor::new(include_bytes!(
+            "../build/macos/AppIcon.iconset/icon_256x256.png"
+        ));
+        if let Ok(image) = image::load(icon_buf, image::ImageFormat::Png) {
+            let image = image.into_rgba8();
+            let (width, height) = image.dimensions();
+            let rgba = image.into_raw();
+            let icon = winit::window::Icon::from_rgba(rgba, width, height).unwrap();
+            primary.set_window_icon(Some(icon));
+        };
+
+        Ok(())
+    })
 }
 
 fn load_initial_solar_system(
     settings: Res<AppSettings>,
     asset_server: Res<AssetServer>,
-    mut events: EventWriter<LoadSolarSystemEvent>,
+    mut messages: MessageWriter<LoadSolarSystem>,
 ) {
-    match LoadSolarSystemEvent::try_from_dir(&settings.user.system_path, &asset_server) {
-        Ok(event) => {
-            events.write(event);
+    match LoadSolarSystem::try_from_dir(&settings.user.system_path, &asset_server) {
+        Ok(message) => {
+            messages.write(message);
         }
         Err(err) => {
             panic!("Failed to load solar system: {err}");

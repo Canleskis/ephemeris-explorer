@@ -1,19 +1,21 @@
 use crate::{
     MainState,
-    floating_origin::{BigSpace, Grid, GridCell, Grids},
+    floating_origin::{BigSpace, Grid, CellCoord, Grids},
     ui::WindowsUiSet,
 };
 
 use bevy::{
+    camera::{primitives::Aabb, visibility::RenderLayers},
     input::mouse::{MouseMotion, MouseWheel},
     math::{DQuat, DVec3},
     prelude::*,
-    render::{primitives::Aabb, view::RenderLayers},
 };
 
-pub fn using_pointer(query: Query<&Window, With<bevy::window::PrimaryWindow>>) -> bool {
-    query.single().is_ok_and(|window| {
-        window.cursor_options.grab_mode == bevy::window::CursorGrabMode::Confined
+pub fn using_pointer(
+    query: Query<&bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
+) -> bool {
+    query.single().is_ok_and(|cursor_options| {
+        cursor_options.grab_mode == bevy::window::CursorGrabMode::Confined
     })
 }
 
@@ -307,7 +309,7 @@ impl Plugin for CameraPlugin {
                     reset_controls,
                 )
                     .chain()
-                    .before(bevy::transform::TransformSystem::TransformPropagate)
+                    .before(TransformSystems::Propagate)
                     .run_if(in_state(MainState::Running)),
             );
     }
@@ -322,7 +324,7 @@ struct DisabledControls {
 fn disable_mouse_controls(
     In(disabled): In<bool>,
     mut disabled_controls: ResMut<DisabledControls>,
-    query: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    query: Query<&bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
 ) {
     if !using_pointer(query) {
         disabled_controls.mouse = disabled;
@@ -367,28 +369,32 @@ fn change_camera_state(world: &mut World) {
     }
 }
 
-fn hide_cursor(mut query: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
-    let mut primary_window = query.single_mut().unwrap();
+fn hide_cursor(
+    mut query: Query<&mut bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
+) {
+    let mut cursor_options = query.single_mut().unwrap();
 
-    if primary_window.cursor_options.visible {
-        primary_window.cursor_options.visible = false;
-        primary_window.cursor_options.grab_mode = bevy::window::CursorGrabMode::Confined;
+    if cursor_options.visible {
+        cursor_options.visible = false;
+        cursor_options.grab_mode = bevy::window::CursorGrabMode::Confined;
     }
 }
 
-fn show_cursor(mut query: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
-    let mut primary_window = query.single_mut().unwrap();
+fn show_cursor(
+    mut query: Query<&mut bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
+) {
+    let mut cursor_options = query.single_mut().unwrap();
 
-    if !primary_window.cursor_options.visible {
-        primary_window.cursor_options.visible = true;
-        primary_window.cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
+    if !cursor_options.visible {
+        cursor_options.visible = true;
+        cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
     }
 }
 
 fn mouse_controls(
     mouse: Res<ButtonInput<MouseButton>>,
-    mut mouse_move: EventReader<MouseMotion>,
-    mut scroll_events: EventReader<MouseWheel>,
+    mut mouse_move: MessageReader<MouseMotion>,
+    mut scroll_events: MessageReader<MouseWheel>,
     mut input: ResMut<CameraInput>,
     time: Res<Time>,
 ) {
@@ -458,7 +464,7 @@ fn sync_camera_distance(
 
 pub fn orbit_controls(
     input: Res<CameraInput>,
-    mut query: Query<(&mut Transform, &mut GridCell)>,
+    mut query: Query<(&mut Transform, &mut CellCoord)>,
     mut query_camera: Query<(Entity, &CameraController, &mut OrbitCamera)>,
     grid: Single<&Grid, With<BigSpace>>,
     time: Res<Time>,
@@ -552,7 +558,7 @@ pub fn camera_controller(
     time: Res<Time>,
     grids: Grids,
     mut input: ResMut<CameraInput>,
-    mut camera: Query<(Entity, &mut GridCell, &mut Transform, &mut CameraController)>,
+    mut camera: Query<(Entity, &mut CellCoord, &mut Transform, &mut CameraController)>,
 ) {
     for (camera, mut cell, mut transform, mut controller) in camera.iter_mut() {
         let Some(grid) = grids.parent_grid(camera) else {

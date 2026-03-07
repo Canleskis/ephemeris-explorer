@@ -24,7 +24,7 @@ impl Plugin for SelectionPlugin {
 
 fn select_hover_clicked(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    mut mouse_move: EventReader<MouseMotion>,
+    mut mouse_move: MessageReader<MouseMotion>,
     hover: Res<PointerHover>,
     mut selected: ResMut<Selected>,
 ) {

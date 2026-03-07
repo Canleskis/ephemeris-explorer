@@ -9,29 +9,37 @@ too_many_arguments = "allow"
 [build-dependencies]
 embed-resource = "1"
 
+[patch.crates-io]
+bevy_gizmos_render = { path = "bevy_gizmos_render-0.18.1" }
+
 [dependencies]
 integration = { path = "integration" }
 ftime = { path = "ftime", features = ["serde"] }
 ephemeris = { path = "ephemeris" }
 
-bevy = { version = "0.16.1", default-features = false, features = [
+bevy = { version = "0.18", default-features = false, features = [
     "bevy_asset",
     "bevy_color",
     "bevy_core_pipeline",
     "bevy_gizmos",
+    "bevy_gizmos_render",
     "bevy_log",
-    "bevy_mesh_picking_backend",
+    "mesh_picking",
     "bevy_pbr",
+    "bevy_post_process",
     "bevy_picking",
     "bevy_render",
     "bevy_sprite",
-    "bevy_sprite_picking_backend",
+    "bevy_sprite_render",
+    "sprite_picking",
     "bevy_state",
     "bevy_text",
     "bevy_ui",
-    "bevy_ui_picking_backend",
+    "bevy_ui_render",
+    "ui_picking",
     "bevy_window",
     "bevy_winit",
+    "bevy_anti_alias",
     "custom_cursor",
     "hdr",
     "multi_threaded",
@@ -46,10 +54,10 @@ bevy = { version = "0.16.1", default-features = false, features = [
     "bevy_remote",
 ] }
 
-bevy_egui = { version = "0.36.0" }
-egui_extras = { version = "0.32.3" }
-big_space = { version = "0.10.0", features = ["camera"] }
-bevy_file_dialog = { version = "0.8.0" }
+bevy_egui = { version = "0.39" }
+egui_extras = { version = "0.33" }
+big_space = { version = "0.12" }
+bevy_file_dialog = { version = "=0.9.1" }
 
 futures-util = { version = "0.3.31", features = ["io"] }
 image = { version = "0.25", default-features = false }

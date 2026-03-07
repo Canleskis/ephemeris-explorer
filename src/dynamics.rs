@@ -261,7 +261,7 @@ impl PropagationTarget for CelestialTrajectory<Forward> {
     type Propagator = NBodyPropagator<Forward>;
 
     #[inline]
-    fn merge(item: &mut Self::Item<'_>, propagated: UniformSpline) {
+    fn merge(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
         item.trajectory.write(|trajectory| {
             let trajectory = trajectory
                 .as_any_mut()
@@ -273,7 +273,7 @@ impl PropagationTarget for CelestialTrajectory<Forward> {
     }
 
     #[inline]
-    fn overwrite(item: &mut Self::Item<'_>, propagated: UniformSpline) {
+    fn overwrite(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
         // Should we keep the previous allocation?
         item.trajectory.write(|trajectory| {
             *trajectory.as_any_mut().downcast_mut().unwrap() = propagated;
@@ -285,7 +285,7 @@ impl PropagationTarget for CelestialTrajectory<Backward> {
     type Propagator = NBodyPropagator<Backward>;
 
     #[inline]
-    fn merge(item: &mut Self::Item<'_>, propagated: UniformSpline) {
+    fn merge(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
         item.trajectory.write(|trajectory| {
             let trajectory = trajectory
                 .as_any_mut()
@@ -297,7 +297,7 @@ impl PropagationTarget for CelestialTrajectory<Backward> {
     }
 
     #[inline]
-    fn overwrite(item: &mut Self::Item<'_>, propagated: UniformSpline) {
+    fn overwrite(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
         // Should we keep the previous allocation?
         item.trajectory.write(|trajectory| {
             *trajectory.as_any_mut().downcast_mut().unwrap() = propagated;
@@ -739,7 +739,7 @@ impl PropagationTarget for SpacecraftTrajectory {
 
     #[inline]
     fn merge(
-        item: &mut Self::Item<'_>,
+        item: &mut Self::Item<'_, '_>,
         (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
         item.transitions.clear_after(trajectory.start());
@@ -754,7 +754,7 @@ impl PropagationTarget for SpacecraftTrajectory {
 
     #[inline]
     fn overwrite(
-        item: &mut Self::Item<'_>,
+        item: &mut Self::Item<'_, '_>,
         (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
         *item.transitions = transitions;
@@ -782,21 +782,3 @@ pub const DEFAULT_ADAPTIVE_PARAMS: AdaptiveMethodParams<f64, AbsTol, f64> =
         ratio_f64(integration::DEFAULT_FAC),
         1_000_000,
     );
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_transitions() {
-        let mut transitions = SoiTransitions::default();
-        transitions.insert(Epoch::from_offset_seconds(1.0), Entity::from_raw(1));
-        transitions.insert(Epoch::from_offset_seconds(2.0), Entity::from_raw(2));
-        transitions.insert(Epoch::from_offset_seconds(3.0), Entity::from_raw(3));
-
-        dbg!(&transitions);
-
-        transitions.clear_before(Epoch::from_offset_seconds(2.1));
-        dbg!(&transitions);
-    }
-}

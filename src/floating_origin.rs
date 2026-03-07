@@ -4,7 +4,7 @@ pub use big_space::{
     floating_origins::{BigSpace, FloatingOrigin},
     grid::{
         Grid,
-        cell::GridCell,
+        cell::CellCoord,
         local_origin::{Grids, LocalFloatingOrigin},
     },
     plugin::{BigSpaceCorePlugin, BigSpacePropagationPlugin, BigSpaceValidationPlugin},

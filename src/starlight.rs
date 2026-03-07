@@ -10,13 +10,13 @@ pub struct Star {
 }
 
 #[derive(Default)]
-pub struct StarLightPlugin;
+pub struct StarlightPlugin;
 
-impl Plugin for StarLightPlugin {
+impl Plugin for StarlightPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(First, setup_lights).add_systems(
             PostUpdate,
-            lighting.after(bevy::transform::TransformSystem::TransformPropagate),
+            lighting.after(TransformSystems::Propagate),
         );
     }
 }
@@ -33,7 +33,7 @@ fn setup_lights(mut commands: Commands, query: Query<(Entity, &Star), Added<Star
                     shadows_enabled: true,
                     ..default()
                 },
-                bevy::pbr::CascadeShadowConfigBuilder {
+                bevy::light::CascadeShadowConfigBuilder {
                     num_cascades: 4,
                     minimum_distance: 100.0,
                     maximum_distance: 1e9,

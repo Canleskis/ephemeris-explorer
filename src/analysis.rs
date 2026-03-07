@@ -369,8 +369,8 @@ fn spawn_drawn_soi(
                         unlit: true,
                         ..default()
                     })),
-                    bevy::pbr::NotShadowReceiver,
-                    bevy::pbr::NotShadowCaster,
+                    bevy::light::NotShadowReceiver,
+                    bevy::light::NotShadowCaster,
                     CameraProximityIgnore,
                     DrawnSoiOf(entity),
                 ));
@@ -383,8 +383,8 @@ fn spawn_drawn_soi(
                         unlit: true,
                         ..default()
                     })),
-                    bevy::pbr::NotShadowReceiver,
-                    bevy::pbr::NotShadowCaster,
+                    bevy::light::NotShadowReceiver,
+                    bevy::light::NotShadowCaster,
                     CameraProximityIgnore,
                     DrawnSoiOf(entity),
                 ));

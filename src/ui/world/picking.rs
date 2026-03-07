@@ -9,10 +9,10 @@ use crate::{
 };
 
 use bevy::{
+    camera::NormalizedRenderTarget,
     math::bounding::{BoundingSphere, RayCast3d},
     picking::{backend::ray::RayMap, pointer::PointerLocation},
     prelude::*,
-    render::camera::NormalizedRenderTarget,
 };
 use bevy_egui::{EguiContext, EguiContextSettings, input::WindowToEguiContextMap};
 use ftime::Epoch;
@@ -72,7 +72,7 @@ impl HitData {
     }
 }
 
-#[derive(Clone, Debug, Event)]
+#[derive(Clone, Debug, Message)]
 pub struct PointerHit(pub Entity, pub HitData);
 
 #[derive(Resource, Default)]
@@ -88,7 +88,7 @@ pub struct CustomPickingPlugin;
 
 impl Plugin for CustomPickingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<PointerHit>()
+        app.add_message::<PointerHit>()
             .init_resource::<PointerHover>()
             .configure_sets(
                 PostUpdate,
@@ -126,7 +126,7 @@ fn body_picking(
     ray_map: Res<RayMap>,
     perspective: Single<&Projection, With<Camera>>,
     query_can_select: Query<(Entity, &GlobalTransform, &Selectable)>,
-    mut events: EventWriter<PointerHit>,
+    mut events: MessageWriter<PointerHit>,
 ) {
     let Some((_, ray)) = ray_map.iter().next() else {
         return;
@@ -161,7 +161,7 @@ pub fn trajectory_picking(
     ray_map: Res<RayMap>,
     perspective: Single<&Projection, With<Camera>>,
     query_plot: Query<(Entity, &PlotPoints)>,
-    mut events: EventWriter<PointerHit>,
+    mut events: MessageWriter<PointerHit>,
 ) {
     let Projection::Perspective(perspective) = *perspective else {
         unreachable!("Camera is not perspective");
@@ -209,7 +209,7 @@ pub fn manoeuvre_picking(
     query: Query<(&FlightPlan, &PlotSourceOf)>,
     query_plot: Query<(Entity, &PlotPoints)>,
     perspective: Single<&Projection, With<Camera>>,
-    mut events: EventWriter<PointerHit>,
+    mut events: MessageWriter<PointerHit>,
 ) {
     let Projection::Perspective(perspective) = *perspective else {
         unreachable!("Camera is not perspective");
@@ -251,7 +251,7 @@ pub fn egui_picking(
     window_to_egui_context_map: Res<WindowToEguiContextMap>,
     pointers: Query<&PointerLocation>,
     mut egui_context: Query<(Entity, &mut EguiContext, &EguiContextSettings, &Camera)>,
-    mut output: EventWriter<PointerHit>,
+    mut output: MessageWriter<PointerHit>,
 ) {
     for location in pointers.iter().filter_map(|p| p.location.as_ref()) {
         if let NormalizedRenderTarget::Window(window) = location.target {
@@ -306,7 +306,7 @@ fn _show_body_picking_zone(
     }
 }
 
-fn update_pointer_hover(mut hover: ResMut<PointerHover>, mut events: EventReader<PointerHit>) {
+fn update_pointer_hover(mut hover: ResMut<PointerHover>, mut events: MessageReader<PointerHit>) {
     hover.0 = events
         .read()
         .min_by(|PointerHit(_, a), PointerHit(_, b)| a.depth().total_cmp(&b.depth()))

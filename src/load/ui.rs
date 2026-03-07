@@ -20,10 +20,10 @@ pub struct LoadingText;
 fn add_loading_screen(mut commands: Commands) {
     let camera = commands
         .spawn((
-            StateScoped(MainState::Loading),
+            DespawnOnExit(MainState::Loading),
             Camera3d::default(),
             Camera {
-                order: isize::MAX,
+                order: 2,
                 ..default()
             },
         ))
@@ -31,7 +31,7 @@ fn add_loading_screen(mut commands: Commands) {
 
     commands
         .spawn((
-            StateScoped(MainState::Loading),
+            DespawnOnExit(MainState::Loading),
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
@@ -56,7 +56,7 @@ fn add_loading_screen(mut commands: Commands) {
 
 pub fn text_on_load<A: Asset>(
     asset_server: Res<AssetServer>,
-    mut events: EventReader<AssetEvent<A>>,
+    mut events: MessageReader<AssetEvent<A>>,
     mut query: Query<&mut Text, With<LoadingText>>,
 ) {
     let loaded_path = events.read().find_map(|event| match event {

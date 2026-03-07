@@ -128,7 +128,7 @@ impl BodyInfoWindow {
                 .id("Selected".into())
                 .open(&mut open)
                 .pivot(egui::Align2::RIGHT_TOP)
-                .default_pos([ctx.screen_rect().size().x - 11.0, 33.0])
+                .default_pos([ctx.content_rect().size().x - 11.0, 33.0])
                 .resizable([false, true])
                 .show(ctx, |ui| {
                     let Ok((trajectory, parent, mut plot, target, mut data, mut info)) =
@@ -589,7 +589,7 @@ impl BodyInfoWindow {
                         });
 
                     if changed {
-                        commands.trigger_targets(FlightPlanChanged, entity);
+                        commands.trigger(FlightPlanChanged(entity));
                     }
                 });
         }

@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "f667c282dad2c1419afb5836ded22a3ec263970e"
+  },
+  "path_in_vcs": "crates/bevy_gizmos_render"
+}

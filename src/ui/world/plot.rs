@@ -220,7 +220,7 @@ impl PlotPoints {
     }
 }
 
-#[derive(Clone, Copy, Event)]
+#[derive(Clone, Copy, Message)]
 pub struct TrajectoryHitPoint {
     pub entity: Entity,
     pub time: Epoch,
@@ -230,7 +230,7 @@ pub struct TrajectoryHitPoint {
     pub distance: f32,
 }
 
-#[derive(Clone, Copy, Event)]
+#[derive(Clone, Copy, Message)]
 pub struct ManoeuvreHitPoint {
     pub plot_entity: Entity,
     pub flight_plan_entity: Entity,
@@ -248,8 +248,8 @@ pub struct PlotPlugin;
 impl Plugin for PlotPlugin {
     fn build(&self, app: &mut App) {
         app.init_gizmo_group::<MarkerGizmoConfigGroup>()
-            .add_event::<TrajectoryHitPoint>()
-            .add_event::<ManoeuvreHitPoint>()
+            .add_message::<TrajectoryHitPoint>()
+            .add_message::<ManoeuvreHitPoint>()
             .add_systems(
                 PostUpdate,
                 (
@@ -264,7 +264,7 @@ impl Plugin for PlotPlugin {
                     .chain()
                     .in_set(WorldUiSet)
                     .run_if(in_state(MainState::Running))
-                    .after(bevy::transform::TransformSystem::TransformPropagate),
+                    .after(TransformSystems::Propagate),
             );
     }
 }
@@ -279,10 +279,12 @@ pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
 
 #[inline]
 pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
-    // TODO: There is probably a simpler way to do this.
-    let (cell, translation) = root.translation_to_grid(pos);
-    root.global_transform(&cell, &Transform::from_translation(translation))
-        .translation()
+    let origin = root.local_floating_origin();
+
+    origin
+        .grid_transform()
+        .transform_point3(pos - root.cell_to_float(&origin.cell()))
+        .as_vec3()
 }
 
 #[inline]
@@ -407,7 +409,7 @@ fn plot_manoeuvres(
                     let size = camera_transform.translation().distance(world_pos)
                         * perspective.fov
                         * MANOEUVRE_SIZE;
-                        
+
                     gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
                     gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
                     gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);
@@ -435,7 +437,7 @@ fn plot_transitions(
                 };
 
                 let direction = camera_transform.translation() - world_pos;
-                let size = direction.length() * perspective.fov * 0.006;
+                let size = direction.length() * perspective.fov * 0.004;
 
                 gizmos.circle(
                     Transform::from_translation(world_pos)

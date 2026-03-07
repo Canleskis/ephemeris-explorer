@@ -18,7 +18,7 @@ pub struct ExportPlugin;
 
 impl Plugin for ExportPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<ExportSolarSystemEvent>().add_systems(
+        app.add_message::<ExportSolarSystem>().add_systems(
             EguiPrimaryContextPass,
             (ExportWindow::show, export_solar_system)
                 .in_set(WindowsUiSet)
@@ -50,7 +50,7 @@ impl ExportWindow {
     fn show(
         mut contexts: EguiContexts,
         mut commands: Commands,
-        mut event: EventWriter<ExportSolarSystemEvent>,
+        mut event: MessageWriter<ExportSolarSystem>,
         window: Option<Res<Self>>,
         sim_time: Res<SimulationTime>,
         query_trajectory: Query<Entity, With<Trajectory>>,
@@ -78,7 +78,7 @@ impl ExportWindow {
 
             ui.horizontal(|ui| {
                 if ui.button("Export").clicked() {
-                    event.write(ExportSolarSystemEvent {
+                    event.write(ExportSolarSystem {
                         export: export[*current],
                         bodies: bodies.iter().copied().collect(),
                     });
@@ -215,8 +215,8 @@ pub fn reversed_paint_default_icon(ui: &mut egui::Ui, openness: f32, response: &
     ));
 }
 
-#[derive(Event, PartialEq, PartialOrd)]
-pub struct ExportSolarSystemEvent {
+#[derive(Message, PartialEq, PartialOrd)]
+pub struct ExportSolarSystem {
     pub export: ExportType,
     pub bodies: Vec<Entity>,
 }
@@ -225,7 +225,7 @@ pub struct ExportSolarSystemFile;
 
 fn export_solar_system(
     mut commands: Commands,
-    mut event: EventReader<ExportSolarSystemEvent>,
+    mut event: MessageReader<ExportSolarSystem>,
     query: Query<(&Name, &Mu, &Trajectory)>,
 ) {
     if let Some(event) = event.read().next() {

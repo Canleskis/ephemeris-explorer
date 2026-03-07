@@ -1,15 +1,15 @@
 use crate::{
     analysis::DrawSoiSettings,
-    load::LoadSolarSystemEvent,
+    camera::CameraController,
+    load::LoadSolarSystem,
     ui::{LabelSettings, ManoeuvreDraggingOptions},
 };
 
 use bevy::{
-    core_pipeline::bloom::Bloom,
+    post_process::bloom::Bloom,
     prelude::*,
     window::{MonitorSelection, WindowMode},
 };
-use big_space::camera::BigSpaceCameraController;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default)]
@@ -93,11 +93,11 @@ impl AppSettings {
         gizmos_config: ResMut<GizmoConfigStore>,
         draw_soi_settings: ResMut<DrawSoiSettings>,
         drag_opts: ResMut<ManoeuvreDraggingOptions>,
-        mut controller: Query<&mut BigSpaceCameraController>,
+        mut controller: Query<&mut CameraController>,
         mut window: Query<&mut Window>,
         mut bloom: Query<&mut Bloom>,
         mut projection: Query<&mut Projection>,
-        mut load_event: EventReader<LoadSolarSystemEvent>,
+        mut load_event: MessageReader<LoadSolarSystem>,
     ) {
         if let Ok(mut window) = window.single_mut() {
             window

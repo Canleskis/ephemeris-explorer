@@ -96,14 +96,12 @@ impl PredictionPlannerWindow {
                     if ui.button("Start prediction").clicked()
                         && let Some(duration) = backward_duration
                     {
-                        commands.trigger_targets(
-                            ComputePrediction::<T>::extend(
-                                prediction.propagator.clone(),
-                                duration,
-                                Synchronisation::hertz(100),
-                            ),
+                        commands.trigger(ComputePrediction::<T>::extend(
                             root,
-                        );
+                            prediction.propagator.clone(),
+                            duration,
+                            Synchronisation::hertz(100),
+                        ));
                     }
                 });
             }

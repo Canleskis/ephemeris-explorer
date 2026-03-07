@@ -13,6 +13,7 @@ use thiserror::Error;
 // pub const DISTANCE_SCALE: f64 = 1e-3; // Meters
 pub const DISTANCE_SCALE: f64 = 1.0; // Kilometers
 
+#[derive(TypePath)]
 pub struct BodyVisualsLoader;
 
 #[non_exhaustive]
@@ -152,11 +153,11 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
             let material = ctx.add_labeled_asset("material".to_owned(), material);
 
             let radii = toml.physical.radii * DISTANCE_SCALE;
-            let mesh = bevy::render::mesh::SphereMeshBuilder {
+            let mesh = bevy::mesh::SphereMeshBuilder {
                 sphere: Sphere {
                     radius: ((radii.x + radii.y + radii.z) / 3.0) as _,
                 },
-                kind: bevy::render::mesh::SphereKind::Uv {
+                kind: bevy::mesh::SphereKind::Uv {
                     sectors: 144,
                     stacks: 72,
                 },
@@ -192,6 +193,7 @@ impl bevy::asset::AssetLoader for BodyVisualsLoader {
     }
 }
 
+#[derive(TypePath)]
 pub struct SolarSystemStateLoader;
 
 #[non_exhaustive]
@@ -266,6 +268,7 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
     }
 }
 
+#[derive(TypePath)]
 pub struct EphemeridesSettingsLoader;
 
 #[non_exhaustive]
@@ -335,6 +338,7 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
     }
 }
 
+#[derive(TypePath)]
 pub struct HierarchyTreeLoader;
 
 #[non_exhaustive]
@@ -375,6 +379,7 @@ impl bevy::asset::AssetLoader for HierarchyTreeLoader {
     }
 }
 
+#[derive(TypePath)]
 pub struct ShipLoader;
 
 #[non_exhaustive]

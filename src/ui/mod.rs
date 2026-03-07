@@ -6,7 +6,7 @@ pub use fixed::*;
 pub use windows::*;
 pub use world::*;
 
-use crate::{MainState, load::LoadSolarSystemEvent};
+use crate::{MainState, load::LoadSolarSystem};
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContext, EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
@@ -38,7 +38,8 @@ impl Plugin for UiPlugin {
             ..default()
         })
         .add_plugins((
-            bevy::ui::UiPlugin::default(),
+            bevy::ui::UiPlugin,
+            bevy::ui_render::UiRenderPlugin,
             EguiPlugin::default(),
             WorldUiPlugin,
             FixedUiPlugin,
@@ -65,8 +66,8 @@ impl Plugin for UiPlugin {
     }
 }
 
-fn setup_egui_visuals(trigger: Trigger<OnInsert, EguiContext>, mut query: Query<&mut EguiContext>) {
-    if let Ok(mut ctx) = query.get_mut(trigger.target()) {
+fn setup_egui_visuals(trigger: On<Insert, EguiContext>, mut query: Query<&mut EguiContext>) {
+    if let Ok(mut ctx) = query.get_mut(trigger.event_target()) {
         let ctx = ctx.get_mut();
         let font_definitions = {
             // From egui
@@ -195,11 +196,11 @@ pub struct SolarSystemDir;
 
 fn load_solar_system_state(
     asset_server: Res<AssetServer>,
-    mut ev_picked: EventReader<DialogDirectoryPicked<SolarSystemDir>>,
-    mut events: EventWriter<LoadSolarSystemEvent>,
+    mut ev_picked: MessageReader<DialogDirectoryPicked<SolarSystemDir>>,
+    mut events: MessageWriter<LoadSolarSystem>,
 ) {
     for picked in ev_picked.read() {
-        match LoadSolarSystemEvent::try_from_dir(&picked.path, &asset_server) {
+        match LoadSolarSystem::try_from_dir(&picked.path, &asset_server) {
             Ok(event) => {
                 events.write(event);
             }

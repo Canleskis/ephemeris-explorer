@@ -341,7 +341,7 @@ impl ShipSpawnerWindow {
                 {
                     let sv = data.global_state_vector(data.start, &query_trajectory);
 
-                    commands.trigger(SpawnShip(Ship::new(
+                    commands.trigger(SpawnShip::new(Ship::new(
                         data.name.to_string(),
                         data.start,
                         data.start + data.preview_duration,
@@ -391,15 +391,13 @@ impl ShipSpawnerWindow {
                 Timeline::default(),
             );
 
-            commands.trigger_targets(
-                ComputePrediction::<SpacecraftTrajectory>::new(
-                    propagator,
-                    data.preview_duration,
-                    Synchronisation::hertz(1000),
-                    true,
-                ),
+            commands.trigger(ComputePrediction::<SpacecraftTrajectory>::new(
                 preview,
-            );
+                propagator,
+                data.preview_duration,
+                Synchronisation::hertz(1000),
+                true,
+            ));
 
             window.valid_preview = true;
         }
@@ -421,14 +419,14 @@ impl ShipSpawnerWindow {
 
 fn load_solar_system_state(
     mut commands: Commands,
-    mut ev_loaded: EventReader<DialogFileLoaded<ShipFile>>,
+    mut ev_loaded: MessageReader<DialogFileLoaded<ShipFile>>,
 ) {
     if !ev_loaded.is_empty() {
         commands.remove_resource::<ShipSpawnerWindow>();
     }
     for loaded in ev_loaded.read() {
         if let Ok(ship) = serde_json::from_slice(&loaded.contents) {
-            commands.trigger(SpawnShip(ship));
+            commands.trigger(SpawnShip::new(ship));
         }
     }
 }

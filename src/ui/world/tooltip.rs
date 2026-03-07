@@ -254,7 +254,7 @@ fn manoeuvre_dragging(
         time = time.round(Duration::from_seconds(1.0));
         if burn.start != time {
             burn.start = time;
-            commands.trigger_targets(FlightPlanChanged, *source_entity);
+            commands.trigger(FlightPlanChanged(*source_entity));
         }
         *tooltip_entity = new_entity;
     }
@@ -432,8 +432,8 @@ fn trajectory_tooltips_world(
                         Visibility::Visible,
                         Mesh3d(cache.mesh.clone()),
                         MeshMaterial3d(cache.material.clone()),
-                        bevy::pbr::NotShadowReceiver,
-                        bevy::pbr::NotShadowCaster,
+                        bevy::light::NotShadowReceiver,
+                        bevy::light::NotShadowCaster,
                         CameraProximityIgnore,
                         TooltipMesh,
                         ChildOf(*cache_entity),
@@ -500,7 +500,7 @@ fn trajectory_tooltips_window(
             .fade_out(false)
             .title_bar(false)
             .constrain(false)
-            .fixed_size([250.0, 200.0])
+            .fixed_size([300.0, 200.0])
             .id(egui::Id::new(i.to_string() + "#intersections"))
             .fixed_pos(window_position.to_array())
             .show(ctx, |ui| {
@@ -577,10 +577,9 @@ fn trajectory_tooltips_window(
                                                                 source.reference.unwrap_or(*root),
                                                             ),
                                                         );
-                                                        commands.trigger_targets(
-                                                            FlightPlanChanged,
+                                                        commands.trigger(FlightPlanChanged(
                                                             source.entity,
-                                                        );
+                                                        ));
                                                     }
                                                 })
                                             });

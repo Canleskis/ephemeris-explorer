@@ -182,8 +182,8 @@ impl FlightPlan {
 pub struct FlightPlanDependency;
 
 // To make change detection optional but immediate, we use this event.
-#[derive(Clone, Copy, Event)]
-pub struct FlightPlanChanged;
+#[derive(Clone, Copy, EntityEvent)]
+pub struct FlightPlanChanged(pub Entity);
 
 #[derive(Default)]
 pub struct FlightPlanPlugin;
@@ -198,12 +198,12 @@ impl Plugin for FlightPlanPlugin {
 }
 
 fn apply_flight_plan(
-    trigger: Trigger<FlightPlanChanged>,
+    trigger: On<FlightPlanChanged>,
     mut commands: Commands,
     mut query: Query<(&mut FlightPlan, &SpacecraftPredictionContext, &Trajectory)>,
     query_trajectory: Query<&Trajectory>,
 ) {
-    let entity = trigger.target();
+    let entity = trigger.event_target();
     let Ok((mut flight_plan, PredictionContext { propagator, .. }, trajectory)) =
         query.get_mut(entity)
     else {
@@ -253,7 +253,7 @@ fn apply_flight_plan(
         );
         return;
     };
-    bevy::log::info!("Restarting propagation from {}", restart_epoch);
+    bevy::log::debug!("Restarting propagation from {}", restart_epoch);
 
     let propagator = SpacecraftPropagatorSoiDetection::new(
         restart_epoch,
@@ -266,14 +266,12 @@ fn apply_flight_plan(
         timeline,
     );
 
-    commands.trigger_targets(
-        ComputePrediction::<SpacecraftTrajectory>::extend(
-            propagator,
-            flight_plan.end - restart_epoch,
-            Synchronisation::hertz(1000),
-        ),
+    commands.trigger(ComputePrediction::<SpacecraftTrajectory>::extend(
         entity,
-    );
+        propagator,
+        flight_plan.end - restart_epoch,
+        Synchronisation::hertz(1000),
+    ));
 }
 
 fn trigger_on_trajectory_updates(
@@ -304,7 +302,7 @@ fn trigger_on_trajectory_updates(
                 continue;
             }
 
-            commands.trigger_targets(FlightPlanChanged, entity);
+            commands.trigger(FlightPlanChanged(entity));
         }
     }
 }

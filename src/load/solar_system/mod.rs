@@ -76,7 +76,7 @@ impl Plugin for LoadSolarSystemPlugin {
             .register_asset_loader(EphemeridesSettingsLoader)
             .register_asset_loader(ShipLoader)
             .insert_resource(ClearColor(Color::BLACK))
-            .insert_resource(AmbientLight {
+            .insert_resource(GlobalAmbientLight {
                 color: Color::NONE,
                 brightness: 0.0,
                 affects_lightmapped_meshes: true,
@@ -95,7 +95,8 @@ impl Plugin for LoadSolarSystemPlugin {
                 radius: default_visuals.radii.x as f32,
             }));
 
-        app.world_mut()
+        _ = app
+            .world_mut()
             .resource_mut::<Assets<BodyVisuals>>()
             .insert(Handle::default().id(), default_visuals);
     }
@@ -121,7 +122,9 @@ fn reconfigure_skybox_image(
             // NOTE: PNGs do not have any metadata that could indicate they contain a cubemap texture,
             // so they appear as one texture. The following code reconfigures the texture as necessary.
             if image.texture_descriptor.array_layer_count() == 1 {
-                image.reinterpret_stacked_2d_as_array(image.height() / image.width());
+                image
+                    .reinterpret_stacked_2d_as_array(image.height() / image.width())
+                    .unwrap();
                 image.texture_view_descriptor =
                     Some(bevy::render::render_resource::TextureViewDescriptor {
                         dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube),
@@ -207,7 +210,7 @@ pub struct SolarSystemState {
 fn handle_missing_visuals(
     asset_server: Res<AssetServer>,
     mut solar_system: UniqueAssetMut<SolarSystemState>,
-    mut events: EventWriter<AssetEvent<BodyVisuals>>,
+    mut events: MessageWriter<AssetEvent<BodyVisuals>>,
 ) {
     if let Some(solar_system) = solar_system.get_mut() {
         for body in solar_system.bodies.values_mut() {

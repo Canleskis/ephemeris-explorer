@@ -1,7 +1,7 @@
 use crate::{
     MainState,
     dynamics::Trajectory,
-    floating_origin::{BigSpace, Grid, GridCell},
+    floating_origin::{BigSpace, CellCoord, Grid},
     rotation::Rotating,
 };
 
@@ -72,7 +72,7 @@ impl Plugin for SimulationTimePlugin {
             First,
             (sync_bounds, flow_time)
                 .chain()
-                .after(bevy::time::TimeSystem)
+                .after(bevy::time::TimeSystems)
                 .in_set(SimulationTimeSet)
                 .run_if(in_state(MainState::Running)),
         )
@@ -102,7 +102,7 @@ fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {
 
 fn sync_position_to_time(
     sim_time: Res<SimulationTime>,
-    mut query: Query<(&mut Transform, &mut GridCell, &Trajectory)>,
+    mut query: Query<(&mut Transform, &mut CellCoord, &Trajectory)>,
     root: Single<&Grid, With<BigSpace>>,
 ) {
     if sim_time.start() >= sim_time.end() {

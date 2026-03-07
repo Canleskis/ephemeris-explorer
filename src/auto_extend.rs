@@ -87,14 +87,12 @@ fn auto_extend<T>(
             continue;
         }
 
-        commands.trigger_targets(
-            ComputePrediction::<T>::extend(
-                prediction.propagator.clone(),
-                delta.abs(),
-                Synchronisation::hertz(200),
-            ),
+        commands.trigger(ComputePrediction::<T>::extend(
             entity,
-        );
+            prediction.propagator.clone(),
+            delta.abs(),
+            Synchronisation::hertz(200),
+        ));
     }
     *last_time_scale = sim_time.time_scale;
 }

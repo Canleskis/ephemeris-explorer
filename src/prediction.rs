@@ -34,12 +34,12 @@ pub trait PropagationTarget: QueryData + 'static {
     type Propagator: PredictionPropagator;
 
     fn merge(
-        item: &mut Self::Item<'_>,
+        item: &mut Self::Item<'_, '_>,
         propagated: <Self::Propagator as PredictionPropagator>::Trajectory,
     );
 
     fn overwrite(
-        item: &mut Self::Item<'_>,
+        item: &mut Self::Item<'_, '_>,
         propagated: <Self::Propagator as PredictionPropagator>::Trajectory,
     );
 }
@@ -65,8 +65,9 @@ impl<T: PropagationTarget> PredictionContext<T> {
 ///
 /// If `overwrite` is `false`, the previous prediction will be discarded. Otherwise, the propagator
 /// will only discard the part of the previous prediction that overlaps with the new prediction.
-#[derive(Clone, Copy, Event)]
+#[derive(Clone, Copy, EntityEvent)]
 pub struct ComputePrediction<T: PropagationTarget> {
+    pub entity: Entity,
     pub propagator: T::Propagator,
     pub duration: Duration,
     pub synchronisation: Synchronisation,
@@ -76,12 +77,14 @@ pub struct ComputePrediction<T: PropagationTarget> {
 impl<T: PropagationTarget> ComputePrediction<T> {
     #[inline]
     pub fn new(
+        entity: Entity,
         propagator: T::Propagator,
         duration: Duration,
         synchronisation: Synchronisation,
         overwrite: bool,
     ) -> Self {
         Self {
+            entity,
             propagator,
             duration,
             synchronisation,
@@ -91,11 +94,12 @@ impl<T: PropagationTarget> ComputePrediction<T> {
 
     #[inline]
     pub fn extend(
+        entity: Entity,
         propagator: T::Propagator,
         duration: Duration,
         synchronisation: Synchronisation,
     ) -> Self {
-        Self::new(propagator, duration, synchronisation, false)
+        Self::new(entity, propagator, duration, synchronisation, false)
     }
 }
 
@@ -305,11 +309,11 @@ async fn prediction_task<P>(
         }
     }
 
-    bevy::log::info!("Computing {name} prediction took: {:?}", t0.elapsed());
+    bevy::log::debug!("Computing {name} prediction took: {:?}", t0.elapsed());
 }
 
 /// Starts async task for the targeted [`PredictionContext<P>`].
-fn dispatch_predictions<T>(trigger: Trigger<ComputePrediction<T>>, mut commands: Commands)
+fn dispatch_predictions<T>(trigger: On<ComputePrediction<T>>, mut commands: Commands)
 where
     T: PropagationTarget,
 {
@@ -346,7 +350,7 @@ where
     ));
 
     commands
-        .entity(trigger.target())
+        .entity(trigger.event_target())
         .insert(PredictionTracker::<T> {
             thread,
             recver,
@@ -393,13 +397,13 @@ pub fn process_prediction_data<T>(
 }
 
 fn add_predicting_marker<T>(
-    trigger: Trigger<OnAdd, PredictionTracker<T>>,
+    trigger: On<Add, PredictionTracker<T>>,
     mut commands: Commands,
     query_prediction: Query<&PredictionContext<T>>,
 ) where
     T: PropagationTarget,
 {
-    if let Ok(prediction) = query_prediction.get(trigger.target()) {
+    if let Ok(prediction) = query_prediction.get(trigger.event_target()) {
         for entity in &prediction.entities {
             if let Ok(mut entity) = commands.get_entity(*entity) {
                 entity.queue(|mut entity: EntityWorldMut| {
@@ -417,13 +421,13 @@ fn add_predicting_marker<T>(
 }
 
 fn remove_predicting_marker<T>(
-    trigger: Trigger<OnRemove, PredictionTracker<T>>,
+    trigger: On<Remove, PredictionTracker<T>>,
     mut commands: Commands,
     query_prediction: Query<&PredictionContext<T>>,
 ) where
     T: PropagationTarget,
 {
-    if let Ok(prediction) = query_prediction.get(trigger.target()) {
+    if let Ok(prediction) = query_prediction.get(trigger.event_target()) {
         for entity in &prediction.entities {
             if let Ok(mut entity) = commands.get_entity(*entity) {
                 entity.queue(|mut entity: EntityWorldMut| {

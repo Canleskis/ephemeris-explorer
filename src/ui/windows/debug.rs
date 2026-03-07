@@ -184,7 +184,7 @@ struct ComputeInterpolationErrors {
 }
 
 fn compute_interpolation_errors(
-    trigger: Trigger<ComputeInterpolationErrors>,
+    trigger: On<ComputeInterpolationErrors>,
     system: UniqueAsset<SolarSystemState>,
     query_prediction: Query<&PredictionContext<CelestialTrajectory<Forward>>>,
     query: Query<(Entity, &Id, &Name, &Trajectory)>,

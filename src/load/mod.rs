@@ -15,7 +15,7 @@ use crate::{
         Timeline, Trajectory, UniformSpline,
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
-    floating_origin::{BigGridBundle, BigSpaceRootBundle, FloatingOrigin, GridCell},
+    floating_origin::{BigGridBundle, BigSpaceRootBundle, CellCoord, FloatingOrigin},
     prediction::{ComputePrediction, PredictionContext, PredictionTracker, Synchronisation},
     rotation::Rotating,
     selection::Selectable,
@@ -57,7 +57,7 @@ impl Plugin for LoadSystemPlugin {
             .add_sub_state::<LoadingStage>()
             .add_sub_state::<SpawnStage>()
             .add_plugins(LoadSolarSystemPlugin)
-            .add_event::<LoadSolarSystemEvent>()
+            .add_message::<LoadSolarSystem>()
             .add_systems(First, handle_load_events);
 
         app.add_systems(
@@ -117,8 +117,8 @@ impl Plugin for LoadSystemPlugin {
     }
 }
 
-#[derive(Event, Clone, Debug)]
-pub struct LoadSolarSystemEvent {
+#[derive(Message, Clone, Debug)]
+pub struct LoadSolarSystem {
     pub path: std::path::PathBuf,
     pub state: Handle<SolarSystemState>,
     pub eph_settings: Handle<EphemeridesSettings>,
@@ -127,7 +127,7 @@ pub struct LoadSolarSystemEvent {
     pub ships: Vec<Handle<Ship>>,
 }
 
-impl LoadSolarSystemEvent {
+impl LoadSolarSystem {
     pub fn try_from_dir(
         dir: &std::path::Path,
         asset_server: &AssetServer,
@@ -151,8 +151,8 @@ impl LoadSolarSystemEvent {
 
 pub fn handle_load_events(
     mut commands: Commands,
-    mut events: EventReader<LoadSolarSystemEvent>,
-    mut next_state: ResMut<NextState<MainState>>,
+    mut events: MessageReader<LoadSolarSystem>,
+    mut state: ResMut<NextState<MainState>>,
 ) {
     for event in events.read() {
         commands.insert_resource(UniqueAssetHandle(event.state.clone()));
@@ -166,7 +166,7 @@ pub fn handle_load_events(
             handles: event.ships.clone(),
         });
 
-        next_state.set(MainState::Loading);
+        NextState::set_if_neq(&mut state, MainState::Loading);
     }
 }
 
@@ -244,7 +244,7 @@ fn setup_loading_errors(mut commands: Commands) {
 }
 
 fn agregate_asset_errors(
-    mut events: EventReader<bevy::asset::UntypedAssetLoadFailedEvent>,
+    mut events: MessageReader<bevy::asset::UntypedAssetLoadFailedEvent>,
     mut errors: ResMut<LoadingErrors>,
 ) {
     errors.extend(
@@ -270,7 +270,7 @@ fn spawn_loaded_bodies(
     let (name, tree) = hierachy_tree.first().unwrap();
     let root = commands
         .spawn((
-            StateScoped(MainState::Running),
+            DespawnOnExit(MainState::Running),
             Name::new(name.to_string()),
             BigSpaceRootBundle::default(),
             SystemRoot,
@@ -344,6 +344,7 @@ fn spawn_loaded_bodies(
                 // No state scope needed as it is always a child of the root.
                 Name::new(name.clone()),
                 Id(*id),
+                Visibility::default(),
                 BigGridBundle {
                     transform: Transform::from_translation(body.position.as_vec3()),
                     ..default()
@@ -398,6 +399,7 @@ fn spawn_loaded_bodies(
             entity.with_children(|cmds| {
                 let mut child = cmds.spawn((
                     Transform::from_scale(visual.radii.as_vec3() / radius),
+                    Visibility::default(),
                     Mesh3d(visual.mesh.clone()),
                     MeshMaterial3d(visual.material.clone()),
                     Rotating {
@@ -415,7 +417,7 @@ fn spawn_loaded_bodies(
                             color,
                             illuminance: 120_000.0,
                         },
-                        bevy::pbr::NotShadowCaster,
+                        bevy::light::NotShadowCaster,
                     ));
                 }
             });
@@ -492,12 +494,31 @@ fn spawn_loaded_ships(
         .iter()
         .filter_map(|handle| assets.get(handle))
     {
-        commands.trigger(SpawnShip(ship.clone()));
+        commands.trigger(SpawnShip {
+            ship: ship.clone(),
+            entity: None,
+        });
     }
 }
 
 #[derive(Event)]
-pub struct SpawnShip(pub Ship);
+pub struct SpawnShip {
+    pub ship: Ship,
+    pub entity: Option<Entity>,
+}
+
+impl SpawnShip {
+    #[inline]
+    pub fn new(ship: Ship) -> Self {
+        Self { ship, entity: None }
+    }
+
+    #[inline]
+    pub fn with_entity(mut self, entity: Entity) -> Self {
+        self.entity = Some(entity);
+        self
+    }
+}
 
 pub fn find_by_name(query: &Query<(Entity, &Name), With<Mu>>, reference: &str) -> Option<Entity> {
     query
@@ -507,7 +528,7 @@ pub fn find_by_name(query: &Query<(Entity, &Name), With<Mu>>, reference: &str) -
 }
 
 fn spawn_ship(
-    trigger: Trigger<SpawnShip>,
+    trigger: On<SpawnShip>,
     mut commands: Commands,
     query_name: Query<(Entity, &Name), With<Mu>>,
     query_context: Query<(Entity, &Trajectory, &Mu, &SphereOfInfluence)>,
@@ -515,7 +536,7 @@ fn spawn_ship(
     root: Single<Entity, With<SystemRoot>>,
     mut errors: ResMut<LoadingErrors>,
 ) {
-    let ship = &trigger.event().0;
+    let ship = &trigger.event().ship;
 
     let radius = 0.01;
 
@@ -524,9 +545,9 @@ fn spawn_ship(
         .map(|(e, traj, mu, soi)| (e, GravitationalBody::new(traj.clone(), *mu, *soi)))
         .collect();
 
-    let mut entity = match trigger.target() {
-        entity if entity == Entity::PLACEHOLDER => commands.spawn_empty(),
-        entity => commands.entity(entity),
+    let mut entity = match trigger.event().entity {
+        Some(entity) => commands.entity(entity),
+        None => commands.spawn_empty(),
     };
     let id = entity.id();
 
@@ -627,7 +648,7 @@ fn spawn_ship(
 
     commands.entity(*root).add_child(id);
 
-    commands.trigger_targets(FlightPlanChanged, id);
+    commands.trigger(FlightPlanChanged(id));
 }
 
 fn setup_camera(
@@ -641,15 +662,15 @@ fn setup_camera(
             bevy_egui::PrimaryEguiContext,
             Camera3d::default(),
             Camera {
-                hdr: true,
+                order: 1,
                 ..default()
             },
             Projection::Perspective(PerspectiveProjection {
                 near: 0.001,
                 ..default()
             }),
-            bevy::render::camera::Exposure { ev100: 12.0 },
-            bevy::core_pipeline::bloom::Bloom::NATURAL,
+            bevy::camera::Exposure { ev100: 12.0 },
+            bevy::post_process::bloom::Bloom::NATURAL,
             Msaa::Sample4,
             Skybox {
                 image: skybox.handle.clone(),
@@ -657,7 +678,7 @@ fn setup_camera(
                 rotation: Quat::IDENTITY,
             },
             FloatingOrigin,
-            GridCell::default(),
+            CellCoord::default(),
             OrbitCamera::default().with_distance(5e4),
             CameraController::default()
                 .with_speed_bounds([1e-17, 10e35])
@@ -696,22 +717,18 @@ fn compute_ephemerides_bodies(
     let duration = Duration::from_days(365.0 * 2.0);
     let synchronisation = Synchronisation::hertz(100);
 
-    commands.trigger_targets(
-        ComputePrediction::<CelestialTrajectory<Forward>>::extend(
-            forward.propagator.clone(),
-            duration,
-            synchronisation,
-        ),
+    commands.trigger(ComputePrediction::<CelestialTrajectory<Forward>>::extend(
         root,
-    );
-    commands.trigger_targets(
-        ComputePrediction::<CelestialTrajectory<Backward>>::extend(
-            backward.propagator.clone(),
-            duration,
-            synchronisation,
-        ),
+        forward.propagator.clone(),
+        duration,
+        synchronisation,
+    ));
+    commands.trigger(ComputePrediction::<CelestialTrajectory<Backward>>::extend(
         root,
-    );
+        backward.propagator.clone(),
+        duration,
+        synchronisation,
+    ));
 }
 
 fn ephemerides_bodies_progress(
@@ -747,7 +764,6 @@ fn ephemerides_ships_progress(
         With<PredictionContext<SpacecraftTrajectory>>,
     >,
 ) {
-    state.set(MainState::Running);
     if query_tracker.iter().all(|t| t.is_none()) {
         state.set(MainState::Running);
         return;
