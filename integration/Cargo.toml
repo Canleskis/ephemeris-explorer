@@ -7,9 +7,7 @@ edition = "2024"
 num-traits = "0.2.19"
 
 [dev-dependencies]
+glam = { workspace = true }
+particular = { workspace = true, features = ["glam"] }
 num-traits = "0.2.19"
-particular = { git = "https://github.com/Canleskis/particular.git", features = [
-    "glam",
-] }
-glam = "0.29"
 plotters = "0.3.7"

@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    floating_origin::{BigSpace, Grid, CellCoord, Grids},
+    floating_origin::{BigSpace, CellCoord, Grid, Grids},
     ui::WindowsUiSet,
 };
 
@@ -239,22 +239,6 @@ impl OrbitCamera {
     }
 }
 
-pub trait CameraInputExt {
-    fn any_mouse_input(&self) -> bool;
-
-    fn any_kb_input(&self) -> bool;
-}
-
-impl CameraInputExt for CameraInput {
-    fn any_mouse_input(&self) -> bool {
-        self.pitch != 0.0 || self.yaw != 0.0
-    }
-
-    fn any_kb_input(&self) -> bool {
-        self.forward != 0.0 || self.right != 0.0 || self.up != 0.0 || self.roll != 0.0
-    }
-}
-
 #[derive(Default)]
 pub struct CameraPlugin;
 
@@ -370,10 +354,8 @@ fn change_camera_state(world: &mut World) {
 }
 
 fn hide_cursor(
-    mut query: Query<&mut bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
+    mut cursor_options: Single<&mut bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
 ) {
-    let mut cursor_options = query.single_mut().unwrap();
-
     if cursor_options.visible {
         cursor_options.visible = false;
         cursor_options.grab_mode = bevy::window::CursorGrabMode::Confined;
@@ -381,10 +363,8 @@ fn hide_cursor(
 }
 
 fn show_cursor(
-    mut query: Query<&mut bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
+    mut cursor_options: Single<&mut bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
 ) {
-    let mut cursor_options = query.single_mut().unwrap();
-
     if !cursor_options.visible {
         cursor_options.visible = true;
         cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
@@ -558,7 +538,12 @@ pub fn camera_controller(
     time: Res<Time>,
     grids: Grids,
     mut input: ResMut<CameraInput>,
-    mut camera: Query<(Entity, &mut CellCoord, &mut Transform, &mut CameraController)>,
+    mut camera: Query<(
+        Entity,
+        &mut CellCoord,
+        &mut Transform,
+        &mut CameraController,
+    )>,
 ) {
     for (camera, mut cell, mut transform, mut controller) in camera.iter_mut() {
         let Some(grid) = grids.parent_grid(camera) else {

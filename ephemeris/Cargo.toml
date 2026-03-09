@@ -8,22 +8,18 @@ version = "0.1.0"
 # serde = ["dep:serde"]
 
 [dependencies]
-ftime = { path = "../ftime" }
-integration = { path = "../integration" }
-num-traits = "0.2.19"
+ftime = { workspace = true }
+integration = { workspace = true }
+particular = { workspace = true }
 
-particular = { git = "https://github.com/Canleskis/particular.git", features = [
-    "glam",
-] }
+num-traits = "0.2.19"
 deepsize = "0.2.0"
 smallvec = { version = "1.13.2", features = ["serde"] }
 
 [dev-dependencies]
-particular = { git = "https://github.com/Canleskis/particular.git", features = [
-    "glam",
-] }
-glam = "0.29.3"
+glam = { workspace = true }
+particular = { workspace = true, features = ["glam"] } 
 twofloat = "0.8.4"
 
-horizons_solar_system = { path = "../horizons_solar_system" }
+horizons_solar_system = { workspace = true }
 bincode = { version = "2", features = ["serde"] }

@@ -334,7 +334,7 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
     }
 
     fn extensions(&self) -> &[&str] {
-        &["toml"]
+        &["json"]
     }
 }
 

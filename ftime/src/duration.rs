@@ -66,7 +66,7 @@ impl Duration {
 
     #[inline]
     pub const fn as_days(self) -> f64 {
-        self.0 / SEC_PER_DAY as f64
+        self.0 / SEC_PER_DAY
     }
 
     #[inline]

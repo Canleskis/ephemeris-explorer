@@ -37,7 +37,7 @@ impl Epoch {
         let days_since_1958 = z - base_1958;
         let sod = (hour as i64) * 3600 + (minute as i64) * 60 + (second as i64);
         let secs = days_since_1958 * SEC_PER_DAY as i64 + sod;
-        let total = secs as f64 + (millis as f64) / MS_PER_SEC as f64;
+        let total = secs as f64 + (millis as f64) / MS_PER_SEC;
         Ok(Epoch {
             offset: Duration::from_seconds(total),
         })
@@ -201,8 +201,13 @@ impl std::str::FromStr for Epoch {
             .map_err(|_| EpochParseError::BadNumber)?;
 
         let millis: u32 = if let Some(frac) = frac_opt {
-            // We only support milliseconds precision and truncate extra digits.
-            frac[..3].parse().map_err(|_| EpochParseError::BadNumber)?
+            if frac.is_empty() || !frac.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(EpochParseError::BadNumber);
+            }
+
+            let digits = &frac[..frac.len().min(3)];
+            let value: u32 = digits.parse().map_err(|_| EpochParseError::BadNumber)?;
+            value * 10_u32.pow((3 - digits.len()) as u32)
         } else {
             0
         };
@@ -216,8 +221,7 @@ impl std::fmt::Display for Epoch {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut secs = self.offset.as_seconds().floor() as i64;
-        let mut millis =
-            ((self.offset.as_seconds() - secs as f64) * MS_PER_SEC as f64).round() as i64;
+        let mut millis = ((self.offset.as_seconds() - secs as f64) * MS_PER_SEC).round() as i64;
         if millis == MS_PER_SEC as i64 {
             secs += 1;
             millis = 0;
