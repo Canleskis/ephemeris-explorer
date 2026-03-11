@@ -1,5 +1,3 @@
-use std::f64;
-use std::hash::{Hash, Hasher};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use ephemeris::StateVector;
@@ -9,38 +7,7 @@ use horizons_solar_system::{SolarSystem, SolarSystemObject};
 use integration::prelude::*;
 use particular::gravity::newtonian::AccelerationPaired;
 
-const CACHE_PATH: &str = "fetch_cache";
-
-fn fetch_solar_system_cached(bodies: &[SolarSystemObject], start: Epoch) -> SolarSystem {
-    let mut hasher = std::hash::DefaultHasher::new();
-    (bodies, start).hash(&mut hasher);
-    let hash = hasher.finish();
-
-    // Check cache
-    let cache_path = std::path::Path::new(CACHE_PATH).join(hash.to_string());
-    if let Ok(mut file) = std::fs::File::open(&cache_path) {
-        println!("Loading data from cache...");
-        return bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())
-            .expect("Failed to read cache");
-    }
-
-    println!("Fetching data from JPL Horizons...");
-    let system = horizons_solar_system::fetch_solar_system(
-        bodies,
-        start,
-        start + Duration::from_seconds(1.0),
-        Duration::from_days(1.0),
-    )
-    .unwrap()
-    .remove(0);
-
-    // Write to cache
-    let mut file = std::fs::File::create(cache_path).expect("Failed to create cache file");
-    bincode::serde::encode_into_std_write(&system, &mut file, bincode::config::standard())
-        .expect("Failed to write cache");
-
-    system
-}
+mod common;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Double<T> {
@@ -377,9 +344,9 @@ const BODIES: &[SolarSystemObject] = {
 #[test]
 fn solar_system_convergence() -> Result<(), Box<dyn std::error::Error>> {
     let start = "2000-01-01 00:00:00".parse()?;
+    let mut n_body_problem =
+        n_body_from_solar_system(&common::fetch_solar_system_cached(BODIES, start));
     let end = "2001-01-01 00:00:00".parse::<Epoch>()?;
-
-    let mut n_body_problem = n_body_from_solar_system(&fetch_solar_system_cached(BODIES, start));
     n_body_problem.bound = end.as_offset_seconds();
 
     use Unit::*;

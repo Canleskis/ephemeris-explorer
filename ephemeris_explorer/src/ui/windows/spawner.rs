@@ -387,7 +387,7 @@ impl ShipSpawnerWindow {
                 data.start,
                 sv,
                 DEFAULT_ADAPTIVE_PARAMS,
-                prediction.propagator.context().clone(),
+                prediction.propagator.environment().clone(),
                 Timeline::default(),
             );
 

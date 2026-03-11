@@ -205,7 +205,7 @@ fn load_solar_system_state(
                 events.write(event);
             }
             Err(err) => {
-                bevy::log::error!(
+                error!(
                     "Failed to load solar system at {}: {}",
                     picked.path.display(),
                     err

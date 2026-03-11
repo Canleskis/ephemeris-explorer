@@ -89,7 +89,7 @@ impl SettingsWindow {
                     .inner
                     .changed()
                 {
-                    bevy::log::debug!("Settings were changed");
+                    debug!("Settings were changed");
                     settings.set_changed();
                 }
 

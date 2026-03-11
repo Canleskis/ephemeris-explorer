@@ -400,7 +400,7 @@ fn plot_manoeuvres(
                 if let Some(transform) = trajectory.state_vector(burn.start).and_then(|sv| {
                     burn.try_reference_frame(&query_trajectory)
                         .expect("invalid burn reference entity")
-                        .transform(burn.start, &sv)
+                        .transform(burn.start, &sv, &())
                 }) {
                     let prograde = transform_vector3(transform.0.x_axis, *root);
                     let radial = transform_vector3(transform.0.y_axis, *root);

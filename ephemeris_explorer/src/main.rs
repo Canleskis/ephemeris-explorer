@@ -5,7 +5,7 @@ pub mod auto_extend;
 pub mod camera;
 pub mod dynamics;
 pub mod flight_plan;
-pub mod floating_origin; 
+pub mod floating_origin;
 pub mod load;
 pub mod prediction;
 pub mod rotation;

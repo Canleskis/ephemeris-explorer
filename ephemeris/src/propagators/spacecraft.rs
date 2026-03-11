@@ -1,6 +1,6 @@
 use crate::{
     BranchingPropagator, DirectionalPropagator, IncrementalPropagator, Iterable, Propagator,
-    trajectory::{BoundedTrajectory, CubicHermiteSplineSamples, EvaluateTrajectory, StateVector},
+    trajectory::{BoundedTrajectory, CubicHermiteSplineSamples, StateVector},
 };
 
 use ftime::{Duration, Epoch};
@@ -20,59 +20,10 @@ pub trait Transform<V> {
     fn to_inertial(&self, v: &V) -> V;
 }
 
-pub trait Frame<V> {
+pub trait Frame<V, C> {
     type Transform;
 
-    fn transform(&self, t: Epoch, sv: &StateVector<V>) -> Option<Self::Transform>;
-}
-
-#[derive(Clone, Default, Debug, PartialEq)]
-pub enum ReferenceKind<T> {
-    /// Relative to a reference trajectory.
-    Relative(T),
-    #[default]
-    Inertial,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ReferenceFrame<T, F> {
-    reference: ReferenceKind<T>,
-    _frame: std::marker::PhantomData<F>,
-}
-
-impl<T, F> ReferenceFrame<T, F> {
-    #[inline]
-    pub fn relative(trajectory: T) -> Self {
-        Self {
-            reference: ReferenceKind::Relative(trajectory),
-            _frame: std::marker::PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn inertial() -> Self {
-        Self {
-            reference: ReferenceKind::Inertial,
-            _frame: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<T, F> Frame<T::Vector> for ReferenceFrame<T, F>
-where
-    T: EvaluateTrajectory,
-    T::Vector: std::ops::Sub<Output = T::Vector> + Copy,
-    F: From<StateVector<T::Vector>> + Default,
-{
-    type Transform = F;
-
-    #[inline]
-    fn transform(&self, t: Epoch, sv: &StateVector<T::Vector>) -> Option<Self::Transform> {
-        match &self.reference {
-            ReferenceKind::Relative(reference) => Some(F::from(*sv - reference.state_vector(t)?)),
-            ReferenceKind::Inertial => Some(F::default()),
-        }
-    }
+    fn transform(&self, t: Epoch, sv: &StateVector<V>, environment: &C) -> Option<Self::Transform>;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -89,18 +40,18 @@ impl<V, F> ConstantThrust<V, F> {
             frame,
         }
     }
-}
-
-impl<V, F> AccelerationModel for ConstantThrust<V, F>
-where
-    F: Frame<V>,
-    F::Transform: Transform<V>,
-{
-    type Vector = V;
 
     #[inline]
-    fn acceleration(&self, t: Epoch, sv: &StateVector<Self::Vector>) -> Option<Self::Vector> {
-        Some(self.frame.transform(t, sv)?.to_inertial(&self.acceleration))
+    fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, environment: &C) -> Option<V>
+    where
+        F: Frame<V, C>,
+        F::Transform: Transform<V>,
+    {
+        Some(
+            self.frame
+                .transform(t, sv, environment)?
+                .to_inertial(&self.acceleration),
+        )
     }
 }
 
@@ -139,21 +90,17 @@ impl<V, F> Segment<V, F> {
             Segment::Coast { .. } => None,
         }
     }
-}
-
-impl<V, F> AccelerationModel for Segment<V, F>
-where
-    V: Default,
-    F: Frame<V>,
-    F::Transform: Transform<V>,
-{
-    type Vector = V;
 
     #[inline]
-    fn acceleration(&self, t: Epoch, state: &StateVector<Self::Vector>) -> Option<Self::Vector> {
+    pub fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, environment: &C) -> Option<V>
+    where
+        V: Default,
+        F: Frame<V, C>,
+        F::Transform: Transform<V>,
+    {
         match self {
-            Segment::Burn { thrust, .. } => thrust.acceleration(t, state),
-            _ => Some(V::default()),
+            Segment::Burn { thrust, .. } => thrust.acceleration(t, sv, environment),
+            Segment::Coast { .. } => Some(V::default()),
         }
     }
 }
@@ -309,10 +256,12 @@ impl<C, V, F> SpacecraftModel<C, V, F> {
     pub fn manoeuvre_acceleration(&self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
     where
         V: Default,
-        F: Frame<V>,
+        F: Frame<V, C>,
         F::Transform: Transform<V>,
     {
-        self.current_segment().acceleration(t, sv).ok_or(EvalFailed)
+        self.current_segment()
+            .acceleration(t, sv, &self.environment)
+            .ok_or(EvalFailed)
     }
 }
 
@@ -320,7 +269,7 @@ impl<C, V, F> FirstOrderODE<f64, [StateVector<V>; 1]> for SpacecraftModel<C, V, 
 where
     C: AccelerationModel<Vector = V>,
     V: std::ops::Add<Output = V> + Default + Copy,
-    F: Frame<V>,
+    F: Frame<V, C>,
     F::Transform: Transform<V>,
 {
     #[inline]
@@ -471,7 +420,7 @@ where
     }
 
     #[inline]
-    pub fn context(&self) -> &C {
+    pub fn environment(&self) -> &C {
         &self.integration.problem.ode.environment
     }
 

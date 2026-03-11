@@ -18,8 +18,7 @@ smallvec = { version = "1.13.2", features = ["serde"] }
 
 [dev-dependencies]
 glam = { workspace = true }
-particular = { workspace = true, features = ["glam"] } 
-twofloat = "0.8.4"
+particular = { workspace = true, features = ["glam"] }
 
 horizons_solar_system = { workspace = true }
 bincode = { version = "2", features = ["serde"] }

@@ -215,7 +215,7 @@ fn apply_flight_plan(
         .downcast_ref::<CubicHermiteSplineSamples>()
         .unwrap();
 
-    if !propagator.context().is_valid_at(trajectory.start()) {
+    if !propagator.environment().is_valid_at(trajectory.start()) {
         return;
     };
 
@@ -248,12 +248,10 @@ fn apply_flight_plan(
     };
 
     let Some(&restart_sv) = trajectory.get(restart_epoch) else {
-        bevy::log::error!(
-            "something went wrong when trying to compute the flight plan from {restart_epoch}",
-        );
+        error!("something went wrong when trying to compute the flight plan from {restart_epoch}",);
         return;
     };
-    bevy::log::debug!("Restarting propagation from {}", restart_epoch);
+    debug!("restarting propagation from {}", restart_epoch);
 
     let propagator = SpacecraftPropagatorSoiDetection::new(
         restart_epoch,
@@ -262,7 +260,7 @@ fn apply_flight_plan(
             n_max: flight_plan.max_iterations as _,
             ..DEFAULT_ADAPTIVE_PARAMS
         },
-        propagator.context().clone(),
+        propagator.environment().clone(),
         timeline,
     );
 
@@ -296,9 +294,9 @@ fn trigger_on_trajectory_updates(
     {
         // Only trigger if the trajectory hasn't previously reached the end of the flight plan and
         // if the context allows for the prediction to start being computed.
-        if traj.end() < flight_plan.end && propagator.context().is_valid_at(traj.start()) {
+        if traj.end() < flight_plan.end && propagator.environment().is_valid_at(traj.start()) {
             // TODO: Remove this guard once we can restart the prediction from the end.
-            if !propagator.context().is_valid_at(flight_plan.end) {
+            if !propagator.environment().is_valid_at(flight_plan.end) {
                 continue;
             }
 

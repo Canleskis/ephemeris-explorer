@@ -45,10 +45,14 @@ pub(crate) fn extract_linegizmos(
         } = gizmo.line_config.style
         {
             if gap_scale <= 0.0 {
-                once!(warn!("when using gizmos with the line style `GizmoLineStyle::Dashed{{..}}` the gap scale should be greater than zero"));
+                once!(warn!(
+                    "when using gizmos with the line style `GizmoLineStyle::Dashed{{..}}` the gap scale should be greater than zero"
+                ));
             }
             if line_scale <= 0.0 {
-                once!(warn!("when using gizmos with the line style `GizmoLineStyle::Dashed{{..}}` the line scale should be greater than zero"));
+                once!(warn!(
+                    "when using gizmos with the line style `GizmoLineStyle::Dashed{{..}}` the line scale should be greater than zero"
+                ));
             }
             (gap_scale, line_scale)
         } else {

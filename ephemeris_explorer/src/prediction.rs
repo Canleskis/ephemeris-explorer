@@ -224,6 +224,11 @@ impl Default for Synchronisation {
 
 impl Synchronisation {
     #[inline]
+    pub fn end() -> Self {
+        Self::steps(usize::MAX)
+    }
+
+    #[inline]
     pub fn steps(minimum: usize) -> Self {
         let minimum = 1.max(minimum);
         Self::Steps {
@@ -272,17 +277,17 @@ impl Synchronisation {
 
 /// Steps the propagator and batches these steps before sending snapshots (based on `min_steps`).
 #[inline]
-async fn prediction_task<P>(
-    mut propagation: Propagation<P>,
+async fn prediction_task<T>(
+    mut propagation: Propagation<T::Propagator>,
     mut end: Epoch,
     mut sync: Synchronisation,
-    sender: async_channel::Sender<Propagation<P>>,
+    sender: async_channel::Sender<Propagation<T::Propagator>>,
     paused: std::sync::Weak<std::sync::atomic::AtomicBool>,
 ) where
-    P: PredictionPropagator,
+    T: PropagationTarget,
 {
-    let name = pretty_type_name::pretty_type_name::<P>();
-    bevy::log::debug!("Computing {name} prediction until {end}");
+    let name = pretty_type_name::pretty_type_name::<T>();
+    debug!("Computing {name} prediction until {end}");
     let t0 = std::time::Instant::now();
 
     let propagation = &mut propagation;
@@ -294,7 +299,7 @@ async fn prediction_task<P>(
         }
 
         if let Err(err) = propagation.step() {
-            bevy::log::warn!("{name}: {err}");
+            warn!("{name}: {err}");
             end = propagation.time();
         }
         sync.increment();
@@ -309,7 +314,7 @@ async fn prediction_task<P>(
         }
     }
 
-    bevy::log::debug!("Computing {name} prediction took: {:?}", t0.elapsed());
+    info!("Computing {name} prediction took: {:?}", t0.elapsed());
 }
 
 /// Starts async task for the targeted [`PredictionContext<P>`].
@@ -328,11 +333,11 @@ where
     } = trigger.event();
 
     if duration.is_negative() || *duration == Duration::ZERO {
-        bevy::log::error!("Cancelled {name} prediction: invalid duration: {duration}");
+        error!("Cancelled {name} prediction: invalid duration: {duration}");
         return;
     }
 
-    bevy::log::debug!("Starting {name} prediction for {duration}",);
+    debug!("Starting {name} prediction for {duration}",);
 
     let propagation = Propagation::new(propagator.clone());
     let current = propagation.time();
@@ -341,7 +346,7 @@ where
     let (sender, recver) = async_channel::bounded(1);
     let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let thread = bevy::tasks::AsyncComputeTaskPool::get().spawn(prediction_task::<T::Propagator>(
+    let thread = bevy::tasks::AsyncComputeTaskPool::get().spawn(prediction_task::<T>(
         propagation,
         end,
         *synchronisation,

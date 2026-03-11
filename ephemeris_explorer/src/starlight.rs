@@ -14,10 +14,8 @@ pub struct StarlightPlugin;
 
 impl Plugin for StarlightPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(First, setup_lights).add_systems(
-            PostUpdate,
-            lighting.after(TransformSystems::Propagate),
-        );
+        app.add_systems(First, setup_lights)
+            .add_systems(PostUpdate, lighting.after(TransformSystems::Propagate));
     }
 }
 

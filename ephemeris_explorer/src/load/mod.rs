@@ -473,11 +473,11 @@ fn spawn_loaded_bodies(
     commands.entity(root).insert((
         PredictionContext::<CelestialTrajectory<Forward>>::new(
             entities.clone(),
-            NBodyPropagator::new(Forward::new(dt), system.epoch, states.clone()),
+            NBodyPropagator::with(Forward::new(dt), system.epoch, states.clone()),
         ),
         PredictionContext::<CelestialTrajectory<Backward>>::new(
             entities,
-            NBodyPropagator::new(Backward::new(dt), system.epoch, states),
+            NBodyPropagator::with(Backward::new(dt), system.epoch, states),
         ),
     ));
 

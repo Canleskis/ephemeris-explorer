@@ -1,13 +1,14 @@
 use crate::{
+    DrawLineGizmo, DrawLineJointGizmo, GizmoRenderSystems, GpuLineGizmo,
+    LineGizmoUniformBindgroupLayout, SetLineGizmoBindGroup,
     init_line_gizmo_uniform_bind_group_layout, line_gizmo_vertex_buffer_layouts,
-    line_joint_gizmo_vertex_buffer_layouts, DrawLineGizmo, DrawLineJointGizmo, GizmoRenderSystems,
-    GpuLineGizmo, LineGizmoUniformBindgroupLayout, SetLineGizmoBindGroup,
+    line_joint_gizmo_vertex_buffer_layouts,
 };
 use bevy_app::{App, Plugin};
-use bevy_asset::{load_embedded_asset, AssetServer, Handle};
+use bevy_asset::{AssetServer, Handle, load_embedded_asset};
 use bevy_camera::visibility::RenderLayers;
 use bevy_core_pipeline::{
-    core_3d::{Transparent3d, CORE_3D_DEPTH_FORMAT},
+    core_3d::{CORE_3D_DEPTH_FORMAT, Transparent3d},
     oit::OrderIndependentTransparencySettings,
     prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass},
 };
@@ -24,16 +25,16 @@ use bevy_ecs::{
 use bevy_image::BevyDefault as _;
 use bevy_pbr::{ExtractedAtmosphere, MeshPipeline, MeshPipelineKey, SetMeshViewBindGroup};
 use bevy_render::{
-    render_asset::{prepare_assets, RenderAssets},
+    Render, RenderApp, RenderSystems,
+    render_asset::{RenderAssets, prepare_assets},
     render_phase::{
         AddRenderCommand, DrawFunctions, PhaseItemExtraIndex, SetItemPipeline,
         ViewSortedRenderPhases,
     },
     render_resource::*,
     view::{ExtractedView, Msaa, ViewTarget},
-    Render, RenderApp, RenderSystems,
 };
-use bevy_render::{sync_world::MainEntity, RenderStartup};
+use bevy_render::{RenderStartup, sync_world::MainEntity};
 use bevy_shader::Shader;
 use bevy_utils::default;
 use tracing::error;
@@ -224,7 +225,9 @@ impl SpecializedRenderPipeline for LineJointGizmoPipeline {
         let layout = vec![view_layout.main_layout.clone(), self.uniform_layout.clone()];
 
         if key.joints == GizmoLineJoint::None {
-            error!("There is no entry point for line joints with GizmoLineJoints::None. Please consider aborting the drawing process before reaching this stage.");
+            error!(
+                "There is no entry point for line joints with GizmoLineJoints::None. Please consider aborting the drawing process before reaching this stage."
+            );
         };
 
         let entry_point = match key.joints {

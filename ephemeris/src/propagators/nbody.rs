@@ -226,6 +226,49 @@ where
     pub fn new(
         direction: D,
         initial_time: Epoch,
+        positions: Vec<V>,
+        velocities: Vec<V>,
+        gravitational_parameters: Vec<f64>,
+        interpolations: Vec<(Duration, A)>,
+    ) -> Self
+    where
+        V: Copy,
+        D: PropagationDirection,
+        M: NewMethod<FixedMethodParams<f64>>,
+        M::Integrator: Integrator<NBodyProblem<V>>,
+    {
+        let interpolation = positions
+            .iter()
+            .zip(interpolations)
+            .map(|(position, (sample_period, algorithm))| Interpolation {
+                last_sample_time: Duration::ZERO,
+                sample_period,
+                interpolator: PolyonmialInterpolator::new(position),
+                algorithm,
+            })
+            .collect();
+
+        Self {
+            integration: M::new(FixedMethodParams::new(
+                direction.signed_delta().as_seconds(),
+            ))
+            .integrate(NBodyProblem {
+                time: initial_time.as_offset_seconds(),
+                bound: f64::INFINITY,
+                state: SecondOrderState::new(positions, velocities),
+                ode: NewtonianGravity {
+                    gravitational_parameters,
+                },
+            }),
+            interpolation,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn with(
+        direction: D,
+        initial_time: Epoch,
         initial_state: Vec<(StateVector<V>, f64, Duration, A)>,
     ) -> Self
     where
@@ -315,7 +358,6 @@ where
         Ok(())
     }
 }
-
 
 impl<D, V, M, A> Propagator for NBodyPropagator<D, V, M, A>
 where

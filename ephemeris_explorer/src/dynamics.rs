@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use deepsize::DeepSizeOf;
 use ephemeris::{
     AccelerationModel, BoundedTrajectory, BranchingPropagator, DirectionalPropagator,
-    EvaluateTrajectory, IncrementalPropagator, InterpolationAlgorithm, Polynomial,
+    EvaluateTrajectory, Frame, IncrementalPropagator, InterpolationAlgorithm, Polynomial,
     PropagationEnvironment, Propagator, Transform, eval_slice_horner,
 };
 use ftime::{Duration, Epoch};
@@ -308,16 +308,11 @@ impl PropagationTarget for CelestialTrajectory<Backward> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TNB(pub DMat3);
 
-impl Default for TNB {
-    #[inline]
-    fn default() -> Self {
-        Self(DMat3::IDENTITY)
-    }
-}
+impl TNB {
+    pub const IDENTITY: Self = Self(DMat3::IDENTITY);
 
-impl From<StateVector> for TNB {
     #[inline]
-    fn from(sv: StateVector) -> Self {
+    pub fn new(sv: StateVector) -> Self {
         let x = sv.velocity.normalize_or_zero();
         let y = sv.position.cross(sv.velocity).normalize_or_zero();
         let z = x.cross(y).normalize_or_zero();
@@ -332,7 +327,37 @@ impl Transform<DVec3> for TNB {
     }
 }
 
-pub type ReferenceFrame = ephemeris::ReferenceFrame<Trajectory, TNB>;
+#[derive(Clone, Default, Debug, PartialEq)]
+pub enum ReferenceFrame {
+    /// Relative to a reference trajectory.
+    Relative(Trajectory),
+    #[default]
+    Inertial,
+}
+
+impl ReferenceFrame {
+    #[inline]
+    pub fn relative(trajectory: Trajectory) -> Self {
+        Self::Relative(trajectory)
+    }
+
+    #[inline]
+    pub fn inertial() -> Self {
+        Self::Inertial
+    }
+}
+
+impl<C> Frame<DVec3, C> for ReferenceFrame {
+    type Transform = TNB;
+
+    #[inline]
+    fn transform(&self, t: Epoch, sv: &StateVector, _: &C) -> Option<Self::Transform> {
+        match &self {
+            ReferenceFrame::Relative(reference) => Some(TNB::new(*sv - reference.state_vector(t)?)),
+            ReferenceFrame::Inertial => Some(TNB::IDENTITY),
+        }
+    }
+}
 
 pub type ConstantThrust = ephemeris::ConstantThrust<DVec3, ReferenceFrame>;
 
@@ -391,7 +416,7 @@ impl GravitationalBody {
 
 impl GravitationalBody {
     #[inline]
-    fn soi_transition_with<T>(
+    pub fn soi_transition_with<T>(
         &self,
         trajectory: T,
         t0: Epoch,
@@ -456,6 +481,47 @@ where
 #[derive(Clone)]
 pub struct Bodies(pub bevy::ecs::entity::EntityHashMap<GravitationalBody>);
 
+impl Bodies {
+    #[inline]
+    pub fn iter(
+        &self,
+    ) -> bevy::platform::collections::hash_map::Iter<'_, Entity, GravitationalBody> {
+        self.0.iter()
+    }
+
+    #[inline]
+    pub fn soi_at(&self, t: Epoch, position: DVec3, except: &[Entity]) -> Option<Entity> {
+        find_soi(
+            self.0
+                .iter()
+                .filter(|(entity, _)| !except.contains(entity))
+                .flat_map(|(entity, body)| {
+                    Some((*entity, body.trajectory.position(t)?, body.soi.radius))
+                }),
+            position,
+        )
+    }
+
+    #[inline]
+    pub fn is_valid_at(&self, t: Epoch) -> bool {
+        self.0.values().all(|body| body.trajectory.contains(t))
+    }
+}
+
+#[inline]
+pub fn find_soi<I>(iter: I, position: DVec3) -> Option<Entity>
+where
+    I: IntoIterator<Item = (Entity, DVec3, f64)>,
+{
+    iter.into_iter()
+        .map(|(entity, soi_position, soi_radius)| {
+            (entity, position.distance_squared(soi_position), soi_radius)
+        })
+        .filter(|(_, soi_distance_sq, soi_radius)| *soi_distance_sq < soi_radius * soi_radius)
+        .min_by(|(_, a, _), (_, b, _)| a.total_cmp(b))
+        .map(|(entity, _, _)| entity)
+}
+
 impl AccelerationModel for Bodies {
     type Vector = DVec3;
 
@@ -475,40 +541,6 @@ impl PropagationEnvironment for Bodies {
         self.0
             .values()
             .fold(Epoch::MAX, |end, body| end.min(body.trajectory.end()))
-    }
-}
-
-#[inline]
-pub fn find_soi<I>(iter: I, position: DVec3) -> Option<Entity>
-where
-    I: IntoIterator<Item = (Entity, DVec3, f64)>,
-{
-    iter.into_iter()
-        .map(|(entity, soi_position, soi_radius)| {
-            (entity, position.distance_squared(soi_position), soi_radius)
-        })
-        .filter(|(_, soi_distance_sq, soi_radius)| *soi_distance_sq < soi_radius * soi_radius)
-        .min_by(|(_, a, _), (_, b, _)| a.total_cmp(b))
-        .map(|(entity, _, _)| entity)
-}
-
-impl Bodies {
-    #[inline]
-    pub fn soi_at(&self, t: Epoch, position: DVec3, except: &[Entity]) -> Option<Entity> {
-        find_soi(
-            self.0
-                .iter()
-                .filter(|(entity, _)| !except.contains(entity))
-                .flat_map(|(entity, body)| {
-                    Some((*entity, body.trajectory.position(t)?, body.soi.radius))
-                }),
-            position,
-        )
-    }
-
-    #[inline]
-    pub fn is_valid_at(&self, t: Epoch) -> bool {
-        self.0.values().all(|body| body.trajectory.contains(t))
     }
 }
 
@@ -656,8 +688,8 @@ impl SpacecraftPropagatorSoiDetection {
     }
 
     #[inline]
-    pub fn context(&self) -> &Bodies {
-        self.0.context()
+    pub fn environment(&self) -> &Bodies {
+        self.0.environment()
     }
 
     #[inline]
@@ -686,12 +718,12 @@ impl IncrementalPropagator for SpacecraftPropagatorSoiDetection {
 
         let t1 = self.time();
         let p1 = self.position();
-        for (entity, body) in self.0.context().0.iter() {
-            if let Some((time, position, rate)) = body.soi_transition_with(&*traj, t0, t1, p0, p1) {
+        for (entity, body) in self.environment().iter() {
+            if let Some((time, pos, rate)) = body.soi_transition_with(&*traj, t0, t1, p0, p1) {
                 if rate.is_sign_negative() {
                     transitions.insert(time, *entity);
-                } else if let Some(entered) = self.context().soi_at(time, position, &[*entity]) {
-                    transitions.insert(time, entered)
+                } else if let Some(entered) = self.environment().soi_at(time, pos, &[*entity]) {
+                    transitions.insert(time, entered);
                 }
             }
         }

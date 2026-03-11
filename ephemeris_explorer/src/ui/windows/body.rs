@@ -573,7 +573,7 @@ impl BodyInfoWindow {
                                             idx,
                                             *root,
                                             entity,
-                                            prediction.propagator.context(),
+                                            prediction.propagator.environment(),
                                             &mut query_hierarchy,
                                             &query_satellites,
                                             min_time,

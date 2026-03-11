@@ -108,7 +108,7 @@ fn setup_initial_soi_transition(
     root: Single<Entity, With<SystemRoot>>,
 ) {
     let Some(start) = query_bodies.iter().map(|(_, traj, _)| traj.start()).max() else {
-        bevy::log::error!("This shouldn't happen");
+        error!("This shouldn't happen");
         return;
     };
     for (entity, trajectory, analysis, mut transitions) in query.iter_mut() {

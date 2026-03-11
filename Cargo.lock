@@ -2449,7 +2449,6 @@ dependencies = [
  "num-traits",
  "particular",
  "smallvec",
- "twofloat",
 ]
 
 [[package]]
@@ -3072,16 +3071,6 @@ dependencies = [
  "constgebra",
  "glam",
  "tinyvec",
-]
-
-[[package]]
-name = "hexf"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6618f4550dcd7d9ddb5126ab18d48dfa31aa952159cb832390bda464d3bc827e"
-dependencies = [
- "hexf-parse",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -5868,17 +5857,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
-]
-
-[[package]]
-name = "twofloat"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f25f7bfd28a043cba51ea618ad2d29c5fa991a1237a4c0b592b466fbbb60c5c"
-dependencies = [
- "hexf",
- "libm",
- "num-traits",
 ]
 
 [[package]]

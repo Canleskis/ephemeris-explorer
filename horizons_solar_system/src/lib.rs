@@ -86,7 +86,7 @@ pub fn fetch_body(
             ("TIME_TYPE", "TT"),
             ("START_TIME", &to_iso(to_tt(start))),
             ("STOP_TIME", &to_iso(to_tt(end))),
-            ("STEP_SIZE", &format!("'{}'", step.as_seconds())),
+            ("STEP_SIZE", &step.to_string().replace(' ', "")),
             ("REF_SYSTEM", "ICRF"),
             ("REF_PLANE", "FRAME"),
             ("VEC_TABLE", "2"),
