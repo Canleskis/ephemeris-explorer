@@ -8,8 +8,8 @@ use crate::{
     },
 };
 
-use bevy::math::DVec3;
 use bevy::prelude::*;
+use bevy::{ecs::query::QueryEntityError, math::DVec3};
 use ephemeris::BoundedTrajectory;
 use ftime::{Duration, Epoch};
 use integration::AdaptiveMethodParams;
@@ -84,7 +84,7 @@ impl Burn {
     }
 
     #[inline]
-    pub fn active(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         self.enabled && !self.overlaps
     }
 
@@ -99,12 +99,13 @@ impl Burn {
     }
 
     #[inline]
-    pub fn try_reference_frame(&self, query: &Query<&Trajectory>) -> Option<ReferenceFrame> {
+    pub fn try_reference_frame(
+        &self,
+        query: &Query<&Trajectory>,
+    ) -> Result<ReferenceFrame, QueryEntityError> {
         match self.frame {
-            BurnFrame::Relative => Some(ReferenceFrame::relative(
-                query.get(self.reference).ok()?.clone(),
-            )),
-            BurnFrame::Inertial => Some(ReferenceFrame::inertial()),
+            BurnFrame::Relative => Ok(ReferenceFrame::relative(query.get(self.reference)?.clone())),
+            BurnFrame::Inertial => Ok(ReferenceFrame::inertial()),
         }
     }
 
@@ -114,16 +115,15 @@ impl Burn {
     }
 
     #[inline]
-    pub fn to_constant_thurst(&self, query: &Query<&Trajectory>) -> (Epoch, Epoch, ConstantThrust) {
-        (
+    pub fn to_constant_thurst(
+        &self,
+        query: &Query<&Trajectory>,
+    ) -> Result<(Epoch, Epoch, ConstantThrust), QueryEntityError> {
+        Ok((
             self.start,
             self.end(),
-            ConstantThrust::new(
-                self.acceleration / 1e3,
-                self.try_reference_frame(query)
-                    .expect("invalid burn reference entity"),
-            ),
-        )
+            ConstantThrust::new(self.acceleration / 1e3, self.try_reference_frame(query)?),
+        ))
     }
 }
 
@@ -161,20 +161,23 @@ impl FlightPlan {
     pub fn total_delta_v(&self) -> f64 {
         self.burns
             .values()
-            .filter(|burn| burn.active())
+            .filter(|burn| burn.is_active())
             .map(Burn::delta_v)
             .sum()
     }
 
     #[inline]
-    pub fn generate_timeline(&self, query: &Query<&Trajectory>) -> Timeline {
-        Timeline::new(
+    pub fn generate_timeline(
+        &self,
+        query: &Query<&Trajectory>,
+    ) -> Result<Timeline, QueryEntityError> {
+        Ok(Timeline::new(
             self.burns
                 .values()
-                .filter(|burn| burn.active())
+                .filter(|burn| burn.is_active())
                 .map(|burn| burn.to_constant_thurst(query))
-                .collect(),
-        )
+                .collect::<Result<_, _>>()?,
+        ))
     }
 }
 
@@ -220,7 +223,10 @@ fn apply_flight_plan(
     };
 
     flight_plan.compute_overlaps();
-    let timeline = flight_plan.generate_timeline(&query_trajectory);
+    let Ok(timeline) = flight_plan.generate_timeline(&query_trajectory) else {
+        error!("something went wrong when trying to compute the new flight plan timeline");
+        return;
+    };
 
     // This determines the epoch from which we restart the propagation.
     //
@@ -269,6 +275,7 @@ fn apply_flight_plan(
         propagator,
         flight_plan.end - restart_epoch,
         Synchronisation::hertz(1000),
+        // Synchronisation::end(),
     ));
 }
 

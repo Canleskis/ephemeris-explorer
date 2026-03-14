@@ -560,6 +560,7 @@ impl Tolerance<[StateVector; 1]> for AbsTol {
     }
 }
 
+pub type Segment = ephemeris::Segment<DVec3, ReferenceFrame>;
 pub type Timeline = ephemeris::Timeline<DVec3, ReferenceFrame>;
 
 pub type SpacecraftPropagator =
@@ -630,6 +631,11 @@ impl SoiTransitions {
     #[inline]
     pub fn iter(&self) -> std::slice::Iter<'_, (Epoch, Entity)> {
         self.0.iter()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 

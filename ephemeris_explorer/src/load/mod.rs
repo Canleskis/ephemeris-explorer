@@ -6,7 +6,7 @@ pub use ui::*;
 
 use crate::{
     MainState,
-    analysis::{OrbitPlotConfig, OrbitTarget, OrbitalPlotReference, SoiTransitionsAnalysis},
+    analysis::{OrbitPlotConfig, OrbitTarget, OrbitPlotReference, SoiTransitionsAnalysis},
     camera::{CameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
         Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, DEFAULT_ADAPTIVE_PARAMS,
@@ -380,7 +380,7 @@ fn spawn_loaded_bodies(
                     bound: PlotBound::Start,
                     resolution: 0.5,
                     max_points_per_segment: 10_000,
-                    reference: OrbitalPlotReference::Primary,
+                    reference: OrbitPlotReference::Primary,
                 },
             ));
 
@@ -641,7 +641,7 @@ fn spawn_ship(
             bound: PlotBound::Start,
             resolution: 0.5,
             max_points_per_segment: 10_000,
-            reference: OrbitalPlotReference::Primary,
+            reference: OrbitPlotReference::Primary,
         },
         OrbitTarget(None),
     ));

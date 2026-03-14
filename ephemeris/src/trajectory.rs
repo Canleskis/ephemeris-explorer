@@ -546,9 +546,9 @@ impl<V> UniformSpline<V> {
         F: Fn(&Polynomial<V>, f64) -> T,
     {
         let local = at - self.start;
-        // Evaluate "previous" polynomial when at a knot.
+        // Evaluate "previous" polynomial when at a knot, ensuring `self.end()` can be evaluated.
         let local_index = self.index_local_exclusive(local)?;
-        let local_polynomial = local - self.interval.scaled(local_index as f64);
+        let local_polynomial = local - self.interval * local_index as f64;
         let normalised = local_polynomial.as_seconds() / self.interval.as_seconds();
 
         Some(eval(self.polynomials.get(local_index)?, normalised))
@@ -580,7 +580,7 @@ impl<V> UniformSpline<V> {
         }
 
         // This simply computes the previous representable f64. If the value is an integer, the
-        // dividing will return the previous integer, effectively making the index exclusive.
+        // division will return the previous integer, effectively making the index exclusive.
         Some(
             (f64::from_bits(time.as_seconds().to_bits().saturating_sub(1))
                 / self.interval.as_seconds()) as usize,
@@ -717,17 +717,10 @@ where
     fn position(&self, at: Epoch) -> Option<V> {
         match self.binary_search(at) {
             Ok(i) => Some(self.0[i].1.position),
-            Err(i) => {
-                let &(t1, sv1) = self.0.get(i.checked_sub(1)?)?;
-                let &(t2, sv2) = self.0.get(i)?;
-                let hermite = CubicHermite::new(
-                    (t1.as_offset_seconds(), t2.as_offset_seconds()),
-                    (sv1.position, sv2.position),
-                    (sv1.velocity, sv2.velocity),
-                );
-
-                Some(hermite.eval(at.as_offset_seconds()))
-            }
+            Err(i) => Some(
+                self.hermite3(i.checked_sub(1)?)?
+                    .eval(at.as_offset_seconds()),
+            ),
         }
     }
 
@@ -764,7 +757,7 @@ impl<V> CubicHermiteSplineSamples<V> {
     }
 
     #[inline]
-    fn hermite3(&self, i: usize) -> Option<CubicHermite<V>>
+    pub fn hermite3(&self, i: usize) -> Option<CubicHermite<V>>
     where
         V: std::ops::Add<Output = V>
             + std::ops::Sub<Output = V>

@@ -1,9 +1,11 @@
 use crate::{
     MainState,
     camera::CameraProximityIgnore,
-    dynamics::{SoiTransitions, SphereOfInfluence, Trajectory, find_soi},
+    dynamics::{
+        Segment, SoiTransitions, SpacecraftTrajectory, SphereOfInfluence, Trajectory, find_soi,
+    },
     load::SystemRoot,
-    prediction::PredictionSystems,
+    prediction::{PredictionContext, PredictionSystems},
     simulation::SimulationTime,
     ui::{PlotBound, PlotConfig, PlotSeparation, PlotSource, PlotSourceOf, remove_tooltip},
 };
@@ -100,7 +102,7 @@ fn is_system_initialized(query: Query<&Trajectory, With<SphereOfInfluence>>) -> 
 fn setup_initial_soi_transition(
     mut query: Query<(
         Entity,
-        &Trajectory,
+        Ref<Trajectory>,
         &SoiTransitionsAnalysis,
         &mut SoiTransitions,
     )>,
@@ -112,25 +114,39 @@ fn setup_initial_soi_transition(
         return;
     };
     for (entity, trajectory, analysis, mut transitions) in query.iter_mut() {
-        if transitions.is_changed() {
-            let search_time = match analysis {
-                SoiTransitionsAnalysis::Static => start,
-                SoiTransitionsAnalysis::Dynamic => trajectory.start(),
-            };
-
-            let Some(position) = trajectory.position(search_time) else {
-                continue;
-            };
-
-            let soi = find_soi_query(query_bodies, entity, search_time, position);
-            // If an SOI for an entity can't be found we use the root.
-            transitions.insert(Epoch::MIN, soi.unwrap_or(*root));
+        if !trajectory.is_changed() {
+            continue;
         }
+
+        if matches!(analysis, SoiTransitionsAnalysis::Static) && !transitions.is_empty() {
+            continue;
+        }
+
+        let search_time = match analysis {
+            SoiTransitionsAnalysis::Static => start,
+            SoiTransitionsAnalysis::Dynamic => trajectory.start(),
+        };
+
+        let Some(position) = trajectory.position(search_time) else {
+            continue;
+        };
+
+        let soi = find_soi_query(query_bodies, entity, search_time, position);
+        // If an SOI for an entity can't be found we use the root.
+        transitions.insert(Epoch::MIN, soi.unwrap_or(*root));
     }
 }
 
+pub struct TrajectorySegment<S> {
+    pub time: Epoch,
+    pub reference: Entity,
+    pub segment: S,
+}
+
+// If we make orbital phases flat, we still need to easily get the next transition
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum OrbitalPlotReference {
+pub enum OrbitPlotReference {
     Entity(Entity),
     Primary,
 }
@@ -144,7 +160,7 @@ pub struct OrbitPlotConfig {
     pub color: Color,
     pub resolution: f32,
     pub max_points_per_segment: usize,
-    pub reference: OrbitalPlotReference,
+    pub reference: OrbitPlotReference,
 }
 
 #[derive(Clone, Copy, Debug, Component)]
@@ -156,33 +172,34 @@ pub enum PlotSegment {
     Orbit,
 }
 
-impl std::fmt::Display for PlotSegment {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PlotSegment::Capture => write!(f, "Capture"),
-            PlotSegment::Escape => write!(f, "Escape"),
-            PlotSegment::Flyby => write!(f, "Flyby"),
-            PlotSegment::Transit => write!(f, "Transit"),
-            PlotSegment::Orbit => write!(f, "Orbit"),
-        }
-    }
-}
+#[derive(Component)]
+pub struct BurnPlotSegment;
 
+// This function sets up plot segments for entities with `OrbitPlotConfig`. Plot segments are
+// standalone entities.
+// We plot a new segment after every significant trajectory event, currently consisting of SOI
+// transitions and burns. This allows for events to always be visible and to have different styles
+// for different segments (reference, color, etc.). There may be multiple plot segments for the same
+// segment of a trajectory.
 #[expect(clippy::type_complexity)]
 fn setup_in_soi_plotting(
     query: Query<
-        (Entity, &SoiTransitions, &OrbitPlotConfig),
+        (
+            Entity,
+            &SoiTransitions,
+            &OrbitPlotConfig,
+            Option<&PredictionContext<SpacecraftTrajectory>>,
+        ),
         Or<(Changed<SoiTransitions>, Changed<OrbitPlotConfig>)>,
     >,
-    query_primary: Query<&Primary, With<SphereOfInfluence>>,
+    query_transitions: Query<&SoiTransitions, With<SphereOfInfluence>>,
     query_name: Query<&Name>,
     root: Single<Entity, With<SystemRoot>>,
     mut commands: Commands,
 ) {
-    for (entity, transitions, config) in query.iter() {
-        commands.entity(entity).despawn_related::<PlotSourceOf>();
-        commands.entity(entity).with_children(|cmds| {
+    for (e, transitions, config, prediction) in query.iter() {
+        commands.entity(e).despawn_related::<PlotSourceOf>();
+        commands.entity(e).with_children(|cmds| {
             let plot = PlotConfig {
                 enabled: config.enabled,
                 start: config.start,
@@ -191,62 +208,99 @@ fn setup_in_soi_plotting(
                 color: config.color,
                 threshold: config.resolution,
                 max_points: config.max_points_per_segment,
+                dashed: false,
             };
             match config.reference {
-                OrbitalPlotReference::Entity(reference) => {
-                    cmds.spawn((PlotSource::new(entity, Some(reference)), plot));
+                OrbitPlotReference::Entity(reference) => {
+                    cmds.spawn((PlotSource::new(e, Some(reference)), plot));
                 }
-                OrbitalPlotReference::Primary => {
+                OrbitPlotReference::Primary => {
+                    const DEFAULT: &[Segment] = &[Segment::Coast {
+                        start: Epoch::MIN,
+                        end: Epoch::MAX,
+                    }];
+
                     for (i, &(start, b)) in transitions.iter().enumerate() {
                         // Plot relative to the entered SOI until the next transition, if any.
                         let next = transitions.get(i + 1);
-                        let plot = PlotConfig {
-                            start: start.max(config.start),
-                            end: next.map_or(Epoch::MAX, |&(end, _)| end.min(config.end)),
-                            ..plot
-                        };
-                        let mut segment = cmds.spawn((PlotSource::new(entity, Some(b)), plot));
-                        let name = query_name.get(b).map(|n| n.as_str()).unwrap_or("Unknown");
 
-                        let b_parent = query_primary.get(b).map(|p| **p).unwrap_or(*root);
+                        let parent_name = query_name.get(b).map(Name::as_str).unwrap_or("Unknown");
+                        let b_parent = query_transitions
+                            .get(b)
+                            .ok()
+                            .and_then(|t| t.soi_at(start))
+                            .unwrap_or(*root);
                         let previous = i.checked_sub(1).and_then(|j| transitions.get(j));
+
+                        let start = start.max(config.start);
+                        let end = next.map_or(config.end, |&(end, _)| end.min(config.end));
+
+                        let segments = prediction
+                            .map(|p| p.propagator.timeline().segments_between(start, end))
+                            .unwrap_or(DEFAULT);
 
                         let is_from_parent = previous.is_some_and(|&(_, a)| a == b_parent);
                         let is_to_parent = next.is_some_and(|&(_, c)| c == b_parent);
-                        if is_from_parent && is_to_parent {
-                            // Flyby: Entered from parent, leaving to parent
-                            // In that case, we also plot the segment relative to the parent.
-                            segment
-                                .insert((Name::new(format!("{name} Flyby")), PlotSegment::Flyby));
-                            cmds.spawn((
-                                PlotSource::new(entity, Some(b_parent)),
-                                PlotConfig {
-                                    color: config.color.with_alpha(plot.color.alpha() * 0.2),
-                                    ..plot
-                                },
-                                Name::new(format!("{name} Flyby")),
-                                PlotSegment::Flyby,
-                            ));
-                        } else if is_from_parent && !is_to_parent {
-                            // Capture: Entered from parent, not leaving to parent
-                            segment.insert((
-                                Name::new(format!("{name} Capture")),
-                                PlotSegment::Capture,
-                            ));
-                        } else if !is_from_parent && is_to_parent {
-                            // Escape: Not entered from parent, leaving to parent
-                            segment
-                                .insert((Name::new(format!("{name} Escape")), PlotSegment::Escape));
-                        } else if previous.is_some() || next.is_some() {
-                            // Transit: Transition but not entered from parent, not leaving to parent
-                            segment.insert((
-                                Name::new(format!("{name} Transit")),
-                                PlotSegment::Transit,
-                            ));
-                        } else {
-                            // Orbit: No transitions
-                            segment
-                                .insert((Name::new(format!("{name} Orbit")), PlotSegment::Orbit));
+                        for segment in segments {
+                            let start = segment.start().max(start);
+                            let end = segment.end().min(end);
+                            let is_burn = matches!(segment, Segment::Burn { .. });
+                            let plot = PlotConfig {
+                                start,
+                                end,
+                                dashed: is_burn,
+                                ..plot
+                            };
+
+                            let mut plot_segment = cmds.spawn((PlotSource::new(e, Some(b)), plot));
+                            plot_segment.insert_if(BurnPlotSegment, || is_burn);
+                            let segment_name = match is_burn {
+                                true => " Burn",
+                                false => "",
+                            };
+
+                            if is_from_parent && is_to_parent {
+                                // Flyby: Entered from parent, leaving to parent
+                                // In that case, we also plot the segment relative to the parent.
+                                plot_segment.insert((
+                                    Name::new(format!("{parent_name} Flyby{segment_name}")),
+                                    PlotSegment::Flyby,
+                                ));
+                                cmds.spawn((
+                                    PlotSource::new(e, Some(b_parent)),
+                                    PlotConfig {
+                                        color: config.color.with_alpha(plot.color.alpha() * 0.2),
+                                        ..plot
+                                    },
+                                    Name::new(format!("{parent_name} Flyby{segment_name}")),
+                                    PlotSegment::Flyby,
+                                ))
+                                .insert_if(BurnPlotSegment, || is_burn);
+                            } else if is_from_parent && !is_to_parent {
+                                // Capture: Entered from parent, not leaving to parent
+                                plot_segment.insert((
+                                    Name::new(format!("{parent_name} Capture{segment_name}")),
+                                    PlotSegment::Capture,
+                                ));
+                            } else if !is_from_parent && is_to_parent {
+                                // Escape: Not entered from parent, leaving to parent
+                                plot_segment.insert((
+                                    Name::new(format!("{parent_name} Escape{segment_name}")),
+                                    PlotSegment::Escape,
+                                ));
+                            } else if previous.is_some() || next.is_some() {
+                                // Transit: Not entered from parent, not leaving to parent
+                                plot_segment.insert((
+                                    Name::new(format!("{parent_name} Transit{segment_name}")),
+                                    PlotSegment::Transit,
+                                ));
+                            } else {
+                                // Orbit: No transitions
+                                plot_segment.insert((
+                                    Name::new(format!("{parent_name} Orbit{segment_name}")),
+                                    PlotSegment::Orbit,
+                                ));
+                            }
                         }
                     }
                 }

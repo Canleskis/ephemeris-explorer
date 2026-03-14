@@ -2,7 +2,9 @@ use crate::{
     analysis::DrawSoiSettings,
     camera::CameraController,
     load::LoadSolarSystem,
-    ui::{LabelSettings, ManoeuvreDraggingOptions},
+    ui::{
+        DashedLineGizmoConfigGroup, LabelSettings, LineGizmoConfigGroup, ManoeuvreDraggingOptions,
+    },
 };
 
 use bevy::{
@@ -90,7 +92,7 @@ impl AppSettings {
     fn apply(
         mut settings: ResMut<AppSettings>,
         label_settings: ResMut<LabelSettings>,
-        gizmos_config: ResMut<GizmoConfigStore>,
+        mut gizmos_config: ResMut<GizmoConfigStore>,
         draw_soi_settings: ResMut<DrawSoiSettings>,
         drag_opts: ResMut<ManoeuvreDraggingOptions>,
         mut controller: Query<&mut CameraController>,
@@ -144,7 +146,11 @@ impl AppSettings {
             .map_unchanged(|s| &mut s.enabled)
             .set_if_neq(settings.user.show_soi);
         gizmos_config
-            .map_unchanged(|c| &mut c.config_mut::<DefaultGizmoConfigGroup>().0.line.width)
+            .reborrow()
+            .map_unchanged(|c| &mut c.config_mut::<LineGizmoConfigGroup>().0.line.width)
+            .set_if_neq(settings.user.line_width);
+        gizmos_config
+            .map_unchanged(|c| &mut c.config_mut::<DashedLineGizmoConfigGroup>().0.line.width)
             .set_if_neq(settings.user.line_width);
 
         if let Ok(mut controller) = controller.single_mut() {

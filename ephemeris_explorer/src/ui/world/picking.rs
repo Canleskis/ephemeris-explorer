@@ -3,6 +3,7 @@
 // we can reimplement what we need.
 
 use crate::{
+    analysis::BurnPlotSegment,
     flight_plan::FlightPlan,
     selection::Selectable,
     ui::{PlotPoints, PlotSourceOf},
@@ -93,9 +94,11 @@ impl Plugin for CustomPickingPlugin {
             .configure_sets(
                 PostUpdate,
                 (
-                    PickingSet::Backend.run_if(not(
-                        crate::camera::using_pointer.or(crate::ui::world_ui_using_pointer)
-                    )),
+                    PickingSet::Backend
+                        .after(crate::ui::compute_plot_points_parallel)
+                        .run_if(not(
+                            crate::camera::using_pointer.or(crate::ui::world_ui_using_pointer)
+                        )),
                     PickingSet::Hover,
                 )
                     .chain(),
@@ -105,8 +108,7 @@ impl Plugin for CustomPickingPlugin {
                 (
                     (
                         body_picking,
-                        (manoeuvre_picking, trajectory_picking)
-                            .after(crate::ui::compute_plot_points_parallel),
+                        (manoeuvre_picking, trajectory_picking),
                         // Some inputs are not always properly updated yet when this runs since it's
                         // not guaranteed to run after egui's end pass, but this is better than
                         // forcing all systems that need to run after picking to run after egui's
@@ -207,7 +209,7 @@ pub const MANOEUVRE_SIZE: f32 = 2e-2;
 pub fn manoeuvre_picking(
     ray_map: Res<RayMap>,
     query: Query<(&FlightPlan, &PlotSourceOf)>,
-    query_plot: Query<(Entity, &PlotPoints)>,
+    query_plot: Query<(Entity, &PlotPoints), With<BurnPlotSegment>>,
     perspective: Single<&Projection, With<Camera>>,
     mut events: MessageWriter<PointerHit>,
 ) {
@@ -225,9 +227,9 @@ pub fn manoeuvre_picking(
         .flat_map(|(flight_plan, source_of)| {
             query_plot
                 .iter_many(source_of.iter())
-                .flat_map(|(entity, points)| {
+                .flat_map(|(plot_entity, points)| {
                     flight_plan.burns.iter().filter_map(move |(&id, burn)| {
-                        if !burn.enabled || burn.overlaps {
+                        if !burn.is_active() {
                             return None;
                         }
 
@@ -237,7 +239,7 @@ pub fn manoeuvre_picking(
                             world_pos,
                             r * perspective.fov * MANOEUVRE_SIZE / 2.0,
                         ))
-                        .map(|depth| (entity, ManoeuvreHit { id, depth }))
+                        .map(|depth| (plot_entity, ManoeuvreHit { id, depth }))
                     })
                 })
         })

@@ -68,6 +68,16 @@ pub enum Segment<V, F> {
     },
 }
 
+impl<V, F> Default for Segment<V, F> {
+    #[inline]
+    fn default() -> Self {
+        Segment::Coast {
+            start: Epoch::MIN,
+            end: Epoch::MAX,
+        }
+    }
+}
+
 impl<V, F> Segment<V, F> {
     #[inline]
     pub fn start(&self) -> Epoch {
@@ -158,6 +168,11 @@ impl<V, F> Timeline<V, F> {
     #[inline]
     pub fn segment_at(&self, time: Epoch) -> &Segment<V, F> {
         &self.0[self.segment_idx_at(time)]
+    }
+
+    #[inline]
+    pub fn segments_between(&self, start: Epoch, end: Epoch) -> &[Segment<V, F>] {
+        &self.0[self.segment_idx_at(start)..self.0.partition_point(|seg| seg.start() < end)]
     }
 
     #[inline]

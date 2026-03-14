@@ -1,15 +1,14 @@
 use crate::{
     MainState,
-    dynamics::{CubicHermiteSplineSamples, SoiTransitions, Trajectory, UniformSpline},
-    flight_plan::FlightPlan,
-    floating_origin::{BigSpace, Grid},
+    dynamics::{CubicHermiteSplineSamples, StateVector, Trajectory, UniformSpline},
+    floating_origin::{BigSpace, Grid, GridExt},
     simulation::SimulationTime,
-    ui::{MANOEUVRE_SIZE, WorldUiSet},
+    ui::WorldUiSet,
 };
 
 use bevy::prelude::*;
 use bevy::{math::DVec3, math::bounding::RayCast3d};
-use ephemeris::{BoundedTrajectory, EvaluateTrajectory, Frame, RelativeTrajectory, StateVector};
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory, RelativeTrajectory};
 use ftime::Epoch;
 
 #[derive(Default, Debug, PartialEq, Eq, Component, Deref)]
@@ -76,6 +75,7 @@ pub struct PlotConfig {
     pub color: Color,
     pub threshold: f32,
     pub max_points: usize,
+    pub dashed: bool,
 }
 
 /// Global space position of the points for a plotted trajectory.
@@ -88,68 +88,58 @@ impl PlotPoints {
     // TODO: Rewrite this into more idiomatic Rust.
     #[inline]
     pub fn new(
-        eval: impl Fn(Epoch) -> Option<StateVector<DVec3>>,
+        mut eval: impl FnMut(Epoch) -> Option<StateVector>,
         min: Epoch,
         max: Epoch,
         camera_transform: &GlobalTransform,
         tan2_angular_resolution: f64,
         max_points: usize,
     ) -> Result<Self, Epoch> {
-        let eval = |t| eval(t).ok_or(t);
+        if max_points == 0 {
+            return Ok(Self(Vec::new()));
+        }
 
-        let tan2_angular_resolution = tan2_angular_resolution * tan2_angular_resolution;
-        let final_time = max;
+        let target_tan2_error = tan2_angular_resolution * tan2_angular_resolution;
         let mut previous_time = min;
+        let mut previous = eval(previous_time).ok_or(previous_time)?;
+        let mut delta = max - previous_time;
+        let mut estimated_tan2_error = None::<f64>;
 
-        let mut previous = eval(previous_time)?;
-        let mut delta = final_time - previous_time;
-
-        let mut points = Vec::new();
+        let mut points = Vec::with_capacity(max_points.max(1024));
         points.push((previous_time, previous.position.as_vec3()));
 
-        let mut t: Epoch;
-        let mut estimated_tan2_error = None::<f64>;
-        let mut current: StateVector<DVec3>;
-
-        while points.len() < max_points && previous_time < final_time {
-            loop {
-                if let Some(estimated_tan2_error) = estimated_tan2_error {
-                    delta = delta
-                        * 0.9
-                        * (tan2_angular_resolution / estimated_tan2_error)
-                            .sqrt()
-                            .sqrt();
+        while previous_time < max && points.len() < max_points {
+            let (t, current, next_error) = loop {
+                if let Some(error) = estimated_tan2_error.filter(|&e| e > 0.0) {
+                    delta = delta * 0.9 * (target_tan2_error / error).sqrt().sqrt();
                 }
 
-                t = previous_time + delta;
-
-                if t > final_time {
-                    t = final_time;
-                    delta = t - previous_time;
+                let mut t = previous_time + delta;
+                if t > max {
+                    t = max;
                 }
+
+                delta = t - previous_time;
 
                 let extrapolated_position =
                     previous.position + previous.velocity * delta.as_seconds();
-                current = eval(t)?;
 
-                // Prevent catastrophic retries
-                if estimated_tan2_error.is_some_and(|error| error == 0.0) {
-                    break;
-                }
-
-                estimated_tan2_error = Some(
+                let current = eval(t).ok_or(t)?;
+                let error =
                     angular_distance(camera_transform, extrapolated_position, current.position)
-                        / 16.0,
-                );
+                        / 16.0;
 
-                if estimated_tan2_error.is_some_and(|error| error <= tan2_angular_resolution) {
-                    break;
+                if error <= target_tan2_error {
+                    break (t, current, error);
                 }
-            }
+
+                estimated_tan2_error = Some(error);
+            };
 
             previous_time = t;
             previous = current;
-            points.push((t, current.position.as_vec3()));
+            estimated_tan2_error = Some(next_error);
+            points.push((t, previous.position.as_vec3()));
         }
 
         Ok(Self(points))
@@ -240,6 +230,12 @@ pub struct ManoeuvreHitPoint {
 }
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct LineGizmoConfigGroup;
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct DashedLineGizmoConfigGroup;
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct MarkerGizmoConfigGroup;
 
 #[derive(Default)]
@@ -247,7 +243,9 @@ pub struct PlotPlugin;
 
 impl Plugin for PlotPlugin {
     fn build(&self, app: &mut App) {
-        app.init_gizmo_group::<MarkerGizmoConfigGroup>()
+        app.init_gizmo_group::<LineGizmoConfigGroup>()
+            .init_gizmo_group::<DashedLineGizmoConfigGroup>()
+            .init_gizmo_group::<MarkerGizmoConfigGroup>()
             .add_message::<TrajectoryHitPoint>()
             .add_message::<ManoeuvreHitPoint>()
             .add_systems(
@@ -257,8 +255,6 @@ impl Plugin for PlotPlugin {
                     (
                         // plot_knots,
                         plot_lines,
-                        plot_manoeuvres,
-                        plot_transitions,
                     ),
                 )
                     .chain()
@@ -266,35 +262,17 @@ impl Plugin for PlotPlugin {
                     .run_if(in_state(MainState::Running))
                     .after(TransformSystems::Propagate),
             );
+
+        let mut store = app.world_mut().resource_mut::<GizmoConfigStore>();
+        let dashed_config = store.config_mut::<DashedLineGizmoConfigGroup>().0;
+        dashed_config.line.style = GizmoLineStyle::Dashed {
+            gap_scale: 6.0,
+            line_scale: 10.0,
+        };
     }
 }
 
-#[inline]
-pub fn transform_vector3(v: DVec3, root: &Grid) -> Vec3 {
-    root.local_floating_origin()
-        .grid_transform()
-        .transform_vector3(v)
-        .as_vec3()
-}
-
-#[inline]
-pub fn to_global_pos(pos: DVec3, root: &Grid) -> Vec3 {
-    let origin = root.local_floating_origin();
-
-    origin
-        .grid_transform()
-        .transform_point3(pos - root.cell_to_float(&origin.cell()))
-        .as_vec3()
-}
-
-#[inline]
-pub fn to_global_sv(sv: StateVector<DVec3>, root: &Grid) -> StateVector<DVec3> {
-    StateVector {
-        velocity: transform_vector3(sv.velocity, root).as_dvec3(),
-        position: to_global_pos(sv.position, root).as_dvec3(),
-    }
-}
-
+// TODO: Find a way to reuse allocations.
 pub fn compute_plot_points_parallel(
     commands: ParallelCommands,
     sim_time: Res<SimulationTime>,
@@ -349,7 +327,7 @@ pub fn compute_plot_points_parallel(
                 );
 
                 let new_points = PlotPoints::new(
-                    |t| Some(to_global_sv(relative.state_vector(t)? + translation, *root)),
+                    |t| Some(root.to_global_sv(relative.state_vector(t)? + translation)),
                     min,
                     max,
                     camera_transform,
@@ -369,84 +347,16 @@ pub fn compute_plot_points_parallel(
         });
 }
 
-fn plot_lines(mut gizmos: Gizmos, query: Query<(&PlotPoints, &PlotConfig)>) {
+fn plot_lines(
+    mut line_gizmos: Gizmos<LineGizmoConfigGroup>,
+    mut dashed_gizmos: Gizmos<DashedLineGizmoConfigGroup>,
+    query: Query<(&PlotPoints, &PlotConfig)>,
+) {
     for (points, plot) in query.iter() {
-        gizmos.linestrip(points.iter().map(|(_, p)| *p), plot.color);
-    }
-}
-
-fn plot_manoeuvres(
-    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
-    query: Query<(&Trajectory, &FlightPlan, &PlotSourceOf)>,
-    query_trajectory: Query<&Trajectory>,
-    query_plot: Query<&PlotPoints>,
-    root: Single<&Grid, With<BigSpace>>,
-    camera: Single<(&GlobalTransform, &Projection)>,
-) {
-    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
-        unreachable!("Camera is not perspective");
-    };
-
-    for (trajectory, flight_plan, source_of) in query.iter() {
-        for burn in flight_plan.burns.values() {
-            if !burn.enabled || burn.overlaps {
-                continue;
-            }
-            for points in query_plot.iter_many(source_of.iter()) {
-                let Some(world_pos) = points.evaluate(burn.start) else {
-                    continue;
-                };
-
-                if let Some(transform) = trajectory.state_vector(burn.start).and_then(|sv| {
-                    burn.try_reference_frame(&query_trajectory)
-                        .expect("invalid burn reference entity")
-                        .transform(burn.start, &sv, &())
-                }) {
-                    let prograde = transform_vector3(transform.0.x_axis, *root);
-                    let radial = transform_vector3(transform.0.y_axis, *root);
-                    let normal = transform_vector3(transform.0.z_axis, *root);
-
-                    let size = camera_transform.translation().distance(world_pos)
-                        * perspective.fov
-                        * MANOEUVRE_SIZE;
-
-                    gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
-                    gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
-                    gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);
-                }
-            }
-        }
-    }
-}
-
-fn plot_transitions(
-    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
-    query: Query<(&SoiTransitions, &PlotSourceOf)>,
-    query_plot: Query<(&PlotPoints, &PlotConfig)>,
-    camera: Single<(&GlobalTransform, &Projection)>,
-) {
-    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
-        unreachable!("Camera is not perspective");
-    };
-
-    for (transitions, source_of) in query.iter() {
-        for &(time, _entity) in transitions.iter() {
-            for (points, plot) in query_plot.iter_many(source_of.iter()) {
-                let Some(world_pos) = points.evaluate(time) else {
-                    continue;
-                };
-
-                let direction = camera_transform.translation() - world_pos;
-                let size = direction.length() * perspective.fov * 0.004;
-
-                gizmos.circle(
-                    Transform::from_translation(world_pos)
-                        .looking_to(direction, camera_transform.up())
-                        .to_isometry(),
-                    size,
-                    plot.color,
-                );
-            }
+        if plot.dashed {
+            dashed_gizmos.linestrip(points.iter().map(|(_, p)| *p), plot.color);
+        } else {
+            line_gizmos.linestrip(points.iter().map(|(_, p)| *p), plot.color);
         }
     }
 }

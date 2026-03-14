@@ -1,9 +1,10 @@
 use crate::{
     MainState,
-    analysis::PlotSegment,
+    analysis::{BurnPlotSegment, PlotSegment},
     camera::CameraProximityIgnore,
-    dynamics::Trajectory,
+    dynamics::{SoiTransitions, Trajectory},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
+    floating_origin::{BigSpace, Grid, GridExt},
     load::SystemRoot,
     simulation::SimulationTime,
     ui::{
@@ -16,7 +17,7 @@ use crate::{
 use bevy::picking::backend::ray::RayMap;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
-use ephemeris::EvaluateTrajectory;
+use ephemeris::{EvaluateTrajectory, Frame};
 use ftime::{Duration, Epoch};
 
 #[derive(Clone, Copy, Debug, Default, Resource)]
@@ -35,20 +36,26 @@ impl Plugin for TooltipPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    manoeuvre_dragging.before(bevy_egui::EguiPostUpdateSet::EndPass),
+                    (plot_manoeuvres_markers, plot_transitions_markers),
                     (
-                        (update_trajectory_tooltips, update_manoeuvre_tooltip).chain(),
+                        (
+                            manoeuvre_dragging,
+                            update_trajectory_tooltips,
+                            update_manoeuvre_tooltip,
+                        )
+                            .chain(),
                         update_separation_tooltip,
                     )
                         .before(bevy_egui::EguiPostUpdateSet::EndPass),
                     (
-                        manoeuvre_tooltip_world,
                         trajectory_tooltips_world.after(bevy_egui::EguiPostUpdateSet::EndPass),
                         separation_tooltip_gizmo,
                     ),
                 )
+                    .chain()
                     .after(PickingSet::Hover)
-                    .chain(),
+                    .in_set(WorldUiSet)
+                    .run_if(in_state(MainState::Running)),
             )
             .add_systems(
                 EguiPrimaryContextPass,
@@ -60,6 +67,84 @@ impl Plugin for TooltipPlugin {
                     .in_set(WorldUiSet)
                     .run_if(in_state(MainState::Running)),
             );
+    }
+}
+
+fn plot_manoeuvres_markers(
+    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
+    query: Query<(&Trajectory, &FlightPlan, &PlotSourceOf)>,
+    query_trajectory: Query<&Trajectory>,
+    query_plot: Query<&PlotPoints, With<BurnPlotSegment>>,
+    root: Single<&Grid, With<BigSpace>>,
+    camera: Single<(&GlobalTransform, &Projection)>,
+) {
+    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
+
+    for (trajectory, flight_plan, source_of) in query.iter() {
+        for burn in flight_plan.burns.values() {
+            if !burn.is_active() {
+                continue;
+            }
+            for points in query_plot.iter_many(source_of.iter()) {
+                let Some(world_pos) = points.evaluate(burn.start) else {
+                    continue;
+                };
+
+                if let Some(transform) = trajectory.state_vector(burn.start).and_then(|sv| {
+                    burn.try_reference_frame(&query_trajectory).ok()?.transform(
+                        burn.start,
+                        &sv,
+                        &(),
+                    )
+                }) {
+                    let prograde = root.to_global_vector(transform.0.x_axis).as_vec3();
+                    let radial = root.to_global_vector(transform.0.y_axis).as_vec3();
+                    let normal = root.to_global_vector(transform.0.z_axis).as_vec3();
+
+                    let size = camera_transform.translation().distance(world_pos)
+                        * perspective.fov
+                        * MANOEUVRE_SIZE;
+
+                    gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
+                    gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
+                    gizmos.arrow(world_pos, world_pos + radial * size, LinearRgba::RED);
+                }
+            }
+        }
+    }
+}
+
+fn plot_transitions_markers(
+    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
+    query: Query<(&SoiTransitions, &PlotSourceOf)>,
+    query_plot: Query<(&PlotPoints, &PlotConfig)>,
+    camera: Single<(&GlobalTransform, &Projection)>,
+) {
+    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
+
+    for (transitions, source_of) in query.iter() {
+        for &(time, _entity) in transitions.iter() {
+            for (points, plot) in query_plot.iter_many(source_of.iter()) {
+                let Some(world_pos) = points.evaluate(time) else {
+                    continue;
+                };
+
+                let direction = camera_transform.translation() - world_pos;
+                let size = direction.length() * perspective.fov * 0.004;
+
+                gizmos.circle(
+                    Transform::from_translation(world_pos)
+                        .looking_to(direction, camera_transform.up())
+                        .to_isometry(),
+                    size,
+                    plot.color,
+                );
+            }
+        }
     }
 }
 
@@ -87,6 +172,7 @@ fn update_manoeuvre_tooltip(
     mut tooltip: ResMut<ManoeuvreTooltip>,
 ) {
     if !tooltip.0.is_some_and(|(.., data)| data.dragging) {
+        // println!("updating manoeuvre tooltip");
         tooltip.clear();
         if let Some(PointerHit(entity, HitData::Manoeuvre(data))) = &hover.0 {
             let Ok((_, source)) = query_plot.get(*entity) else {
@@ -115,24 +201,6 @@ fn update_manoeuvre_tooltip(
         tooltip_data.time = burn.start;
         tooltip_data.position = points.evaluate(burn.start);
     }
-}
-
-fn manoeuvre_tooltip_world(
-    tooltip: Res<ManoeuvreTooltip>,
-    mut trajectory_tooltips: ResMut<TrajectoryTooltips>,
-) {
-    let Some((tooltip_entity, _, tooltip_data)) = tooltip.0 else {
-        return;
-    };
-
-    trajectory_tooltips.hovered = TrajectoryTooltip(Some((
-        tooltip_entity,
-        vec![TrajectoryTooltipData {
-            time: tooltip_data.time,
-            position: tooltip_data.position,
-            selected: false,
-        }],
-    )));
 }
 
 fn manoeuvre_tooltip_window(
@@ -192,6 +260,15 @@ fn manoeuvre_tooltip_window(
 }
 
 // A bit janky by nature but still useful.
+// The fact that we drag a manoeuvre on a changing trajectory causes multiple problems:
+// - Moving the manoeuvre to a future position retroactively changes the trajectory, leading to a
+//   different position that what might have been intended.
+// - When a trajectory is updated, its plot segment entities may change, so we can't reliably track
+//   on which entity the tooltip should be.
+// Fixing this requires a design change: have spacecraft trajectories split into two after each
+// manoeuvre, one representing the unapplied changes that we use to edit the manoeuvre, and one
+// with the changes applied. A manoeuvre would need to be applied once accepted by the user (or
+// automatically once the user input stops?).
 fn manoeuvre_dragging(
     mut commands: Commands,
     drag_opts: Res<ManoeuvreDraggingOptions>,
@@ -208,6 +285,9 @@ fn manoeuvre_dragging(
     }
 
     let Some((tooltip_entity, source_entity, tooltip_data)) = &mut tooltip.0 else {
+        world_ui
+            .map_unchanged(|ui| &mut ui.using_pointer)
+            .set_if_neq(false);
         return;
     };
 
@@ -268,11 +348,14 @@ pub struct TrajectoryTooltipData {
 }
 
 #[derive(Clone, Default)]
-pub struct TrajectoryTooltip(pub Option<(Entity, Vec<TrajectoryTooltipData>)>);
+pub struct TrajectoryTooltip {
+    data: Option<(Entity, Vec<TrajectoryTooltipData>)>,
+    show_window: bool,
+}
 
 impl TrajectoryTooltip {
     pub fn clear(&mut self) {
-        self.0 = None;
+        self.data = None;
     }
 }
 
@@ -285,6 +368,7 @@ pub struct TrajectoryTooltips {
 impl TrajectoryTooltips {
     pub fn pin_hovered(&mut self) {
         self.pinned.clone_from(&self.hovered);
+        self.pinned.show_window = true;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &TrajectoryTooltip> {
@@ -305,7 +389,7 @@ fn update_trajectory_tooltips(
     tooltips.hovered.clear();
 
     if let Some(PointerHit(entity, HitData::Trajectory(data))) = &hover.0 {
-        tooltips.hovered.0 = Some((
+        tooltips.hovered.data = Some((
             *entity,
             data.hits
                 .iter()
@@ -316,6 +400,7 @@ fn update_trajectory_tooltips(
                 })
                 .collect(),
         ));
+        tooltips.hovered.show_window = true;
 
         if input.just_pressed(MouseButton::Left) {
             tooltips.pin_hovered();
@@ -323,7 +408,7 @@ fn update_trajectory_tooltips(
     }
 
     for tooltip in tooltips.iter_mut() {
-        let Some((tooltip_entity, tooltip_data)) = &mut tooltip.0 else {
+        let Some((tooltip_entity, tooltip_data)) = &mut tooltip.data else {
             continue;
         };
         let Ok(points) = query_plot.get(*tooltip_entity) else {
@@ -368,6 +453,7 @@ fn prepare_tooltip_caches(
             mesh: meshes.add(Sphere::new(1.0).mesh().uv(16, 8)),
             material: materials.add(StandardMaterial {
                 unlit: true,
+                alpha_mode: AlphaMode::Blend,
                 ..default()
             }),
             entities: Vec::new(),
@@ -376,6 +462,7 @@ fn prepare_tooltip_caches(
             mesh: meshes.add(Sphere::new(1.0).mesh().uv(16, 8)),
             material: materials.add(StandardMaterial {
                 unlit: true,
+                alpha_mode: AlphaMode::Blend,
                 ..default()
             }),
             entities: Vec::new(),
@@ -404,13 +491,14 @@ fn trajectory_tooltips_world(
             }
         }
 
-        let Some((tooltip_entity, tooltip_data)) = &tooltip.0 else {
-            continue;
-        };
-        let Ok(plot) = query_plot.get(*tooltip_entity) else {
+        let Some((tooltip_entity, tooltip_data)) = &tooltip.data else {
             continue;
         };
 
+        let Ok(plot) = query_plot.get(*tooltip_entity) else {
+            error!("{tooltip_entity:?} with a tooltip does not exist or is not a plot segment");
+            continue;
+        };
         materials.get_mut(&cache.material).unwrap().base_color = plot.color;
 
         for (i, data) in tooltip_data.iter().enumerate() {
@@ -455,7 +543,7 @@ fn trajectory_tooltips_window(
     root: Single<Entity, With<SystemRoot>>,
     camera: Single<(&GlobalTransform, &Camera)>,
     mut tooltips: ResMut<TrajectoryTooltips>,
-    query_plot: Query<(&PlotSource, &PlotSegment)>,
+    query_plot: Query<(&PlotSource, &Name)>,
     query_trajectory: Query<&Trajectory>,
     query_name: Query<&Name>,
     mut commands: Commands,
@@ -470,14 +558,14 @@ fn trajectory_tooltips_window(
     let (camera_transform, camera) = *camera;
 
     for (i, tooltip) in tooltips.iter_mut().enumerate() {
-        let Some((tooltip_entity, tooltip_data)) = &mut tooltip.0 else {
+        if !tooltip.show_window {
+            continue;
+        }
+        let Some((tooltip_entity, tooltip_data)) = &mut tooltip.data else {
             continue;
         };
         let is_pinned = i == 1;
         let Ok((source, segment)) = query_plot.get(*tooltip_entity) else {
-            continue;
-        };
-        let Ok(name) = query_name.get(source.entity) else {
             continue;
         };
 
@@ -493,6 +581,9 @@ fn trajectory_tooltips_window(
         let Some(relative) = source.get_relative_trajectory(&query_trajectory) else {
             continue;
         };
+        let Ok(name) = query_name.get(source.entity) else {
+            continue;
+        };
         let window = egui::Window::new(name.as_str())
             .collapsible(false)
             .resizable(false)
@@ -500,7 +591,7 @@ fn trajectory_tooltips_window(
             .fade_out(false)
             .title_bar(false)
             .constrain(false)
-            .fixed_size([300.0, 200.0])
+            .fixed_size([350.0, 200.0])
             .id(egui::Id::new(i.to_string() + "#intersections"))
             .fixed_pos(window_position.to_array())
             .show(ctx, |ui| {

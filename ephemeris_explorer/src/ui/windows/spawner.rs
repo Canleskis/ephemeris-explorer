@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    analysis::{OrbitPlotConfig, OrbitalPlotReference, Satellites, SoiTransitionsAnalysis},
+    analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
         Bodies, CubicHermiteSplineSamples, DEFAULT_ADAPTIVE_PARAMS, GravitationalBody, Mu,
@@ -164,7 +164,7 @@ impl ShipSpawnerWindow {
                     bound: PlotBound::None,
                     resolution: 0.5,
                     max_points_per_segment: 10_000,
-                    reference: OrbitalPlotReference::Primary,
+                    reference: OrbitPlotReference::Primary,
                 },
             ));
 

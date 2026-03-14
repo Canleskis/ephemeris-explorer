@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    analysis::{OrbitPlotConfig, OrbitTarget, OrbitalPlotReference, Primary, Satellites},
+    analysis::{OrbitPlotConfig, OrbitTarget, OrbitPlotReference, Primary, Satellites},
     camera::{Followed, SetFollowed},
     dynamics::{Bodies, SpacecraftTrajectory, Trajectory},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
@@ -138,8 +138,8 @@ impl BodyInfoWindow {
                     };
 
                     let reference = match plot.reference {
-                        OrbitalPlotReference::Entity(reference) => reference,
-                        OrbitalPlotReference::Primary => **parent,
+                        OrbitPlotReference::Entity(reference) => reference,
+                        OrbitPlotReference::Primary => **parent,
                     };
                     let relative =
                         RelativeTrajectory::new(trajectory, query_trajectory.get(reference).ok());
@@ -224,11 +224,11 @@ impl BodyInfoWindow {
 
                     ui.horizontal(|ui| {
                         let mut is_auto =
-                            matches!(plot_config.reference, OrbitalPlotReference::Primary);
+                            matches!(plot_config.reference, OrbitPlotReference::Primary);
                         if ui.checkbox(&mut is_auto, "Auto").changed() {
                             plot_config.reference = match is_auto {
-                                true => OrbitalPlotReference::Primary,
-                                false => OrbitalPlotReference::Entity(**parent),
+                                true => OrbitPlotReference::Primary,
+                                false => OrbitPlotReference::Entity(**parent),
                             };
                         }
                         ui.add_enabled_ui(!is_auto, |ui| {
@@ -247,7 +247,7 @@ impl BodyInfoWindow {
                                                 ui.add_enabled_ui(entity != ref_entity, |ui| {
                                                     ui.selectable_value(
                                                         &mut plot_config.reference,
-                                                        OrbitalPlotReference::Entity(ref_entity),
+                                                        OrbitPlotReference::Entity(ref_entity),
                                                         ref_name.as_str(),
                                                     )
                                                     .on_disabled_hover_text(
@@ -335,6 +335,8 @@ impl BodyInfoWindow {
                             1..=100_000,
                         ));
                     });
+                    
+                    ui.add_space(5.0);
 
                     ui.horizontal(|ui| {
                         let label = ui
