@@ -224,7 +224,7 @@ impl Default for Synchronisation {
 
 impl Synchronisation {
     #[inline]
-    pub fn end() -> Self {
+    pub fn completed() -> Self {
         Self::steps(usize::MAX)
     }
 

@@ -359,6 +359,28 @@ where
     }
 }
 
+impl<V, M, A> NBodyPropagator<Forward, V, M, A>
+where
+    M: Method<NBodyProblem<V>>,
+{
+    #[inline]
+    pub fn join(rhs: &mut UniformSpline<V>, lhs: UniformSpline<V>) {
+        rhs.clear_after(lhs.start());
+        rhs.append(lhs);
+    }
+}
+
+impl<V, M, A> NBodyPropagator<Backward, V, M, A>
+where
+    M: Method<NBodyProblem<V>>,
+{
+    #[inline]
+    pub fn join(rhs: &mut UniformSpline<V>, lhs: UniformSpline<V>) {
+        rhs.clear_before(lhs.end());
+        rhs.prepend(lhs);
+    }
+}
+
 impl<D, V, M, A> Propagator for NBodyPropagator<D, V, M, A>
 where
     M: Method<NBodyProblem<V>>,

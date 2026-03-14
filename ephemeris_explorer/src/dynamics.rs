@@ -20,31 +20,77 @@ pub type StateVector = ephemeris::StateVector<DVec3>;
 pub type UniformSpline = ephemeris::UniformSpline<DVec3>;
 pub type CubicHermiteSplineSamples = ephemeris::CubicHermiteSplineSamples<DVec3>;
 
-pub trait PredictionTrajectory:
-    BoundedTrajectory + EvaluateTrajectory<Vector = DVec3> + DeepSizeOf + Send + Sync
-{
-    fn as_any(&self) -> &dyn std::any::Any;
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+pub enum PredictionTrajectory {
+    UniformSpline(UniformSpline),
+    CubicHermiteSplineSamples(CubicHermiteSplineSamples),
 }
 
-impl<T> PredictionTrajectory for T
-where
-    T: BoundedTrajectory + EvaluateTrajectory<Vector = DVec3> + DeepSizeOf + Send + Sync + 'static,
-{
+impl DeepSizeOf for PredictionTrajectory {
     #[inline]
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        match self {
+            Self::UniformSpline(traj) => traj.deep_size_of_children(context),
+            Self::CubicHermiteSplineSamples(traj) => traj.deep_size_of_children(context),
+        }
+    }
+}
+
+impl BoundedTrajectory for PredictionTrajectory {
+    #[inline]
+    fn start(&self) -> Epoch {
+        match self {
+            Self::UniformSpline(traj) => traj.start(),
+            Self::CubicHermiteSplineSamples(traj) => traj.start(),
+        }
     }
 
     #[inline]
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+    fn end(&self) -> Epoch {
+        match self {
+            Self::UniformSpline(traj) => traj.end(),
+            Self::CubicHermiteSplineSamples(traj) => traj.end(),
+        }
+    }
+
+    #[inline]
+    fn contains(&self, time: Epoch) -> bool {
+        match self {
+            Self::UniformSpline(traj) => traj.contains(time),
+            Self::CubicHermiteSplineSamples(traj) => traj.contains(time),
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Self::UniformSpline(traj) => traj.len(),
+            Self::CubicHermiteSplineSamples(traj) => traj.len(),
+        }
+    }
+}
+
+impl EvaluateTrajectory for PredictionTrajectory {
+    type Vector = DVec3;
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<Self::Vector> {
+        match self {
+            Self::UniformSpline(traj) => traj.position(at),
+            Self::CubicHermiteSplineSamples(traj) => traj.position(at),
+        }
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector> {
+        match self {
+            Self::UniformSpline(traj) => traj.state_vector(at),
+            Self::CubicHermiteSplineSamples(traj) => traj.state_vector(at),
+        }
     }
 }
 
 #[derive(Component, Clone)]
-pub struct Trajectory(std::sync::Arc<std::sync::RwLock<dyn PredictionTrajectory>>);
+pub struct Trajectory(std::sync::Arc<std::sync::RwLock<PredictionTrajectory>>);
 
 impl std::fmt::Debug for Trajectory {
     #[inline]
@@ -56,32 +102,40 @@ impl std::fmt::Debug for Trajectory {
     }
 }
 
-impl DeepSizeOf for Trajectory {
+impl From<UniformSpline> for Trajectory {
     #[inline]
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        self.read().deep_size_of_children(context)
+    fn from(trajectory: UniformSpline) -> Self {
+        Self::new(PredictionTrajectory::UniformSpline(trajectory))
     }
 }
 
+impl From<CubicHermiteSplineSamples> for Trajectory {
+    #[inline]
+    fn from(trajectory: CubicHermiteSplineSamples) -> Self {
+        Self::new(PredictionTrajectory::CubicHermiteSplineSamples(trajectory))
+    }
+}
+
+// Inside Bevy systems, `read` will never block and `write`` might if another thread is reading.
 impl Trajectory {
     #[inline]
-    pub fn new<T: PredictionTrajectory + 'static>(trajectory: T) -> Self {
+    pub fn new(trajectory: PredictionTrajectory) -> Self {
         Self(std::sync::Arc::new(std::sync::RwLock::new(trajectory)))
     }
 
     #[inline]
-    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, dyn PredictionTrajectory> {
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, PredictionTrajectory> {
         self.0.read().unwrap()
     }
 
     #[inline]
-    pub fn write(&mut self, f: impl FnOnce(&mut dyn PredictionTrajectory)) {
-        f(&mut *self.0.write().unwrap())
+    pub fn write(&mut self) -> std::sync::RwLockWriteGuard<'_, PredictionTrajectory> {
+        self.0.write().unwrap()
     }
 
     #[inline]
     pub fn heap_size(&self) -> usize {
-        self.deep_size_of()
+        self.read().deep_size_of()
     }
 }
 
@@ -262,22 +316,21 @@ impl PropagationTarget for CelestialTrajectory<Forward> {
 
     #[inline]
     fn merge(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
-        item.trajectory.write(|trajectory| {
-            let trajectory = trajectory
-                .as_any_mut()
-                .downcast_mut::<UniformSpline>()
-                .unwrap();
-            trajectory.clear_after(propagated.start());
-            trajectory.append(propagated);
-        });
+        match &mut *item.trajectory.write() {
+            PredictionTrajectory::UniformSpline(trajectory) => {
+                Self::Propagator::join(trajectory, propagated)
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[inline]
     fn overwrite(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
         // Should we keep the previous allocation?
-        item.trajectory.write(|trajectory| {
-            *trajectory.as_any_mut().downcast_mut().unwrap() = propagated;
-        });
+        match &mut *item.trajectory.write() {
+            PredictionTrajectory::UniformSpline(trajectory) => *trajectory = propagated,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -286,22 +339,21 @@ impl PropagationTarget for CelestialTrajectory<Backward> {
 
     #[inline]
     fn merge(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
-        item.trajectory.write(|trajectory| {
-            let trajectory = trajectory
-                .as_any_mut()
-                .downcast_mut::<UniformSpline>()
-                .unwrap();
-            trajectory.clear_before(propagated.end());
-            trajectory.prepend(propagated);
-        });
+        match &mut *item.trajectory.write() {
+            PredictionTrajectory::UniformSpline(trajectory) => {
+                Self::Propagator::join(trajectory, propagated)
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[inline]
     fn overwrite(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
         // Should we keep the previous allocation?
-        item.trajectory.write(|trajectory| {
-            *trajectory.as_any_mut().downcast_mut().unwrap() = propagated;
-        });
+        match &mut *item.trajectory.write() {
+            PredictionTrajectory::UniformSpline(trajectory) => *trajectory = propagated,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -782,12 +834,12 @@ impl PropagationTarget for SpacecraftTrajectory {
     ) {
         item.transitions.clear_after(trajectory.start());
         item.transitions.extend(transitions);
-        item.trajectory.write(|t| {
-            SpacecraftPropagatorSoiDetection::join(
-                t.as_any_mut().downcast_mut().unwrap(),
-                trajectory,
-            );
-        });
+        match &mut *item.trajectory.write() {
+            PredictionTrajectory::CubicHermiteSplineSamples(item_traj) => {
+                Self::Propagator::join(item_traj, trajectory)
+            }
+            _ => unreachable!(),
+        };
     }
 
     #[inline]
@@ -796,9 +848,10 @@ impl PropagationTarget for SpacecraftTrajectory {
         (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
         *item.transitions = transitions;
-        item.trajectory.write(|t| {
-            *t.as_any_mut().downcast_mut().unwrap() = trajectory;
-        });
+        match &mut *item.trajectory.write() {
+            PredictionTrajectory::CubicHermiteSplineSamples(item_traj) => *item_traj = trajectory,
+            _ => unreachable!(),
+        }
     }
 }
 

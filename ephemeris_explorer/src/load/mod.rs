@@ -6,7 +6,7 @@ pub use ui::*;
 
 use crate::{
     MainState,
-    analysis::{OrbitPlotConfig, OrbitTarget, OrbitPlotReference, SoiTransitionsAnalysis},
+    analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, SoiTransitionsAnalysis},
     camera::{CameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
         Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, DEFAULT_ADAPTIVE_PARAMS,
@@ -364,7 +364,7 @@ fn spawn_loaded_bodies(
                     index: depth + 1,
                 },
                 Mu(body.mu),
-                Trajectory::new(UniformSpline::new(
+                Trajectory::from(UniformSpline::new(
                     solar_system.epoch,
                     sample_period * DIV as f64,
                 )),
@@ -612,7 +612,7 @@ fn spawn_ship(
             offset: Vec2::new(0.0, radius) * 1.1,
             index: 99,
         },
-        Trajectory::new(CubicHermiteSplineSamples::new(
+        Trajectory::from(CubicHermiteSplineSamples::new(
             ship.start,
             ship.position,
             ship.velocity,

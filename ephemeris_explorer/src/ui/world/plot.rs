@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    dynamics::{CubicHermiteSplineSamples, StateVector, Trajectory, UniformSpline},
+    dynamics::{PredictionTrajectory, StateVector, Trajectory},
     floating_origin::{BigSpace, Grid, GridExt},
     simulation::SimulationTime,
     ui::WorldUiSet,
@@ -238,6 +238,11 @@ pub struct DashedLineGizmoConfigGroup;
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct MarkerGizmoConfigGroup;
 
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
+pub enum PlotSystems {
+    ComputePoints,
+}
+
 #[derive(Default)]
 pub struct PlotPlugin;
 
@@ -251,7 +256,7 @@ impl Plugin for PlotPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    compute_plot_points_parallel,
+                    compute_plot_points_parallel.in_set(PlotSystems::ComputePoints),
                     (
                         // plot_knots,
                         plot_lines,
@@ -277,7 +282,7 @@ pub fn compute_plot_points_parallel(
     commands: ParallelCommands,
     sim_time: Res<SimulationTime>,
     mut query_plot: Query<(Entity, &PlotConfig, &PlotSource)>,
-    query_trajectory: Query<&Trajectory>,
+    query_traj: Query<&Trajectory>,
     root: Single<&Grid, With<BigSpace>>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
@@ -296,11 +301,18 @@ pub fn compute_plot_points_parallel(
                 });
             });
 
-            if let Some(relative) = source.get_relative_trajectory(&query_trajectory)
-                && plot.enabled
-                && !relative.is_empty()
-                && plot.start < plot.end
-            {
+            let Ok(trajectory) = query_traj.get(source.entity) else {
+                return;
+            };
+            let Ok(reference) = source.reference.map(|e| query_traj.get(e)).transpose() else {
+                return;
+            };
+            // Lock now so that upcoming evaluations don't need to repeatedly acquire the lock.
+            let trajectory = trajectory.read();
+            let reference = reference.map(|r| r.read());
+            let relative = RelativeTrajectory::new(&*trajectory, reference.as_deref());
+
+            if plot.enabled && !relative.is_empty() && plot.start < plot.end {
                 const ARC_MINUTE: f32 = 0.000290888;
                 let tan2_angular_resolution =
                     (plot.threshold * ARC_MINUTE * perspective.fov) as f64;
@@ -403,14 +415,15 @@ fn plot_knots(
         };
         let traj = trajectory.read();
 
-        if let Some(traj) = traj.as_any().downcast_ref::<CubicHermiteSplineSamples>() {
-            let knots = traj.points().iter().map(|(t, _)| *t);
-            plot_knots(&mut gizmos, *camera, knots, points);
-        };
-
-        if let Some(traj) = traj.as_any().downcast_ref::<UniformSpline>() {
-            let knots = (0..traj.len()).map(|i| traj.start() + traj.interval() * i as f64);
-            plot_knots(&mut gizmos, *camera, knots, points);
+        match &*trajectory.read() {
+            PredictionTrajectory::UniformSpline(traj) => {
+                let knots = (0..traj.len()).map(|i| traj.start() + traj.interval() * i as f64);
+                plot_knots(&mut gizmos, *camera, knots, points);
+            }
+            PredictionTrajectory::CubicHermiteSplineSamples(traj) => {
+                let knots = traj.points().iter().map(|(t, _)| *t);
+                plot_knots(&mut gizmos, *camera, knots, points);
+            }
         }
     }
 }

@@ -150,7 +150,7 @@ impl ShipSpawnerWindow {
                         Timeline::default(),
                     ),
                 ),
-                Trajectory::new(CubicHermiteSplineSamples::new(
+                Trajectory::from(CubicHermiteSplineSamples::new(
                     data.start,
                     sv.position,
                     sv.velocity,

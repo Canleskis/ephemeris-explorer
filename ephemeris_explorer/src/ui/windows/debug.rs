@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    dynamics::{CelestialTrajectory, Forward, Trajectory, UniformSpline},
+    dynamics::{CelestialTrajectory, Forward, PredictionTrajectory, Trajectory},
     load::{SolarSystemState, SystemRoot, UniqueAsset},
     prediction::PredictionContext,
     simulation::SimulationTime,
@@ -201,7 +201,9 @@ fn compute_interpolation_errors(
     let (query, positions, velocities, mus): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = query
         .iter()
         .sort::<&Id>()
-        .filter(|(.., trajectory)| trajectory.read().as_any().is::<UniformSpline>())
+        .filter(|(.., trajectory)| {
+            matches!(&*trajectory.read(), PredictionTrajectory::UniformSpline(_))
+        })
         .map(|(entity, _, name, trajectory)| {
             (
                 (entity, name, trajectory),

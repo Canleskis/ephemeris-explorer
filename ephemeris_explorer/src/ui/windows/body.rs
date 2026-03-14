@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    analysis::{OrbitPlotConfig, OrbitTarget, OrbitPlotReference, Primary, Satellites},
+    analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, Primary, Satellites},
     camera::{Followed, SetFollowed},
     dynamics::{Bodies, SpacecraftTrajectory, Trajectory},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
@@ -335,7 +335,7 @@ impl BodyInfoWindow {
                             1..=100_000,
                         ));
                     });
-                    
+
                     ui.add_space(5.0);
 
                     ui.horizontal(|ui| {

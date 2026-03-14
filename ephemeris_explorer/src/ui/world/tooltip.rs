@@ -172,7 +172,6 @@ fn update_manoeuvre_tooltip(
     mut tooltip: ResMut<ManoeuvreTooltip>,
 ) {
     if !tooltip.0.is_some_and(|(.., data)| data.dragging) {
-        // println!("updating manoeuvre tooltip");
         tooltip.clear();
         if let Some(PointerHit(entity, HitData::Manoeuvre(data))) = &hover.0 {
             let Ok((_, source)) = query_plot.get(*entity) else {

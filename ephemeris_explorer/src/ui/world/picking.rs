@@ -95,7 +95,7 @@ impl Plugin for CustomPickingPlugin {
                 PostUpdate,
                 (
                     PickingSet::Backend
-                        .after(crate::ui::compute_plot_points_parallel)
+                        .after(crate::ui::PlotSystems::ComputePoints)
                         .run_if(not(
                             crate::camera::using_pointer.or(crate::ui::world_ui_using_pointer)
                         )),

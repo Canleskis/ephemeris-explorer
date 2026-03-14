@@ -1,6 +1,6 @@
 use crate::{
     dynamics::{
-        ConstantThrust, CubicHermiteSplineSamples, DEFAULT_ADAPTIVE_PARAMS, ReferenceFrame,
+        ConstantThrust, DEFAULT_ADAPTIVE_PARAMS, PredictionTrajectory, ReferenceFrame,
         SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, Timeline, Trajectory,
     },
     prediction::{
@@ -212,11 +212,9 @@ fn apply_flight_plan(
     else {
         return;
     };
-    let trajectory = trajectory.read();
-    let trajectory = trajectory
-        .as_any()
-        .downcast_ref::<CubicHermiteSplineSamples>()
-        .unwrap();
+    let PredictionTrajectory::CubicHermiteSplineSamples(trajectory) = &*trajectory.read() else {
+        unreachable!()
+    };
 
     if !propagator.environment().is_valid_at(trajectory.start()) {
         return;
@@ -274,8 +272,8 @@ fn apply_flight_plan(
         entity,
         propagator,
         flight_plan.end - restart_epoch,
-        Synchronisation::hertz(1000),
-        // Synchronisation::end(),
+        // Synchronisation::hertz(1000),
+        Synchronisation::completed(),
     ));
 }
 
