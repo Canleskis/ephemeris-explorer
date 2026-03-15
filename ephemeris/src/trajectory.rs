@@ -432,6 +432,12 @@ impl<V> BoundedTrajectory for UniformSpline<V> {
     }
 
     #[inline]
+    fn contains(&self, time: Epoch) -> bool {
+        let local = time - self.start;
+        local.is_positive() && local <= self.span()
+    }
+
+    #[inline]
     fn len(&self) -> usize {
         self.polynomials.len()
     }
@@ -454,16 +460,15 @@ where
 
     #[inline]
     fn state_vector(&self, at: Epoch) -> Option<StateVector<Self::Vector>> {
-        self.evaluate(at, Polynomial::eval_and_deriv)
-            .map(|(position, velocity)| {
-                // Polynomials are normalised to τ = t / interval so the derivative is dx/dτ.
-                // As such, dx/dt = dx/dτ * dτ/dt = dx/dτ * d(t / interval)/dt = dx/dτ / interval.
-                StateVector::new(position, velocity / self.interval.as_seconds())
-            })
+        let (pos, vel) = self.evaluate(at, Polynomial::eval_and_deriv)?;
+        // Polynomials are normalised to τ = t / interval so the derivative is dx/dτ.
+        // As such, dx/dt = dx/dτ * dτ/dt = dx/dτ * d(t / interval)/dt = dx/dτ / interval.
+        Some(StateVector::new(pos, vel / self.interval.as_seconds()))
     }
 }
 
 impl<V> UniformSpline<V> {
+    #[inline]
     pub fn new(start: Epoch, interval: Duration) -> Self {
         Self {
             start,
@@ -481,11 +486,11 @@ impl<V> UniformSpline<V> {
             return None;
         }
 
-        let start = self.index_local_exclusive(start - self.start)?;
-        let end = self.index_local_exclusive(end - self.start)?;
+        let start = self.get_index_local_exclusive(start - self.start)?;
+        let end = self.get_index_local_exclusive(end - self.start)?;
 
         Some(Self {
-            start: self.start + self.interval.scaled(start as f64),
+            start: self.start + self.interval * start as f64,
             interval: self.interval,
             polynomials: (start..end + 1)
                 .filter_map(|i| self.polynomials.get(i).cloned())
@@ -527,7 +532,7 @@ impl<V> UniformSpline<V> {
 
     #[inline]
     pub fn clear_before(&mut self, at: Epoch) {
-        if let Some(idx) = self.index_exclusive(at + self.interval) {
+        if let Some(idx) = self.get_index_exclusive(at + self.interval) {
             self.start += self.interval.scaled(idx as f64);
             self.polynomials.drain(0..idx);
         }
@@ -535,7 +540,7 @@ impl<V> UniformSpline<V> {
 
     #[inline]
     pub fn clear_after(&mut self, at: Epoch) {
-        if let Some(idx) = self.index(at) {
+        if let Some(idx) = self.get_index(at) {
             self.polynomials.truncate(idx);
         }
     }
@@ -545,46 +550,67 @@ impl<V> UniformSpline<V> {
     where
         F: Fn(&Polynomial<V>, f64) -> T,
     {
-        let local = at - self.start;
-        // Evaluate "previous" polynomial when at a knot, ensuring `self.end()` can be evaluated.
-        let local_index = self.index_local_exclusive(local)?;
-        let local_polynomial = local - self.interval * local_index as f64;
-        let normalised = local_polynomial.as_seconds() / self.interval.as_seconds();
-
-        Some(eval(self.polynomials.get(local_index)?, normalised))
+        let (polynomial, t) = self.get_polynomial(at)?;
+        Some(eval(polynomial, t))
     }
 
     #[inline]
-    pub fn index(&self, at: Epoch) -> Option<usize> {
+    pub fn get_polynomial(&self, at: Epoch) -> Option<(&Polynomial<V>, f64)> {
+        let local = at - self.start;
+        // Return "previous" polynomial when at a knot, ensuring `self.end()` can be evaluated.
+        let local_index = self.get_index_local_exclusive(local)?;
+        let local_polynomial = local - self.interval * local_index as f64;
+        let normalised = local_polynomial.as_seconds() / self.interval.as_seconds();
+
+        Some((self.polynomials.get(local_index)?, normalised))
+    }
+
+    #[inline]
+    pub fn get_index(&self, at: Epoch) -> Option<usize> {
+        self.get_index_local(at - self.start)
+    }
+
+    #[inline]
+    pub fn get_index_exclusive(&self, at: Epoch) -> Option<usize> {
+        self.get_index_local_exclusive(at - self.start)
+    }
+
+    #[inline]
+    pub fn index(&self, at: Epoch) -> usize {
         self.index_local(at - self.start)
     }
 
     #[inline]
-    pub fn index_exclusive(&self, at: Epoch) -> Option<usize> {
+    pub fn index_exclusive(&self, at: Epoch) -> usize {
         self.index_local_exclusive(at - self.start)
     }
 
     #[inline]
-    fn index_local(&self, time: Duration) -> Option<usize> {
+    fn get_index_local(&self, time: Duration) -> Option<usize> {
         if time.is_negative() || time >= self.span() {
             return None;
         }
 
-        Some((time.as_seconds() / self.interval.as_seconds()) as usize)
+        Some(self.index_local(time))
     }
 
     #[inline]
-    fn index_local_exclusive(&self, time: Duration) -> Option<usize> {
+    fn get_index_local_exclusive(&self, time: Duration) -> Option<usize> {
         if time.is_negative() || time > self.span() {
             return None;
         }
 
-        // This simply computes the previous representable f64. If the value is an integer, the
-        // division will return the previous integer, effectively making the index exclusive.
-        Some(
-            (f64::from_bits(time.as_seconds().to_bits().saturating_sub(1))
-                / self.interval.as_seconds()) as usize,
-        )
+        Some(self.index_local_exclusive(time))
+    }
+
+    #[inline]
+    fn index_local(&self, time: Duration) -> usize {
+        (time.as_seconds() / self.interval.as_seconds()) as usize
+    }
+
+    #[inline]
+    fn index_local_exclusive(&self, time: Duration) -> usize {
+        ((time.as_seconds() / self.interval.as_seconds()).ceil() as usize).saturating_sub(1)
     }
 
     #[inline]

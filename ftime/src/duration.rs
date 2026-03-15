@@ -75,6 +75,11 @@ impl Duration {
     }
 
     #[inline]
+    pub const fn is_positive(self) -> bool {
+        self.0.is_sign_positive()
+    }
+
+    #[inline]
     pub const fn is_negative(self) -> bool {
         self.0.is_sign_negative()
     }
