@@ -1,0 +1,177 @@
+mod celestial;
+mod spacecraft;
+
+pub use celestial::*;
+pub use spacecraft::*;
+
+use bevy::math::DVec3;
+use bevy::prelude::*;
+use deepsize::DeepSizeOf;
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
+use ftime::Epoch;
+
+pub type StateVector = ephemeris::StateVector<DVec3>;
+
+pub type CubicHermiteSplineSamples = ephemeris::CubicHermiteSplineSamples<DVec3>;
+
+pub enum PredictionTrajectory {
+    UniformSpline(UniformSpline),
+    CubicHermiteSplineSamples(CubicHermiteSplineSamples),
+}
+
+impl DeepSizeOf for PredictionTrajectory {
+    #[inline]
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        match self {
+            Self::UniformSpline(traj) => traj.deep_size_of_children(context),
+            Self::CubicHermiteSplineSamples(traj) => traj.deep_size_of_children(context),
+        }
+    }
+}
+
+impl BoundedTrajectory for PredictionTrajectory {
+    #[inline]
+    fn start(&self) -> Epoch {
+        match self {
+            Self::UniformSpline(traj) => traj.start(),
+            Self::CubicHermiteSplineSamples(traj) => traj.start(),
+        }
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        match self {
+            Self::UniformSpline(traj) => traj.end(),
+            Self::CubicHermiteSplineSamples(traj) => traj.end(),
+        }
+    }
+
+    #[inline]
+    fn contains(&self, time: Epoch) -> bool {
+        match self {
+            Self::UniformSpline(traj) => traj.contains(time),
+            Self::CubicHermiteSplineSamples(traj) => traj.contains(time),
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Self::UniformSpline(traj) => traj.len(),
+            Self::CubicHermiteSplineSamples(traj) => traj.len(),
+        }
+    }
+}
+
+impl EvaluateTrajectory for PredictionTrajectory {
+    type Vector = DVec3;
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<Self::Vector> {
+        match self {
+            Self::UniformSpline(traj) => traj.position(at),
+            Self::CubicHermiteSplineSamples(traj) => traj.position(at),
+        }
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector> {
+        match self {
+            Self::UniformSpline(traj) => traj.state_vector(at),
+            Self::CubicHermiteSplineSamples(traj) => traj.state_vector(at),
+        }
+    }
+}
+
+#[derive(Component, Clone)]
+pub struct Trajectory(std::sync::Arc<std::sync::RwLock<PredictionTrajectory>>);
+
+impl std::fmt::Debug for Trajectory {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Trajectory")
+            .field("start", &self.start())
+            .field("end", &self.end())
+            .finish()
+    }
+}
+
+impl From<UniformSpline> for Trajectory {
+    #[inline]
+    fn from(trajectory: UniformSpline) -> Self {
+        Self::new(PredictionTrajectory::UniformSpline(trajectory))
+    }
+}
+
+impl From<CubicHermiteSplineSamples> for Trajectory {
+    #[inline]
+    fn from(trajectory: CubicHermiteSplineSamples) -> Self {
+        Self::new(PredictionTrajectory::CubicHermiteSplineSamples(trajectory))
+    }
+}
+
+// Inside Bevy systems, `read` will never block and `write`` might if another thread is reading.
+impl Trajectory {
+    #[inline]
+    pub fn new(trajectory: PredictionTrajectory) -> Self {
+        Self(std::sync::Arc::new(std::sync::RwLock::new(trajectory)))
+    }
+
+    #[inline]
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, PredictionTrajectory> {
+        self.0.read().unwrap()
+    }
+
+    #[inline]
+    pub fn write(&mut self) -> std::sync::RwLockWriteGuard<'_, PredictionTrajectory> {
+        self.0.write().unwrap()
+    }
+
+    #[inline]
+    pub fn heap_size(&self) -> usize {
+        self.read().deep_size_of()
+    }
+}
+
+impl BoundedTrajectory for Trajectory {
+    #[inline]
+    fn start(&self) -> Epoch {
+        self.read().start()
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        self.read().end()
+    }
+
+    #[inline]
+    fn contains(&self, time: Epoch) -> bool {
+        self.read().contains(time)
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.read().len()
+    }
+}
+
+impl EvaluateTrajectory for Trajectory {
+    type Vector = DVec3;
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<Self::Vector> {
+        self.read().position(at)
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector> {
+        self.read().state_vector(at)
+    }
+}
+
+impl PartialEq for Trajectory {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
