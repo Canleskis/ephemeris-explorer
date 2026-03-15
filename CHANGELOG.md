@@ -8,11 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Experimental way to edit when a manoeuvre starts by dragging them.
+- Experimental way to edit when a burn starts by dragging.
+- Automatic in-SOI plotting.
+- SOI visualisations.
+- Dashed lines for trajectory segments where a burn is happening.
 
 ### Changed
 
 - Improved performance and accuracy of integrators.
+- Trajectory always display segments after a significant event like a burn or an SOI change.
+
+### Fixed
+
+- Flight plan recomputations inconsistencies when many changes are made in a short period.
+- Wront results when the flight plan is changed.
+- Auto-extend inconsistent behavior.
 
 ## [0.1.2] - 2025-03-01
 
