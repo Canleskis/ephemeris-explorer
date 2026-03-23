@@ -272,8 +272,8 @@ fn apply_flight_plan(
         entity,
         propagator,
         flight_plan.end - restart_epoch,
-        // Synchronisation::hertz(1000),
-        Synchronisation::completed(),
+        Synchronisation::hertz(1000),
+        // Synchronisation::completed(),
     ));
 }
 
