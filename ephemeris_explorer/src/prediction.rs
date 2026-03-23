@@ -287,7 +287,7 @@ async fn prediction_task<T>(
     T: PropagationTarget,
 {
     let name = pretty_type_name::pretty_type_name::<T>();
-    debug!("Computing {name} prediction until {end}");
+    info!("Computing {name} prediction until {end}");
     let t0 = std::time::Instant::now();
 
     let propagation = &mut propagation;
@@ -411,7 +411,7 @@ fn add_predicting_marker<T>(
     if let Ok(prediction) = query_prediction.get(trigger.event_target()) {
         for entity in &prediction.entities {
             if let Ok(mut entity) = commands.get_entity(*entity) {
-                entity.queue(|mut entity: EntityWorldMut| {
+                entity.queue_silenced(|mut entity: EntityWorldMut| {
                     entity.insert(PredictingWith::<T>(Default::default()));
                     match entity.get_mut::<Predicting>().as_deref_mut() {
                         Some(Predicting(count)) => *count += 1,
@@ -434,8 +434,8 @@ fn remove_predicting_marker<T>(
 {
     if let Ok(prediction) = query_prediction.get(trigger.event_target()) {
         for entity in &prediction.entities {
-            if let Ok(mut entity) = commands.get_entity(*entity) {
-                entity.queue(|mut entity: EntityWorldMut| {
+            if let Ok(mut entity) = commands.get_entity(*entity) { 
+                entity.queue_silenced(|mut entity: EntityWorldMut| {
                     entity.remove::<PredictingWith<T>>();
                     if let Some(Predicting(count)) = entity.get_mut::<Predicting>().as_deref_mut() {
                         *count -= 1;
