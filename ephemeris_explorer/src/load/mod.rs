@@ -123,7 +123,7 @@ pub struct LoadSolarSystem {
     pub state: Handle<SolarSystemState>,
     pub eph_settings: Handle<EphemeridesSettings>,
     pub hierarchy_tree: Handle<HierarchyTree>,
-    pub skybox: Handle<Image>,
+    pub skybox: Handle<SkyboxImage>,
     pub ships: Vec<Handle<Ship>>,
 }
 
@@ -158,10 +158,7 @@ pub fn handle_load_events(
         commands.insert_resource(UniqueAssetHandle(event.state.clone()));
         commands.insert_resource(UniqueAssetHandle(event.eph_settings.clone()));
         commands.insert_resource(UniqueAssetHandle(event.hierarchy_tree.clone()));
-        commands.insert_resource(SkyboxHandle {
-            reconfigured: false,
-            handle: event.skybox.clone(),
-        });
+        commands.insert_resource(UniqueAssetHandle(event.skybox.clone()));
         commands.insert_resource(ShipsHandles {
             handles: event.ships.clone(),
         });
@@ -197,11 +194,11 @@ fn hierarchy_loaded(hierarchy: UniqueAsset<HierarchyTree>) -> bool {
     )
 }
 
-fn skybox_loaded(skybox: Res<SkyboxHandle>, asset_server: Res<AssetServer>) -> bool {
+fn skybox_loaded(skybox: UniqueAsset<SkyboxImage>) -> bool {
     matches!(
-        asset_server.recursive_dependency_load_state(&skybox.handle),
-        RecursiveDependencyLoadState::Failed(_)
-    ) || skybox.reconfigured
+        skybox.recursive_dependency_load_state(),
+        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed(_)
+    )
 }
 
 fn ships_loaded(folder: Res<ShipsHandles>, asset_server: Res<AssetServer>) -> bool {
@@ -653,7 +650,7 @@ fn spawn_ship(
 
 fn setup_camera(
     mut commands: Commands,
-    skybox: Res<SkyboxHandle>,
+    skybox: UniqueAsset<SkyboxImage>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
     commands
@@ -673,7 +670,7 @@ fn setup_camera(
             bevy::post_process::bloom::Bloom::NATURAL,
             Msaa::Sample4,
             Skybox {
-                image: skybox.handle.clone(),
+                image: skybox.get().unwrap().0.clone(),
                 brightness: 1000.0,
                 rotation: Quat::IDENTITY,
             },

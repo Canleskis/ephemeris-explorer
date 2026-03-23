@@ -70,11 +70,15 @@ impl Plugin for LoadSolarSystemPlugin {
             .init_asset::<HierarchyTree>()
             .init_asset::<EphemeridesSettings>()
             .init_asset::<Ship>()
+            .init_asset::<SkyboxImage>()
             .register_asset_loader(BodyVisualsLoader)
             .register_asset_loader(SolarSystemStateLoader)
             .register_asset_loader(HierarchyTreeLoader)
             .register_asset_loader(EphemeridesSettingsLoader)
             .register_asset_loader(ShipLoader)
+            .register_asset_loader(SkyboxLoader(bevy::image::ImageLoader::new(
+                bevy::image::CompressedImageFormats::NONE,
+            )))
             .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(GlobalAmbientLight {
                 color: Color::NONE,
@@ -83,8 +87,7 @@ impl Plugin for LoadSolarSystemPlugin {
             })
             .add_systems(
                 PreUpdate,
-                (reconfigure_skybox_image, handle_missing_visuals)
-                    .run_if(in_state(MainState::Loading)),
+                handle_missing_visuals.run_if(in_state(MainState::Loading)),
             );
 
         let mut default_visuals = BodyVisuals::default();
@@ -99,43 +102,6 @@ impl Plugin for LoadSolarSystemPlugin {
             .world_mut()
             .resource_mut::<Assets<BodyVisuals>>()
             .insert(Handle::default().id(), default_visuals);
-    }
-}
-
-#[derive(Resource)]
-pub struct SkyboxHandle {
-    pub reconfigured: bool,
-    pub handle: Handle<Image>,
-}
-
-fn reconfigure_skybox_image(
-    mut images: ResMut<Assets<Image>>,
-    mut skybox: ResMut<SkyboxHandle>,
-    asset_server: Res<AssetServer>,
-) {
-    if skybox.reconfigured {
-        return;
-    }
-
-    if !skybox.reconfigured && asset_server.load_state(&skybox.handle).is_loaded() {
-        if let Some(image) = images.get_mut(&skybox.handle) {
-            // NOTE: PNGs do not have any metadata that could indicate they contain a cubemap texture,
-            // so they appear as one texture. The following code reconfigures the texture as necessary.
-            if image.texture_descriptor.array_layer_count() == 1 {
-                image
-                    .reinterpret_stacked_2d_as_array(image.height() / image.width())
-                    .unwrap();
-                image.texture_view_descriptor =
-                    Some(bevy::render::render_resource::TextureViewDescriptor {
-                        dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube),
-                        ..default()
-                    });
-            }
-            image.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
-        }
-        // If the image is loaded but inaccessible, it means it was likely already reconfigured but
-        // is now on the render world.
-        skybox.reconfigured = true;
     }
 }
 
@@ -289,6 +255,9 @@ impl Ship {
         }
     }
 }
+
+#[derive(Clone, Asset, TypePath, Debug)]
+pub struct SkyboxImage(pub Handle<Image>);
 
 /// All the bodies in a gravitationally bound system should be a child of a root entity with this
 /// component.

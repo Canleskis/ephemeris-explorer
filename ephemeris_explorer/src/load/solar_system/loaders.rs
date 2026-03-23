@@ -1,6 +1,6 @@
 use super::{
     Body, BodyVisuals, EphemeridesSettings, EphemerisSettings, HierarchyTree, OrbitVisuals, Ship,
-    SolarSystemState,
+    SkyboxImage, SolarSystemState,
 };
 
 use bevy::asset::AssetPath;
@@ -426,38 +426,45 @@ impl bevy::asset::AssetLoader for ShipLoader {
     }
 }
 
-// pub struct SkyboxLoader(pub bevy::image::ImageLoader);
+#[derive(TypePath)]
+pub struct SkyboxLoader(pub bevy::image::ImageLoader);
 
-// impl bevy::asset::AssetLoader for SkyboxLoader {
-//     type Asset = Skybox;
+impl bevy::asset::AssetLoader for SkyboxLoader {
+    type Asset = SkyboxImage;
 
-//     type Settings = bevy::image::ImageLoaderSettings;
+    type Settings = bevy::image::ImageLoaderSettings;
 
-//     type Error = bevy::image::ImageLoaderError;
+    type Error = bevy::image::ImageLoaderError;
 
-//     fn load(
-//         &self,
-//         reader: &mut dyn bevy::asset::io::Reader,
-//         settings: &Self::Settings,
-//         load_context: &mut bevy::asset::LoadContext,
-//     ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
-//         async move {
-//             let mut image = self.0.load(reader, settings, load_context).await?;
-//             if image.texture_descriptor.array_layer_count() == 1 {
-//                 image.reinterpret_stacked_2d_as_array(image.height() / image.width());
-//                 image.texture_view_descriptor =
-//                     Some(bevy::render::render_resource::TextureViewDescriptor {
-//                         dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube),
-//                         ..default()
-//                     });
-//             }
-//             image.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+    fn load(
+        &self,
+        reader: &mut dyn bevy::asset::io::Reader,
+        settings: &Self::Settings,
+        ctx: &mut bevy::asset::LoadContext,
+    ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
+        async move {
+            let mut image = self.0.load(reader, settings, ctx).await?;
+            // NOTE: PNGs do not have any metadata that could indicate they contain a cubemap texture,
+            // so they appear as one texture. The following code reconfigures the texture as necessary.
+            if image.texture_descriptor.array_layer_count() == 1 {
+                image
+                    .reinterpret_stacked_2d_as_array(image.height() / image.width())
+                    .unwrap();
+                image.texture_view_descriptor =
+                    Some(bevy::render::render_resource::TextureViewDescriptor {
+                        dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube),
+                        ..default()
+                    });
+            }
+            image.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
 
-//             Ok(Skybox(image))
-//         }
-//     }
+            Ok(SkyboxImage(
+                ctx.add_labeled_asset("skybox".to_string(), image),
+            ))
+        }
+    }
 
-//     fn extensions(&self) -> &[&str] {
-//         bevy::image::ImageLoader::SUPPORTED_FILE_EXTENSIONS
-//     }
-// }
+    fn extensions(&self) -> &[&str] {
+        &["png"]
+    }
+}
