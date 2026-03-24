@@ -151,6 +151,16 @@ impl<P: Propagator> Propagation<P> {
     }
 
     #[inline]
+    pub fn propagator(&self) -> &P {
+        &self.propagator
+    }
+
+    #[inline]
+    pub fn trajectories(&self) -> &P::Trajectories {
+        &self.trajectories
+    }
+
+    #[inline]
     pub fn boundaries(&self) -> impl Iterator<Item = Epoch> + '_
     where
         P: DirectionalPropagator,

@@ -85,18 +85,6 @@ where
     }
 }
 
-impl Mul<Double<DVec3>> for f64 {
-    type Output = Double<DVec3>;
-
-    #[inline]
-    fn mul(self, rhs: Double<DVec3>) -> Self::Output {
-        Double {
-            value: rhs.value * self,
-            error: rhs.error * self,
-        }
-    }
-}
-
 impl Mul<f64> for Double<DVec3> {
     type Output = Double<DVec3>;
 

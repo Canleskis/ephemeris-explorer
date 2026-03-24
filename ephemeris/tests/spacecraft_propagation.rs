@@ -444,7 +444,7 @@ fn spacecraft_propagation() -> Result<(), Box<dyn std::error::Error>> {
 
     let end = "1951-01-01 00:00:00".parse()?;
     propagation.propagate(end)?;
-    let (_, [spacecraft_trajectory]) = &propagation.into_inner();
+    let [spacecraft_trajectory] = propagation.trajectories();
 
     let distance_from = |t, body: SolarSystemObject| {
         Ok::<_, OutOfBoundsEval>(
