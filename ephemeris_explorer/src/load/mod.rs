@@ -72,7 +72,6 @@ impl Plugin for LoadSystemPlugin {
                     in_state(LoadingStage::Assets)
                         .and(bodies_loaded)
                         .and(eph_settings_loaded)
-                        .and(hierarchy_loaded)
                         .and(skybox_loaded)
                         .and(ships_loaded),
                 ),
@@ -122,7 +121,6 @@ pub struct LoadSolarSystem {
     pub path: std::path::PathBuf,
     pub state: Handle<SolarSystemState>,
     pub eph_settings: Handle<EphemeridesSettings>,
-    pub hierarchy_tree: Handle<HierarchyTree>,
     pub skybox: Handle<SkyboxImage>,
     pub ships: Vec<Handle<Ship>>,
 }
@@ -136,7 +134,6 @@ impl LoadSolarSystem {
             path: dir.to_path_buf(),
             state: asset_server.load(dir.join("state.json")),
             eph_settings: asset_server.load(dir.join("ephemeris.json")),
-            hierarchy_tree: asset_server.load(dir.join("hierarchy.json")),
             skybox: asset_server.load(dir.join("skybox.png")),
             ships: std::fs::read_dir(dir.join("ships"))
                 .into_iter()
@@ -157,7 +154,6 @@ pub fn handle_load_events(
     for event in events.read() {
         commands.insert_resource(UniqueAssetHandle(event.state.clone()));
         commands.insert_resource(UniqueAssetHandle(event.eph_settings.clone()));
-        commands.insert_resource(UniqueAssetHandle(event.hierarchy_tree.clone()));
         commands.insert_resource(UniqueAssetHandle(event.skybox.clone()));
         commands.insert_resource(ShipsHandles {
             handles: event.ships.clone(),
@@ -187,13 +183,6 @@ fn eph_settings_loaded(eph_settings: UniqueAsset<EphemeridesSettings>) -> bool {
     )
 }
 
-fn hierarchy_loaded(hierarchy: UniqueAsset<HierarchyTree>) -> bool {
-    matches!(
-        hierarchy.recursive_dependency_load_state(),
-        RecursiveDependencyLoadState::Loaded | RecursiveDependencyLoadState::Failed(_)
-    )
-}
-
 fn skybox_loaded(skybox: UniqueAsset<SkyboxImage>) -> bool {
     matches!(
         skybox.recursive_dependency_load_state(),
@@ -214,7 +203,7 @@ fn ships_loaded(folder: Res<ShipsHandles>, asset_server: Res<AssetServer>) -> bo
 pub enum LoadingError {
     AssetLoadError(bevy::asset::AssetLoadError),
     MissingBody(String),
-    MissingEphemeridesSettings(String),
+    MissingInterpolationParameter(String),
     MissingReference { ship: String, reference: String },
 }
 impl std::fmt::Display for LoadingError {
@@ -222,8 +211,8 @@ impl std::fmt::Display for LoadingError {
         match self {
             Self::AssetLoadError(err) => write!(f, "Asset load error: {err}"),
             Self::MissingBody(name) => write!(f, "Missing body in solar system state: {name}"),
-            Self::MissingEphemeridesSettings(name) => {
-                write!(f, "Missing ephemerides settings for body: {name}")
+            Self::MissingInterpolationParameter(name) => {
+                write!(f, "Missing interpolation parameter for body: {name}")
             }
             Self::MissingReference { ship, reference } => {
                 write!(f, "Reference \"{reference}\" for \"{ship}\" does not exist")
@@ -254,21 +243,19 @@ fn agregate_asset_errors(
 fn spawn_loaded_bodies(
     mut commands: Commands,
     solar_system: UniqueAsset<SolarSystemState>,
-    hierachy_tree: UniqueAsset<HierarchyTree>,
-    eph_settings: UniqueAsset<EphemeridesSettings>,
+    ephemerides: UniqueAsset<EphemeridesSettings>,
     visuals: Res<Assets<BodyVisuals>>,
     mut errors: ResMut<LoadingErrors>,
 ) {
-    // We can assume all assets are loaded at this point and just unwrap everything.
-    let empty = HierarchyTree::empty();
-    let hierachy_tree = hierachy_tree.get().unwrap_or(&empty);
+    // We can assume all assets are loaded at this point and unwrap.
 
-    // Hierarchy should always have one root element.
-    let (name, tree) = hierachy_tree.first().unwrap();
+    let empty = SolarSystemState::default();
+    let system = solar_system.get().unwrap_or(&empty);
+
     let root = commands
         .spawn((
             DespawnOnExit(MainState::Running),
-            Name::new(name.to_string()),
+            Name::new(system.name.clone()),
             BigSpaceRootBundle::default(),
             SystemRoot,
             CanFollow {
@@ -278,195 +265,134 @@ fn spawn_loaded_bodies(
         ))
         .id();
 
-    let empty = SolarSystemState::default();
-    let system = solar_system.get().unwrap_or(&empty);
-
     let empty = EphemeridesSettings::default();
-    let settings = eph_settings.get().unwrap_or(&empty);
+    let ephemerides = ephemerides.get().unwrap_or(&empty);
 
-    let mut spawn_data = Vec::new();
-
-    enum MissingDataError {
-        State(String),
-        EphemeridesSettings(String),
-    }
-
-    #[expect(clippy::type_complexity)]
-    fn spawn_from_hierarchy(
-        id: &mut u64,
-        depth: usize,
-        root: Entity,
-        commands: &mut Commands,
-        spawn_data: &mut Vec<(Entity, (StateVector, f64, Duration, LeastSquaresFit))>,
-        parent: Entity,
-        tree: &HierarchyTree,
-        eph_settings: &EphemeridesSettings,
-        solar_system: &SolarSystemState,
-        visuals: &Assets<BodyVisuals>,
-    ) -> Vec<MissingDataError> {
-        let mut errors = Vec::new();
-        for (name, tree) in tree.iter() {
-            let body = match solar_system.bodies.get(name) {
-                Some(body) => body,
-                None => {
-                    errors.push(MissingDataError::State(name.clone()));
-                    continue;
-                }
-            };
-            let settings = match eph_settings.settings.get(name) {
-                Some(settings) => settings,
-                None => {
-                    errors.push(MissingDataError::EphemeridesSettings(name.clone()));
-                    continue;
-                }
-            };
-            let visual = visuals.get(&body.visuals).unwrap();
-
-            let radius = ((visual.radii.x + visual.radii.y + visual.radii.z) / 3.0) as f32;
-            let soi = spawn_data
-                .iter()
-                .find(|(entity, ..)| *entity == parent)
-                .map(|(_, (parent_sv, parent_mu, ..))| {
-                    SphereOfInfluence::approximate(
-                        body.position.distance(parent_sv.position),
-                        body.mu,
-                        *parent_mu,
-                    )
-                })
-                .unwrap_or(SphereOfInfluence::INFINITY);
-
-            let sample_period = eph_settings.dt * settings.count as f64;
-
-            let mut entity = commands.spawn((
-                // No state scope needed as it is always a child of the root.
-                Name::new(name.clone()),
-                Id(*id),
-                Visibility::default(),
-                BigGridBundle {
-                    transform: Transform::from_translation(body.position.as_vec3()),
-                    ..default()
-                },
-                Selectable {
-                    radius,
-                    index: depth + 1,
-                },
-                CanFollow {
-                    min_distance: radius as f64 * 1.05,
-                    max_distance: 5e10,
-                },
-                Labelled {
-                    font: TextFont::from_font_size(12.0),
-                    colour: TextColor(Color::WHITE),
-                    offset: Vec2::new(0.0, radius) * 1.1,
-                    index: depth + 1,
-                },
-                Mu(body.mu),
-                Trajectory::from(UniformSpline::new(
-                    solar_system.epoch,
-                    sample_period * DIV as f64,
-                )),
-                BoundsTime,
-                FlightPlanDependency,
-                soi,
-                SoiTransitionsAnalysis::Static,
-                OrbitPlotConfig {
-                    enabled: depth <= 1,
-                    start: solar_system.epoch - Duration::from_years(1000.0),
-                    end: solar_system.epoch + Duration::from_years(1000.0),
-                    color: visual.orbit.color,
-                    bound: PlotBound::Start,
-                    resolution: 0.5,
-                    max_points_per_segment: 10_000,
-                    reference: OrbitPlotReference::Primary,
-                },
-            ));
-
-            spawn_data.push((
-                entity.id(),
+    let mut sorted_bodies = system.bodies.iter().collect::<Vec<_>>();
+    sorted_bodies.sort_by(|(_, a), (_, b)| b.mu.total_cmp(&a.mu));
+    let mut info = indexmap::IndexMap::<_, (SphereOfInfluence, _)>::new();
+    for &(name, body) in sorted_bodies.iter() {
+        let (soi, depth) = sorted_bodies
+            .iter()
+            .zip(info.values())
+            .filter(|((_, other_body), (soi, _))| {
+                body.position.distance(other_body.position) < soi.radius
+            })
+            .map(|(&(_, other_body), (_, depth))| {
                 (
-                    StateVector::new(body.position, body.velocity),
-                    body.mu,
-                    sample_period,
-                    LeastSquaresFit {
-                        degree: settings.degree,
-                    },
-                ),
+                    SphereOfInfluence::approximate(
+                        body.position.distance(other_body.position),
+                        body.mu,
+                        other_body.mu,
+                    ),
+                    depth + 1,
+                )
+            })
+            .min_by(|(a, _), (b, _)| a.radius.total_cmp(&b.radius))
+            .unwrap_or((SphereOfInfluence::INFINITY, 0));
+
+        info.insert(name.clone(), (soi, depth));
+    }
+
+    let mut entities = vec![];
+    let mut states = vec![];
+
+    for (id, (name, body)) in system.bodies.iter().enumerate() {
+        let interpolation = match ephemerides.interpolation.get(name) {
+            Some(interpolation) => interpolation,
+            None => {
+                errors.push(LoadingError::MissingInterpolationParameter(name.clone()));
+                continue;
+            }
+        };
+        let visual = visuals.get(&body.visuals).unwrap();
+
+        let radius = ((visual.radii.x + visual.radii.y + visual.radii.z) / 3.0) as f32;
+        let (soi, depth) = info.swap_remove(name).unwrap();
+
+        let sample_period = ephemerides.dt * interpolation.count as f64;
+
+        let mut entity = commands.spawn((
+            // No state scope needed as it is always a child of the root.
+            Name::new(name.clone()),
+            Id(id as u64),
+            Visibility::default(),
+            BigGridBundle {
+                transform: Transform::from_translation(body.position.as_vec3()),
+                ..default()
+            },
+            Selectable {
+                radius,
+                index: depth + 1,
+            },
+            CanFollow {
+                min_distance: radius as f64 * 1.05,
+                max_distance: 5e10,
+            },
+            Labelled {
+                font: TextFont::from_font_size(12.0),
+                colour: TextColor(Color::WHITE),
+                offset: Vec2::new(0.0, radius) * 1.1,
+                index: depth + 1,
+            },
+            Mu(body.mu),
+            Trajectory::from(UniformSpline::new(system.epoch, sample_period * DIV as f64)),
+            BoundsTime,
+            FlightPlanDependency,
+            soi,
+            SoiTransitionsAnalysis::Static,
+            OrbitPlotConfig {
+                enabled: depth <= 1,
+                start: system.epoch - Duration::from_years(1000.0),
+                end: system.epoch + Duration::from_years(1000.0),
+                color: visual.orbit.color,
+                bound: PlotBound::Start,
+                resolution: 0.5,
+                max_points_per_segment: 10_000,
+                reference: OrbitPlotReference::Primary,
+            },
+        ));
+        entity.with_children(|cmds| {
+            let mut child = cmds.spawn((
+                Transform::from_scale(visual.radii.as_vec3() / radius),
+                Visibility::default(),
+                Mesh3d(visual.mesh.clone()),
+                MeshMaterial3d(visual.material.clone()),
+                Rotating {
+                    right_ascension: visual.right_ascension,
+                    declination: visual.declination,
+                    reference_epoch: visual.rotation_reference_epoch,
+                    reference_rotation: visual.rotation_reference,
+                    rotation_rate: visual.rotation_rate,
+                },
             ));
 
-            entity.with_children(|cmds| {
-                let mut child = cmds.spawn((
-                    Transform::from_scale(visual.radii.as_vec3() / radius),
-                    Visibility::default(),
-                    Mesh3d(visual.mesh.clone()),
-                    MeshMaterial3d(visual.material.clone()),
-                    Rotating {
-                        right_ascension: visual.right_ascension,
-                        declination: visual.declination,
-                        reference_epoch: visual.rotation_reference_epoch,
-                        reference_rotation: visual.rotation_reference,
-                        rotation_rate: visual.rotation_rate,
+            if let Some(color) = visual.light {
+                child.insert((
+                    Star {
+                        color,
+                        illuminance: 120_000.0,
                     },
+                    bevy::light::NotShadowCaster,
                 ));
+            }
+        });
 
-                if let Some(color) = visual.light {
-                    child.insert((
-                        Star {
-                            color,
-                            illuminance: 120_000.0,
-                        },
-                        bevy::light::NotShadowCaster,
-                    ));
-                }
-            });
+        entities.push(entity.id());
+        states.push((
+            StateVector::new(body.position, body.velocity),
+            body.mu,
+            sample_period,
+            LeastSquaresFit {
+                degree: interpolation.degree,
+            },
+        ));
 
-            let entity = entity.id();
-            commands.entity(root).add_child(entity);
-
-            *id += 1;
-
-            errors.extend(spawn_from_hierarchy(
-                id,
-                depth + 1,
-                root,
-                commands,
-                spawn_data,
-                entity,
-                tree,
-                eph_settings,
-                solar_system,
-                visuals,
-            ));
-        }
-
-        errors
+        let entity = entity.id();
+        commands.entity(root).add_child(entity);
     }
 
-    let spawn_errors = spawn_from_hierarchy(
-        &mut 0,
-        0,
-        root,
-        &mut commands,
-        &mut spawn_data,
-        root,
-        tree,
-        settings,
-        system,
-        &visuals,
-    );
-
-    for error in spawn_errors {
-        match error {
-            MissingDataError::State(name) => {
-                errors.push(LoadingError::MissingBody(name));
-            }
-            MissingDataError::EphemeridesSettings(name) => {
-                errors.push(LoadingError::MissingEphemeridesSettings(name));
-            }
-        }
-    }
-
-    let (entities, states): (Vec<_>, Vec<_>) = spawn_data.into_iter().collect();
-    let dt = settings.dt;
+    let dt = ephemerides.dt;
     commands.entity(root).insert((
         PredictionContext::<CelestialTrajectory<Forward>>::new(
             entities.clone(),

@@ -67,13 +67,11 @@ impl Plugin for LoadSolarSystemPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<BodyVisuals>()
             .init_asset::<SolarSystemState>()
-            .init_asset::<HierarchyTree>()
             .init_asset::<EphemeridesSettings>()
             .init_asset::<Ship>()
             .init_asset::<SkyboxImage>()
             .register_asset_loader(BodyVisualsLoader)
             .register_asset_loader(SolarSystemStateLoader)
-            .register_asset_loader(HierarchyTreeLoader)
             .register_asset_loader(EphemeridesSettingsLoader)
             .register_asset_loader(ShipLoader)
             .register_asset_loader(SkyboxLoader(bevy::image::ImageLoader::new(
@@ -169,7 +167,8 @@ pub struct Body {
 
 #[derive(Debug, Default, Asset, TypePath)]
 pub struct SolarSystemState {
-    pub bodies: bevy::platform::collections::hash_map::HashMap<String, Body>,
+    pub name: String,
+    pub bodies: indexmap::IndexMap<String, Body>,
     pub epoch: Epoch,
 }
 
@@ -194,7 +193,7 @@ fn handle_missing_visuals(
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct EphemerisSettings {
+pub struct InterpolationParameters {
     pub degree: usize,
     pub count: usize,
 }
@@ -202,20 +201,8 @@ pub struct EphemerisSettings {
 #[derive(Debug, Default, Asset, TypePath)]
 pub struct EphemeridesSettings {
     pub dt: Duration,
-    pub settings: bevy::platform::collections::hash_map::HashMap<String, EphemerisSettings>,
-}
-
-#[derive(Asset, TypePath, Deref, DerefMut, Debug, serde::Deserialize)]
-pub struct HierarchyTree(pub indexmap::IndexMap<String, HierarchyTree>);
-
-impl HierarchyTree {
-    #[inline]
-    pub fn empty() -> Self {
-        HierarchyTree(indexmap::IndexMap::from([(
-            String::from("Empty System"),
-            HierarchyTree(indexmap::IndexMap::new()),
-        )]))
-    }
+    pub interpolation:
+        bevy::platform::collections::hash_map::HashMap<String, InterpolationParameters>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]

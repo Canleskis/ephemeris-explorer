@@ -1,5 +1,5 @@
 use super::{
-    Body, BodyVisuals, EphemeridesSettings, EphemerisSettings, HierarchyTree, OrbitVisuals, Ship,
+    Body, BodyVisuals, EphemeridesSettings, InterpolationParameters, OrbitVisuals, Ship,
     SkyboxImage, SolarSystemState,
 };
 
@@ -230,6 +230,7 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
 
         #[derive(Deserialize)]
         struct SolarSytemJson {
+            name: String,
             epoch: Epoch,
             bodies: Vec<BodyJson>,
         }
@@ -239,8 +240,7 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
             reader.read_to_end(&mut bytes).await?;
             let json = serde_json::from_slice::<SolarSytemJson>(&bytes)?;
 
-            let mut bodies =
-                bevy::platform::collections::hash_map::HashMap::with_capacity(json.bodies.len());
+            let mut bodies = indexmap::IndexMap::with_capacity(json.bodies.len());
 
             for body in json.bodies {
                 let label = body.name.to_lowercase();
@@ -257,6 +257,7 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
             }
 
             Ok(SolarSystemState {
+                name: json.name,
                 bodies,
                 epoch: json.epoch,
             })
@@ -314,13 +315,13 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
 
             let settings = EphemeridesSettings {
                 dt: json.dt,
-                settings: json
+                interpolation: json
                     .settings
                     .into_iter()
                     .map(|(name, setting)| {
                         (
                             name,
-                            EphemerisSettings {
+                            InterpolationParameters {
                                 degree: setting.degree,
                                 count: setting.count,
                             },
@@ -330,47 +331,6 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
             };
 
             Ok(settings)
-        }
-    }
-
-    fn extensions(&self) -> &[&str] {
-        &["json"]
-    }
-}
-
-#[derive(TypePath)]
-pub struct HierarchyTreeLoader;
-
-#[non_exhaustive]
-#[derive(Debug, Error)]
-pub enum HierarchyTreeLoaderError {
-    /// An [IO Error](std::io::Error)
-    #[error("Could not read the file: {0}")]
-    Io(#[from] std::io::Error),
-    /// A [JSON Error](serde_json::error::Error)
-    #[error("Could not parse the JSON: {0}")]
-    JsonError(#[from] serde_json::error::Error),
-}
-
-impl bevy::asset::AssetLoader for HierarchyTreeLoader {
-    type Asset = HierarchyTree;
-
-    type Settings = ();
-
-    type Error = HierarchyTreeLoaderError;
-
-    fn load(
-        &self,
-        reader: &mut dyn bevy::asset::io::Reader,
-        _: &(),
-        _: &mut bevy::asset::LoadContext,
-    ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
-        async move {
-            let mut bytes = Vec::new();
-            reader.read_to_end(&mut bytes).await?;
-            let json = serde_json::from_slice(&bytes)?;
-
-            Ok(HierarchyTree(json))
         }
     }
 

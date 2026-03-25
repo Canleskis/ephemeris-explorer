@@ -434,7 +434,7 @@ fn remove_predicting_marker<T>(
 {
     if let Ok(prediction) = query_prediction.get(trigger.event_target()) {
         for entity in &prediction.entities {
-            if let Ok(mut entity) = commands.get_entity(*entity) { 
+            if let Ok(mut entity) = commands.get_entity(*entity) {
                 entity.queue_silenced(|mut entity: EntityWorldMut| {
                     entity.remove::<PredictingWith<T>>();
                     if let Some(Predicting(count)) = entity.get_mut::<Predicting>().as_deref_mut() {

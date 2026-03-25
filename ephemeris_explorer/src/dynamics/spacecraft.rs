@@ -87,9 +87,9 @@ impl SphereOfInfluence {
     };
 
     #[inline]
-    pub fn approximate(a: f64, m: f64, parent: f64) -> Self {
+    pub fn approximate(a: f64, m: f64, m_parent: f64) -> Self {
         Self {
-            radius: a * (m / parent).powf(2.0 / 5.0),
+            radius: a * (m / m_parent).powf(2.0 / 5.0),
         }
     }
 }
