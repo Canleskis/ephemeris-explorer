@@ -8,7 +8,7 @@ pub type RK4<T> = FixedRungeKutta<coeffs::RK4, T>;
 pub type CashKarp45<T, Tol, U> = AdaptiveRungeKutta<coeffs::CashKarp45, T, Tol, U>;
 pub type DormandPrince54<T, Tol, U> = AdaptiveRungeKutta<coeffs::DormandPrince54, T, Tol, U>;
 pub type DormandPrince87<T, Tol, U> = AdaptiveRungeKutta<coeffs::DormandPrince87, T, Tol, U>;
-pub type Fehlberg45<T, Tol, U> = AdaptiveRungeKutta<coeffs::Felhberg45, T, Tol, U>;
+pub type Fehlberg45<T, Tol, U> = AdaptiveRungeKutta<coeffs::Fehlberg45, T, Tol, U>;
 pub type Tsitouras75<T, Tol, U> = AdaptiveRungeKutta<coeffs::Tsitouras75, T, Tol, U>;
 pub type Verner87<T, Tol, U> = AdaptiveRungeKutta<coeffs::Verner87, T, Tol, U>;
 
@@ -414,11 +414,11 @@ pub mod coeffs {
 
     #[doc(hidden)]
     #[derive(Debug, Clone, Copy)]
-    pub struct Felhberg45;
-    impl<P: Problem> RKCoefficients<P> for Felhberg45 {
+    pub struct Fehlberg45;
+    impl<P: Problem> RKCoefficients<P> for Fehlberg45 {
         type Instance = ERK<Self, [P::State; 6]>;
     }
-    impl ERKCoefficients for Felhberg45 {
+    impl ERKCoefficients for Fehlberg45 {
         const FSAL: bool = false;
 
         const ORDER: u16 = 4;
@@ -462,7 +462,7 @@ pub mod coeffs {
             frac!(1, 2),
         ];
     }
-    impl EERKCoefficients for Felhberg45 {
+    impl EERKCoefficients for Fehlberg45 {
         const ORDER_EMBEDDED: u16 = 5;
 
         const E: &'static [Ratio] = {
