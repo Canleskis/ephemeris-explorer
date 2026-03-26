@@ -212,7 +212,7 @@ impl CelestialBody {
 
 #[derive(Clone)]
 struct CelestialBodies {
-    bodies: std::collections::HashMap<SolarSystemObject, CelestialBody>,
+    bodies: indexmap::IndexMap<SolarSystemObject, CelestialBody>,
 }
 
 impl AccelerationModel for &CelestialBodies {

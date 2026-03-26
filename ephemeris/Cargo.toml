@@ -22,3 +22,4 @@ particular = { workspace = true, features = ["glam"] }
 
 horizons_solar_system = { workspace = true }
 bincode = { version = "2", features = ["serde"] }
+indexmap = "2.13"
