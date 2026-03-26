@@ -365,8 +365,8 @@ pub const ADAPTIVE_PARAMETERS: AdaptiveMethodParams<f64, AbsTol, f64> = Adaptive
     60.0,
     f64::MAX,
     AbsTol(StateVector {
-        position: DVec3::splat(1e-7),
-        velocity: DVec3::splat(1e-5),
+        position: DVec3::splat(1e-3),
+        velocity: DVec3::splat(1e-3),
     }),
     ratio_f64(integration::DEFAULT_FAC_MIN),
     ratio_f64(integration::DEFAULT_FAC_MAX),

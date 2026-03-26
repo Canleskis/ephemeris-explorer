@@ -451,10 +451,7 @@ where
     }
 
     #[inline]
-    fn set_bound(&mut self, bound: Epoch)
-    where
-        C: PropagationEnvironment,
-    {
+    fn set_bound(&mut self, bound: Epoch) {
         self.integration.problem.bound = bound.as_offset_seconds();
     }
 }
