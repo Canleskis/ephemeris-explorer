@@ -1,6 +1,7 @@
 pub mod solar_system;
 pub mod ui;
 
+use integration::{AdaptiveMethodParams, ratio::Ratio};
 pub use solar_system::*;
 pub use ui::*;
 
@@ -9,10 +10,9 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, SoiTransitionsAnalysis},
     camera::{CameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
-        Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, DEFAULT_ADAPTIVE_PARAMS,
-        Forward, GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator,
-        SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, SphereOfInfluence, StateVector,
-        Timeline, Trajectory, UniformSpline,
+        AbsTol, Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, Forward,
+        GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator, SpacecraftPropagatorSoiDetection,
+        SpacecraftTrajectory, SphereOfInfluence, StateVector, Timeline, Trajectory, UniformSpline,
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, CellCoord, FloatingOrigin},
@@ -24,10 +24,10 @@ use crate::{
     ui::{Id, Labelled, PlotBound},
 };
 
-use bevy::asset::RecursiveDependencyLoadState;
-use bevy::core_pipeline::Skybox;
-use bevy::platform::hash::FixedState;
 use bevy::prelude::*;
+use bevy::{
+    asset::RecursiveDependencyLoadState, core_pipeline::Skybox, platform::hash::FixedState,
+};
 use ephemeris::DIV;
 use ftime::Duration;
 use std::hash::{BuildHasher, Hash};
@@ -450,6 +450,26 @@ pub fn find_by_name(query: &Query<(Entity, &Name), With<Mu>>, reference: &str) -
         .map(|(entity, _)| entity)
 }
 
+const fn ratio_f64(ratio: Ratio<u16>) -> f64 {
+    ratio.numerator() as f64 / ratio.denominator() as f64
+}
+
+pub const INITIAL_ADAPTIVE_PARAMS: AdaptiveMethodParams<f64, AbsTol, f64> =
+    AdaptiveMethodParams::with(
+        60.0,
+        f64::MAX,
+        // Tolerance of 1 m and 1 m/s.
+        AbsTol {
+            position: 1e-3,
+            velocity: 1e-3,
+        },
+        // Const workaround instead of using `AdaptiveMethodParams::new`.
+        ratio_f64(integration::DEFAULT_FAC_MIN),
+        ratio_f64(integration::DEFAULT_FAC_MAX),
+        ratio_f64(integration::DEFAULT_FAC),
+        1_000_000,
+    );
+
 fn spawn_ship(
     trigger: On<SpawnShip>,
     mut commands: Commands,
@@ -545,16 +565,12 @@ fn spawn_ship(
             SpacecraftPropagatorSoiDetection::new(
                 ship.start,
                 StateVector::new(ship.position, ship.velocity),
-                DEFAULT_ADAPTIVE_PARAMS,
+                INITIAL_ADAPTIVE_PARAMS,
                 Bodies(context),
                 Timeline::default(),
             ),
         ),
-        FlightPlan::new(
-            ship.end,
-            DEFAULT_ADAPTIVE_PARAMS.n_max as usize,
-            mapped_burns,
-        ),
+        FlightPlan::new(ship.end, INITIAL_ADAPTIVE_PARAMS, mapped_burns),
         SoiTransitionsAnalysis::Dynamic,
         OrbitPlotConfig {
             enabled: true,

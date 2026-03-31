@@ -48,7 +48,7 @@
 //! let (t_end, [y_end]) = integration.solve()?;
 //! println!("t = {t_end}, y = {y_end}");
 //! println!("Expected y = {expected_y}");
-//! 
+//!
 //! assert!((y_end - expected_y).abs() < 1e-6);
 //!
 //! # Ok(())
@@ -85,7 +85,7 @@
 //! let (t_end, [y_end]) = integration.solve()?;
 //! println!("t = {t_end}, y = {y_end}");
 //! println!("Expected y = {expected_y}");
-//! 
+//!
 //! assert!((y_end - expected_y).abs() < 1e-6);
 //!
 //! # Ok(())

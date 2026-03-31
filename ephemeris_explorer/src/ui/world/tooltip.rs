@@ -8,9 +8,9 @@ use crate::{
     load::SystemRoot,
     simulation::SimulationTime,
     ui::{
-        HitData, MANOEUVRE_SIZE, MarkerGizmoConfigGroup, PICK_THRESHOLD, PickingSet, PlotConfig,
-        PlotPoints, PlotSource, PlotSourceOf, PointerHit, PointerHover, Position, WorldInteraction,
-        WorldUiSet,
+        HitData, Length, MANOEUVRE_SIZE, MarkerGizmoConfigGroup, PICK_THRESHOLD, PickingSet,
+        PlotConfig, PlotPoints, PlotSource, PlotSourceOf, PointerHit, PointerHover,
+        WorldInteraction, WorldUiSet,
     },
 };
 
@@ -642,7 +642,7 @@ fn trajectory_tooltips_window(
                                                 if let Some(position) = relative.position(time) {
                                                     ui.label(format!(
                                                         "Distance: {}",
-                                                        Position::km(position.length())
+                                                        Length::km(position.length())
                                                     ));
                                                 }
                                                 ui.horizontal(|ui| {
@@ -869,10 +869,7 @@ fn separation_tooltip_window(
             .fixed_pos(window_position.to_array())
             .fixed_size([200.0, 200.0])
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "Separation: {}",
-                    Position::km(tooltip.data.distance)
-                ));
+                ui.label(format!("Separation: {}", Length::km(tooltip.data.distance)));
             });
     }
 }

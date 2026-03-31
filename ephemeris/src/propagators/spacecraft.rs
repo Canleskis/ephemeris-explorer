@@ -406,6 +406,14 @@ where
     }
 
     #[inline]
+    pub fn tolerance(&self) -> &<M::Integrator as AdaptiveRKState>::Tolerance
+    where
+        M::Integrator: AdaptiveRKState,
+    {
+        self.integration.integrator.tolerance()
+    }
+
+    #[inline]
     pub fn time(&self) -> Epoch {
         Epoch::from_offset(Duration::from_seconds(self.integration.problem.time))
     }

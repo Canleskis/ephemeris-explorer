@@ -3,15 +3,18 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
-        Bodies, CubicHermiteSplineSamples, DEFAULT_ADAPTIVE_PARAMS, GravitationalBody, Mu,
-        SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, SphereOfInfluence, Timeline,
-        Trajectory,
+        Bodies, CubicHermiteSplineSamples, GravitationalBody, Mu, SpacecraftPropagatorSoiDetection,
+        SpacecraftTrajectory, SphereOfInfluence, Timeline, Trajectory,
     },
     floating_origin::BigGridBundle,
-    load::{Ship, SpawnShip, SystemRoot},
+    load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
     prediction::{ComputePrediction, PredictionContext, Synchronisation},
     simulation::SimulationTime,
-    ui::{IdentedInfo, Labelled, PlotBound, PlotSourceOf, WindowsUiSet, get_name, show_tree},
+    ui::{
+        IdentedInfo, Labelled, PlotBound, PlotSourceOf, WindowsUiSet, duration_formatter,
+        duration_parser, epoch_formatter, get_name, length_formatter, length_parser, show_tree,
+        velocity_formatter, velocity_parser,
+    },
 };
 
 use bevy::math::DVec3;
@@ -145,7 +148,7 @@ impl ShipSpawnerWindow {
                     SpacecraftPropagatorSoiDetection::new(
                         data.start,
                         sv,
-                        DEFAULT_ADAPTIVE_PARAMS,
+                        INITIAL_ADAPTIVE_PARAMS,
                         Bodies(new_context()),
                         Timeline::default(),
                     ),
@@ -189,9 +192,7 @@ impl ShipSpawnerWindow {
                     if ui
                         .add(
                             egui::DragValue::new(&mut start)
-                                .custom_formatter(|value, _| {
-                                    Epoch::from_offset(Duration::from_seconds(value)).to_string()
-                                })
+                                .custom_formatter(epoch_formatter)
                                 .custom_parser(|text| {
                                     Epoch::from_str(text).ok().map(|t| {
                                         t.clamp(sim_time.start(), sim_time.end())
@@ -231,7 +232,7 @@ impl ShipSpawnerWindow {
                     .unwrap_or_else(|| "None".to_string());
                 egui::ComboBox::from_id_salt("Reference")
                     .wrap_mode(egui::TextWrapMode::Extend)
-                    .selected_text(name)
+                    .selected_text(&name)
                     .show_ui(ui, |ui| {
                         show_tree(
                             ui,
@@ -268,21 +269,30 @@ impl ShipSpawnerWindow {
                     .show(ui, |ui| {
                         let speed = |v| 1e-3f64.max(v * 1e-3);
                         IdentedInfo::new("Position", &mut data.state_vector.position)
-                            .hover_text(format!("Position relative to {}", "me"))
+                            .hover_text(format!("Position relative to {}", name))
                             .show(ui, |ui, pos| {
                                 ui.horizontal(|ui| {
                                     let speed = speed(pos.x);
                                     ui.label("x: ");
-                                    let x = ui.add(egui::DragValue::new(&mut pos.x).speed(speed));
+                                    let x = ui.add(
+                                        egui::DragValue::new(&mut pos.x)
+                                            .speed(speed)
+                                            .custom_formatter(length_formatter)
+                                            .custom_parser(length_parser),
+                                    );
                                     if x.changed() {
                                         window.valid_preview = false;
                                     }
-                                    ui.label("km");
                                 });
                                 ui.horizontal(|ui| {
                                     let speed = speed(pos.y);
                                     ui.label("y: ");
-                                    let y = ui.add(egui::DragValue::new(&mut pos.y).speed(speed));
+                                    let y = ui.add(
+                                        egui::DragValue::new(&mut pos.y)
+                                            .speed(speed)
+                                            .custom_formatter(length_formatter)
+                                            .custom_parser(length_parser),
+                                    );
                                     if y.changed() {
                                         window.valid_preview = false;
                                     }
@@ -291,7 +301,12 @@ impl ShipSpawnerWindow {
                                 ui.horizontal(|ui| {
                                     let speed = speed(pos.z);
                                     ui.label("z: ");
-                                    let z = ui.add(egui::DragValue::new(&mut pos.z).speed(speed));
+                                    let z = ui.add(
+                                        egui::DragValue::new(&mut pos.z)
+                                            .speed(speed)
+                                            .custom_formatter(length_formatter)
+                                            .custom_parser(length_parser),
+                                    );
                                     if z.changed() {
                                         window.valid_preview = false;
                                     }
@@ -299,12 +314,17 @@ impl ShipSpawnerWindow {
                                 });
                             });
                         IdentedInfo::new("Velocity", &mut data.state_vector.velocity)
-                            .hover_text(format!("Velocity relative to {}", "me"))
+                            .hover_text(format!("Velocity relative to {}", name))
                             .show(ui, |ui, vel| {
                                 ui.horizontal(|ui| {
                                     let speed = speed(vel.x);
                                     ui.label("x: ");
-                                    let x = ui.add(egui::DragValue::new(&mut vel.x).speed(speed));
+                                    let x = ui.add(
+                                        egui::DragValue::new(&mut vel.x)
+                                            .speed(speed)
+                                            .custom_formatter(velocity_formatter)
+                                            .custom_parser(velocity_parser),
+                                    );
                                     if x.changed() {
                                         window.valid_preview = false;
                                     }
@@ -313,7 +333,12 @@ impl ShipSpawnerWindow {
                                 ui.horizontal(|ui| {
                                     let speed = speed(vel.y);
                                     ui.label("y: ");
-                                    let y = ui.add(egui::DragValue::new(&mut vel.y).speed(speed));
+                                    let y = ui.add(
+                                        egui::DragValue::new(&mut vel.y)
+                                            .speed(speed)
+                                            .custom_formatter(velocity_formatter)
+                                            .custom_parser(velocity_parser),
+                                    );
                                     if y.changed() {
                                         window.valid_preview = false;
                                     }
@@ -322,7 +347,12 @@ impl ShipSpawnerWindow {
                                 ui.horizontal(|ui| {
                                     let speed = speed(vel.z);
                                     ui.label("z: ");
-                                    let z = ui.add(egui::DragValue::new(&mut vel.z).speed(speed));
+                                    let z = ui.add(
+                                        egui::DragValue::new(&mut vel.z)
+                                            .speed(speed)
+                                            .custom_formatter(velocity_formatter)
+                                            .custom_parser(velocity_parser),
+                                    );
                                     if z.changed() {
                                         window.valid_preview = false;
                                     }
@@ -365,12 +395,8 @@ impl ShipSpawnerWindow {
                             egui::DragValue::new(&mut duration)
                                 .speed(speed)
                                 .range(0.0..=f64::INFINITY)
-                                .custom_formatter(|value, _| {
-                                    Duration::from_seconds(value).to_string()
-                                })
-                                .custom_parser(|text| {
-                                    Duration::from_str(text).ok().map(|d| d.as_seconds())
-                                }),
+                                .custom_formatter(duration_formatter)
+                                .custom_parser(duration_parser),
                         )
                         .changed()
                     {
@@ -386,7 +412,7 @@ impl ShipSpawnerWindow {
             let propagator = SpacecraftPropagatorSoiDetection::new(
                 data.start,
                 sv,
-                DEFAULT_ADAPTIVE_PARAMS,
+                INITIAL_ADAPTIVE_PARAMS,
                 prediction.propagator.environment().clone(),
                 Timeline::default(),
             );

@@ -256,19 +256,21 @@ impl PropagationEnvironment for Bodies {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct AbsTol(pub StateVector);
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd)]
+pub struct AbsTol {
+    pub position: f64,
+    pub velocity: f64,
+}
 
 impl Tolerance<[StateVector; 1]> for AbsTol {
     type Output = f64;
 
     #[inline]
     fn err_over_tol(&mut self, _: &[StateVector; 1], [e]: &[StateVector; 1]) -> Self::Output {
-        let atol = self.0;
-        (e.position / atol.position)
+        (e.position / self.position)
             .abs()
             .max_element()
-            .max((e.velocity / atol.velocity).abs().max_element())
+            .max((e.velocity / self.velocity).abs().max_element())
     }
 }
 
@@ -375,6 +377,11 @@ impl SpacecraftPropagatorSoiDetection {
     #[inline]
     pub fn max_iterations(&self) -> usize {
         self.0.max_iterations()
+    }
+
+    #[inline]
+    pub fn tolerance(&self) -> &AbsTol {
+        self.0.tolerance()
     }
 
     #[inline]
@@ -514,23 +521,3 @@ impl PropagationTarget for SpacecraftTrajectory {
         }
     }
 }
-
-const fn ratio_f64(ratio: Ratio<u16>) -> f64 {
-    ratio.numerator() as f64 / ratio.denominator() as f64
-}
-
-pub const DEFAULT_ADAPTIVE_PARAMS: AdaptiveMethodParams<f64, AbsTol, f64> =
-    AdaptiveMethodParams::with(
-        60.0,
-        f64::MAX,
-        AbsTol(StateVector {
-            // Tolerance of 1 m and 1 m/s.
-            position: DVec3::splat(1e-3),
-            velocity: DVec3::splat(1e-3),
-        }),
-        // Const workaround instead of using `AdaptiveMethodParams::new`.
-        ratio_f64(integration::DEFAULT_FAC_MIN),
-        ratio_f64(integration::DEFAULT_FAC_MAX),
-        ratio_f64(integration::DEFAULT_FAC),
-        1_000_000,
-    );

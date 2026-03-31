@@ -5,7 +5,7 @@ use crate::{
     flight_plan::FlightPlan,
     load::SystemRoot,
     simulation::SimulationTime,
-    ui::{WindowsUiSet, epoch_clamped_parser, show_tree},
+    ui::{Id, WindowsUiSet, epoch_formatter, epoch_parser_clamped, show_tree},
 };
 
 use bevy::prelude::*;
@@ -100,11 +100,9 @@ impl ExportWindow {
                         ui.label("Epoch:");
                         ui.add(
                             egui::DragValue::new(epoch.mut_offset().mut_seconds())
-                                .custom_formatter(|value, _| {
-                                    Epoch::from_offset(Duration::from_seconds(value)).to_string()
-                                })
+                                .custom_formatter(epoch_formatter)
                                 .custom_parser(|text| {
-                                    epoch_clamped_parser(sim_time.start(), sim_time.end())(text)
+                                    epoch_parser_clamped(sim_time.start(), sim_time.end())(text)
                                         .map(|t| t.as_offset_seconds())
                                 })
                                 .speed(Duration::from_hours(1.0).as_seconds()),
@@ -226,15 +224,18 @@ pub struct ExportSolarSystemFile;
 fn export_solar_system(
     mut commands: Commands,
     mut event: MessageReader<ExportSolarSystem>,
-    query: Query<(&Name, &Mu, &Trajectory)>,
+    query: Query<(&Id, &Name, &Mu, &Trajectory)>,
+    root: Single<&Name, With<SystemRoot>>,
 ) {
     if let Some(event) = event.read().next() {
         let bytes = match event.export {
             ExportType::State { epoch } => serde_json::to_vec_pretty(&serde_json::json!({
+                "name": *root,
                 "epoch": epoch,
                 "bodies": query
                     .iter_many(&event.bodies)
-                    .map(|(name, mu, trajectory)| {
+                    .sort::<&Id>()
+                    .map(|(_, name, mu, trajectory)| {
                         trajectory.state_vector(epoch).map(|state_vector|
                             serde_json::json!({
                                 "name": name.to_string(),

@@ -1,6 +1,6 @@
 use crate::{
     dynamics::{
-        ConstantThrust, DEFAULT_ADAPTIVE_PARAMS, PredictionTrajectory, ReferenceFrame,
+        AbsTol, ConstantThrust, PredictionTrajectory, ReferenceFrame,
         SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, Timeline, Trajectory,
     },
     prediction::{
@@ -129,16 +129,20 @@ impl Burn {
 
 #[derive(Component, Clone)]
 pub struct FlightPlan {
+    pub parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
     pub end: Epoch,
-    pub max_iterations: usize,
     pub burns: indexmap::IndexMap<uuid::Uuid, Burn>,
 }
 
 impl FlightPlan {
-    pub fn new(end: Epoch, max_iterations: usize, burns: Vec<Burn>) -> Self {
+    pub fn new(
+        end: Epoch,
+        parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
+        burns: Vec<Burn>,
+    ) -> Self {
         Self {
             end,
-            max_iterations,
+            parameters,
             burns: burns
                 .into_iter()
                 .map(|burn| (uuid::Uuid::new_v4(), burn))
@@ -239,7 +243,9 @@ fn apply_flight_plan(
     // 3. If no change was previously detected, we restart from the last event preceding the end of
     //    the flight plan (this ensures the prediction reaches the flight plan end).
     let restart_epoch = {
-        if propagator.max_iterations() != flight_plan.max_iterations {
+        if propagator.max_iterations() != flight_plan.parameters.n_max as usize
+            || propagator.tolerance() != &flight_plan.parameters.tol
+        {
             trajectory.start()
         } else {
             timeline
@@ -260,10 +266,7 @@ fn apply_flight_plan(
     let propagator = SpacecraftPropagatorSoiDetection::new(
         restart_epoch,
         restart_sv,
-        AdaptiveMethodParams {
-            n_max: flight_plan.max_iterations as _,
-            ..DEFAULT_ADAPTIVE_PARAMS
-        },
+        flight_plan.parameters,
         propagator.environment().clone(),
         timeline,
     );

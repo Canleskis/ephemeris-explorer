@@ -169,7 +169,7 @@ pub trait RKEmbedded<T> {
 pub trait Tolerance<V> {
     type Output;
 
-    /// Returns the value of the normalized error Eₙ = norm(eₙ / tol)
+    /// Returns the value of the normalized error Eₙ = norm(eₙ / tol).
     fn err_over_tol(&mut self, state: &V, err: &V) -> Self::Output;
 }
 

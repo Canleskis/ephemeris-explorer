@@ -8,7 +8,11 @@ use crate::{
     prediction::PredictionContext,
     selection::Selected,
     simulation::SimulationTime,
-    ui::{IdentedInfo, PlotBound, Position, Velocity, WindowsUiSet, get_name, show_tree},
+    ui::{
+        IdentedInfo, Length, PlotBound, Velocity, WindowsUiSet, acceleration_formatter,
+        acceleration_parser, duration_formatter, duration_parser, epoch_formatter, epoch_parser,
+        get_name, length_formatter, length_parser, show_tree,
+    },
 };
 
 use bevy::prelude::*;
@@ -16,7 +20,6 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory, RelativeTrajectory};
 use ftime::{Duration, Epoch};
-use std::str::FromStr;
 
 pub struct BodyInfoPlugin;
 
@@ -130,6 +133,7 @@ impl BodyInfoWindow {
                 .pivot(egui::Align2::RIGHT_TOP)
                 .default_pos([ctx.content_rect().size().x - 11.0, 33.0])
                 .resizable([false, true])
+                .max_width(350.0)
                 .show(ctx, |ui| {
                     let Ok((trajectory, parent, mut plot, target, mut data, mut info)) =
                         query.get_mut(entity)
@@ -143,11 +147,6 @@ impl BodyInfoWindow {
                     };
                     let relative =
                         RelativeTrajectory::new(trajectory, query_trajectory.get(reference).ok());
-
-                    // let Some(relative) = parent.get_relative_trajectory(entity, &query_trajectory)
-                    // else {
-                    //     return;
-                    // };
 
                     if let Some(((flight_plan, _), delete)) =
                         data.as_mut().zip(info.delete_body.as_mut())
@@ -265,59 +264,72 @@ impl BodyInfoWindow {
                     });
 
                     ui.separator();
-                    ui.heading("Info");
-                    ui.add_space(5.0);
-                    egui::Grid::new("Prediction info")
-                        .min_col_width(200.0)
-                        .show(ui, |ui| {
-                            let sv = relative.state_vector(sim_time.current());
 
-                            IdentedInfo::new("Position", sv.map(|sv| sv.position))
-                                .hover_text(format!("Position relative to {plot_reference_name}"))
-                                .show(ui, |ui, position| {
-                                    if let Some(position) = position {
-                                        ui.label(format!("x: {}", Position::km(position.x)));
-                                        ui.label(format!("y: {}", Position::km(position.y)));
-                                        ui.label(format!("z: {}", Position::km(position.z)));
-                                    } else {
-                                        ui.label("x: N/A");
-                                        ui.label("y: N/A");
-                                        ui.label("z: N/A");
-                                    }
-                                });
-                            IdentedInfo::new("Velocity", sv.map(|sv| sv.velocity))
-                                .hover_text(format!("Velocity relative to {plot_reference_name}"))
-                                .show(ui, |ui, velocity| {
-                                    if let Some(velocity) = velocity {
-                                        ui.label(format!("x: {}", Velocity::kps(velocity.x)));
-                                        ui.label(format!("y: {}", Velocity::kps(velocity.y)));
-                                        ui.label(format!("z: {}", Velocity::kps(velocity.z)));
-                                    } else {
-                                        ui.label("x: N/A");
-                                        ui.label("y: N/A");
-                                        ui.label("z: N/A");
-                                    }
-                                });
-                            ui.end_row();
-                            IdentedInfo::new("Distance", sv.map(|sv| sv.position.length()))
-                                .hover_text(format!("Distance relative to {plot_reference_name}"))
-                                .show(ui, |ui, distance| {
-                                    if let Some(distance) = distance {
-                                        ui.label(Position::km(distance).to_string());
-                                    } else {
-                                        ui.label("N/A");
-                                    }
-                                });
-                            IdentedInfo::new("Speed", sv.map(|sv| sv.velocity.length()))
-                                .hover_text(format!("Speed relative to {plot_reference_name}"))
-                                .show(ui, |ui, speed| {
-                                    if let Some(speed) = speed {
-                                        ui.label(Velocity::kps(speed).to_string());
-                                    } else {
-                                        ui.label("N/A");
-                                    }
-                                });
-                        });
+                    ui.heading("Info");
+
+                    ui.add_space(5.0);
+
+                    let sv = relative.state_vector(sim_time.current());
+
+                    egui::Grid::new("info").min_col_width(200.0).show(ui, |ui| {
+                        IdentedInfo::new("Distance", sv.map(|sv| sv.position.length()))
+                            .hover_text(format!("Distance relative to {plot_reference_name}"))
+                            .show(ui, |ui, distance| {
+                                if let Some(distance) = distance {
+                                    ui.label(Length::km(distance).to_string());
+                                } else {
+                                    ui.label("N/A");
+                                }
+                            });
+                        IdentedInfo::new("Speed", sv.map(|sv| sv.velocity.length()))
+                            .hover_text(format!("Speed relative to {plot_reference_name}"))
+                            .show(ui, |ui, speed| {
+                                if let Some(speed) = speed {
+                                    ui.label(Velocity::kps(speed).to_string());
+                                } else {
+                                    ui.label("N/A");
+                                }
+                            });
+                    });
+
+                    ui.add_space(5.0);
+
+                    egui::CollapsingHeader::new("Details").show_unindented(ui, |ui| {
+                        egui::Grid::new("info details")
+                            .min_col_width(200.0)
+                            .show(ui, |ui| {
+                                IdentedInfo::new("Position", sv.map(|sv| sv.position))
+                                    .hover_text(format!(
+                                        "Position relative to {plot_reference_name}"
+                                    ))
+                                    .show(ui, |ui, position| {
+                                        if let Some(position) = position {
+                                            ui.label(format!("x: {}", Length::km(position.x)));
+                                            ui.label(format!("y: {}", Length::km(position.y)));
+                                            ui.label(format!("z: {}", Length::km(position.z)));
+                                        } else {
+                                            ui.label("x: N/A");
+                                            ui.label("y: N/A");
+                                            ui.label("z: N/A");
+                                        }
+                                    });
+                                IdentedInfo::new("Velocity", sv.map(|sv| sv.velocity))
+                                    .hover_text(format!(
+                                        "Velocity relative to {plot_reference_name}"
+                                    ))
+                                    .show(ui, |ui, velocity| {
+                                        if let Some(velocity) = velocity {
+                                            ui.label(format!("x: {}", Velocity::kps(velocity.x)));
+                                            ui.label(format!("y: {}", Velocity::kps(velocity.y)));
+                                            ui.label(format!("z: {}", Velocity::kps(velocity.z)));
+                                        } else {
+                                            ui.label("x: N/A");
+                                            ui.label("y: N/A");
+                                            ui.label("z: N/A");
+                                        }
+                                    });
+                            });
+                    });
 
                     ui.add_space(5.0);
                     ui.separator();
@@ -482,15 +494,33 @@ impl BodyInfoWindow {
 
                     ui.horizontal(|ui| {
                         ui.label("Max iterations:");
-                        let speed = 1e-1f64.max(flight_plan.max_iterations as f64 * 1e-1);
+                        let speed = 1e-1f64.max(flight_plan.parameters.n_max as f64 * 1e-1);
                         if ui
                             .add(
-                                egui::DragValue::new(&mut flight_plan.max_iterations)
+                                egui::DragValue::new(&mut flight_plan.parameters.n_max)
                                     .speed(speed)
                                     .range(0..=1_000_000),
                             )
                             .changed()
                         {
+                            changed = true;
+                        }
+
+                        ui.label("Tolerance:");
+                        let speed = 1e-12f64.max(flight_plan.parameters.tol.position * 1e-2);
+
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut flight_plan.parameters.tol.position)
+                                    .speed(speed)
+                                    .range(1e-9..=1e3)
+                                    .custom_formatter(length_formatter)
+                                    .custom_parser(length_parser),
+                            )
+                            .changed()
+                        {
+                            flight_plan.parameters.tol.velocity =
+                                flight_plan.parameters.tol.position;
                             changed = true;
                         }
                     });
@@ -646,9 +676,9 @@ impl BodyInfoWindow {
             })
             .body(|ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().interact_size.x = 240.0;
+                    ui.spacing_mut().interact_size.x = 220.0;
                     ui.label("Start time:");
-                    ui.add_space(5.0);
+                    ui.add_space(3.0);
 
                     if ui
                         .add(
@@ -688,7 +718,7 @@ impl BodyInfoWindow {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
                     ui.label("Frame:");
-                    ui.add_space(32.0);
+                    ui.add_space(31.0);
 
                     egui::ComboBox::from_id_salt("Frame")
                         .selected_text(burn.frame.to_string())
@@ -755,42 +785,52 @@ impl BodyInfoWindow {
                     }
                 });
 
-                ui.add_space(2.0);
-
                 IdentedInfo::new("Acceleration:", &mut burn.acceleration).show(ui, |ui, acc| {
-                    ui.spacing_mut().interact_size.x = 60.0;
+                    ui.spacing_mut().interact_size.x = 100.0;
 
                     ui.horizontal(|ui| {
                         ui_coordinate(burn.frame, ui, "x");
                         if ui
-                            .add(egui::DragValue::new(&mut acc.x).speed(0.01))
+                            .add(
+                                egui::DragValue::new(&mut acc.x)
+                                    .speed(0.01)
+                                    .custom_formatter(acceleration_formatter)
+                                    .custom_parser(acceleration_parser),
+                            )
                             .changed()
                         {
                             changed = true;
                         }
-                        ui.label("m/s²");
                     });
 
                     ui.horizontal(|ui| {
                         ui_coordinate(burn.frame, ui, "y");
                         if ui
-                            .add(egui::DragValue::new(&mut acc.y).speed(0.01))
+                            .add(
+                                egui::DragValue::new(&mut acc.y)
+                                    .speed(0.01)
+                                    .custom_formatter(acceleration_formatter)
+                                    .custom_parser(acceleration_parser),
+                            )
                             .changed()
                         {
                             changed = true;
                         }
-                        ui.label("m/s²");
                     });
 
                     ui.horizontal(|ui| {
                         ui_coordinate(burn.frame, ui, "z");
                         if ui
-                            .add(egui::DragValue::new(&mut acc.z).speed(0.01))
+                            .add(
+                                egui::DragValue::new(&mut acc.z)
+                                    .speed(0.01)
+                                    .custom_formatter(acceleration_formatter)
+                                    .custom_parser(acceleration_parser),
+                            )
                             .changed()
                         {
                             changed = true;
                         }
-                        ui.label("m/s²");
                     });
                 });
 
@@ -815,24 +855,4 @@ fn burn_to_value(burn: &Burn, query: &Query<&Name>) -> serde_json::Value {
     }
 
     json
-}
-
-fn duration_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
-    Duration::from_seconds(value).to_string()
-}
-
-fn duration_parser(text: &str) -> Option<f64> {
-    Duration::from_str(text).ok().map(|d| d.as_seconds())
-}
-
-fn epoch_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
-    match value {
-        f64::MAX | f64::INFINITY => "∞".to_string(),
-        f64::MIN | f64::NEG_INFINITY => "-∞".to_string(),
-        _ => Epoch::from_offset_seconds(value).to_string(),
-    }
-}
-
-fn epoch_parser(text: &str) -> Option<f64> {
-    Epoch::from_str(text).ok().map(|t| t.as_offset_seconds())
 }

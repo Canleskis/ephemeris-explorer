@@ -11,7 +11,7 @@ use crate::{MainState, load::LoadSolarSystem};
 use bevy::prelude::*;
 use bevy_egui::{EguiContext, EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
-use ftime::Epoch;
+use ftime::{Duration, Epoch};
 use std::str::FromStr;
 
 pub fn using_pointer(
@@ -338,11 +338,7 @@ impl<T> IdentedInfo<T> {
         self
     }
 
-    fn show<R>(
-        self,
-        ui: &mut egui::Ui,
-        content: impl FnOnce(&mut egui::Ui, T) -> R,
-    ) -> egui::InnerResponse<Option<R>> {
+    fn show<R>(self, ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui, T) -> R) -> Option<R> {
         ui.vertical(|ui| {
             let label = ui.label(self.text.clone());
             if let Some(hover_text) = &self.hover_text {
@@ -351,12 +347,8 @@ impl<T> IdentedInfo<T> {
             ui.indent(self.text.text(), |ui| Some(content(ui, self.info)))
         })
         .inner
+        .inner
     }
-}
-
-#[inline]
-fn epoch_clamped_parser(min: Epoch, max: Epoch) -> impl Fn(&str) -> Option<Epoch> {
-    move |buf| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
 }
 
 macro_rules! nformat {
@@ -366,32 +358,66 @@ macro_rules! nformat {
 }
 
 use uom::si::{
-    length::{astronomical_unit as au, kilometer as km, light_year as ly, meter as m},
-    velocity::{kilometer_per_second as kps, meter_per_second as mps},
+    acceleration::{
+        centimeter_per_second_squared as cmps2, kilometer_per_second_squared as kps2,
+        meter_per_second_squared as mps2, millimeter_per_second_squared as mmps2,
+    },
+    length::{
+        astronomical_unit as au, centimeter as cm, kilometer as km, light_year as ly, meter as m,
+        micrometer as um, millimeter as mm, nanometer as nm,
+    },
+    velocity::{
+        centimeter_per_second as cmps, kilometer_per_second as kps, meter_per_second as mps,
+        millimeter_per_second as mmps,
+    },
 };
 
-pub struct Position(uom::si::f64::Length);
+pub struct Length(uom::si::f64::Length);
 
-impl Position {
+impl Length {
     #[inline]
     pub fn km(position: f64) -> Self {
         Self(uom::si::f64::Length::new::<km>(position))
     }
+
+    #[inline]
+    pub fn as_km(&self) -> f64 {
+        self.0.get::<km>()
+    }
 }
 
-impl std::fmt::Display for Position {
+impl std::fmt::Display for Length {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let base = &self.0;
-        if base.abs() < uom::si::f64::Length::new::<m>(1000.0) {
-            write!(f, "{} m", nformat!("{:.2}", base.get::<m>()))
-        } else if base.abs() < uom::si::f64::Length::new::<au>(0.1) {
-            write!(f, "{} km", nformat!("{:.2}", base.get::<km>()))
-        } else if base.abs() < uom::si::f64::Length::new::<au>(1_000.0) {
-            write!(f, "{} AU", nformat!("{:.2}", base.get::<au>()))
-        } else {
+        if base.abs() >= uom::si::f64::Length::new::<ly>(0.1) {
             write!(f, "{} ly", nformat!("{:.2}", base.get::<ly>()))
+        } else if base.abs() >= uom::si::f64::Length::new::<au>(0.1) {
+            write!(f, "{} AU", nformat!("{:.2}", base.get::<au>()))
+        } else if base.abs() >= uom::si::f64::Length::new::<km>(1.0) {
+            write!(f, "{} km", nformat!("{:.2}", base.get::<km>()))
+        } else if base.abs() >= uom::si::f64::Length::new::<m>(1.0) {
+            write!(f, "{} m", nformat!("{:.2}", base.get::<m>()))
+        } else if base.abs() >= uom::si::f64::Length::new::<cm>(1.0) {
+            write!(f, "{} cm", nformat!("{:.2}", base.get::<cm>()))
+        } else if base.abs() >= uom::si::f64::Length::new::<mm>(1.0) {
+            write!(f, "{} mm", nformat!("{:.2}", base.get::<mm>()))
+        } else if base.abs() >= uom::si::f64::Length::new::<um>(1.0) {
+            write!(f, "{} µm", nformat!("{:.2}", base.get::<um>()))
+        } else if base.abs() >= uom::si::f64::Length::new::<nm>(1.0) {
+            write!(f, "{} nm", nformat!("{:.2}", base.get::<nm>()))
+        } else {
+            write!(f, "{} m", nformat!("{:.2}", base.get::<m>()))
         }
+    }
+}
+
+impl std::str::FromStr for Length {
+    type Err = uom::str::ParseQuantityError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(uom::si::f64::Length::from_str(s)?))
     }
 }
 
@@ -402,16 +428,131 @@ impl Velocity {
     pub fn kps(velocity: f64) -> Self {
         Self(uom::si::f64::Velocity::new::<kps>(velocity))
     }
+
+    #[inline]
+    pub fn as_kps(&self) -> f64 {
+        self.0.get::<kps>()
+    }
 }
 
 impl std::fmt::Display for Velocity {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let base = &self.0;
-        if base.abs() < uom::si::f64::Velocity::new::<mps>(1000.0) {
-            write!(f, "{} m/s", nformat!("{:.2}", base.get::<mps>()))
-        } else {
+        if base.abs() >= uom::si::f64::Velocity::new::<kps>(1.0) {
             write!(f, "{} km/s", nformat!("{:.2}", base.get::<kps>()))
+        } else if base.abs() >= uom::si::f64::Velocity::new::<mps>(1.0) {
+            write!(f, "{} m/s", nformat!("{:.2}", base.get::<mps>()))
+        } else if base.abs() >= uom::si::f64::Velocity::new::<cmps>(1.0) {
+            write!(f, "{} cm/s", nformat!("{:.2}", base.get::<cmps>()))
+        } else if base.abs() >= uom::si::f64::Velocity::new::<mmps>(1.0) {
+            write!(f, "{} mm/s", nformat!("{:.2}", base.get::<mmps>()))
+        } else {
+            write!(f, "{} m/s", nformat!("{:.2}", base.get::<mps>()))
         }
     }
+}
+
+impl std::str::FromStr for Velocity {
+    type Err = uom::str::ParseQuantityError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(uom::si::f64::Velocity::from_str(s)?))
+    }
+}
+
+pub struct Acceleration(uom::si::f64::Acceleration);
+
+impl Acceleration {
+    #[inline]
+    pub fn mps2(acceleration: f64) -> Self {
+        Self(uom::si::f64::Acceleration::new::<mps2>(acceleration))
+    }
+
+    #[inline]
+    pub fn as_mps2(&self) -> f64 {
+        self.0.get::<mps2>()
+    }
+}
+
+impl std::fmt::Display for Acceleration {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let base = &self.0;
+        if base.abs() >= uom::si::f64::Acceleration::new::<kps2>(1.0) {
+            write!(f, "{} km/s²", nformat!("{:.2}", base.get::<kps2>()))
+        } else if base.abs() >= uom::si::f64::Acceleration::new::<mps2>(1.0) {
+            write!(f, "{} m/s²", nformat!("{:.2}", base.get::<mps2>()))
+        } else if base.abs() >= uom::si::f64::Acceleration::new::<cmps2>(1.0) {
+            write!(f, "{} cm/s²", nformat!("{:.2}", base.get::<cmps2>()))
+        } else if base.abs() >= uom::si::f64::Acceleration::new::<mmps2>(1.0) {
+            write!(f, "{} mm/s²", nformat!("{:.2}", base.get::<mmps2>()))
+        } else {
+            write!(f, "{} m/s²", nformat!("{:.2}", base.get::<mps2>()))
+        }
+    }
+}
+
+impl std::str::FromStr for Acceleration {
+    type Err = uom::str::ParseQuantityError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(uom::si::f64::Acceleration::from_str(s)?))
+    }
+}
+
+pub fn duration_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
+    Duration::from_seconds(value).to_string()
+}
+
+pub fn duration_parser(text: &str) -> Option<f64> {
+    Duration::from_str(text).ok().map(|d| d.as_seconds())
+}
+
+pub fn epoch_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
+    match value {
+        f64::MAX | f64::INFINITY => "∞".to_string(),
+        f64::MIN | f64::NEG_INFINITY => "-∞".to_string(),
+        _ => Epoch::from_offset_seconds(value).to_string(),
+    }
+}
+
+pub fn epoch_parser(text: &str) -> Option<f64> {
+    Epoch::from_str(text).ok().map(|t| t.as_offset_seconds())
+}
+
+fn epoch_parser_clamped(min: Epoch, max: Epoch) -> impl Fn(&str) -> Option<Epoch> {
+    move |buf| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
+}
+
+pub fn length_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
+    Length::km(value).to_string()
+}
+
+pub fn length_parser(text: &str) -> Option<f64> {
+    Length::from_str(&text.replace(',', ""))
+        .ok()
+        .map(|p| p.as_km())
+}
+
+pub fn velocity_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
+    Velocity::kps(value).to_string()
+}
+
+pub fn velocity_parser(text: &str) -> Option<f64> {
+    Velocity::from_str(&text.replace(',', ""))
+        .ok()
+        .map(|v| v.as_kps())
+}
+
+pub fn acceleration_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
+    Acceleration::mps2(value).to_string()
+}
+
+pub fn acceleration_parser(text: &str) -> Option<f64> {
+    Acceleration::from_str(&text.replace(',', ""))
+        .ok()
+        .map(|a| a.as_mps2())
 }
