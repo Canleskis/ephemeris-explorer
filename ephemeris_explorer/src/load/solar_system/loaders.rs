@@ -230,7 +230,7 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
 
         #[derive(Deserialize)]
         struct SolarSytemJson {
-            name: String,
+            name: Option<String>,
             epoch: Epoch,
             bodies: Vec<BodyJson>,
         }
@@ -257,7 +257,7 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
             }
 
             Ok(SolarSystemState {
-                name: json.name,
+                name: json.name.unwrap_or("Solar System".to_string()),
                 bodies,
                 epoch: json.epoch,
             })
