@@ -6,6 +6,7 @@ use crate::{
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     floating_origin::{BigSpace, Grid, GridExt},
     load::SystemRoot,
+    prediction::Predicting,
     simulation::SimulationTime,
     ui::{
         HitData, Length, MANOEUVRE_SIZE, MarkerGizmoConfigGroup, PICK_THRESHOLD, PickingSet,
@@ -748,6 +749,7 @@ fn update_separation_tooltip(
         Option<&PlotSeparation>,
     )>,
     mut query_tooltip: Query<&mut SeparationTooltip>,
+    query_predicting: Query<(), With<Predicting>>,
 ) {
     for (entity, source, points, segment, separation) in query_plot.iter() {
         let Some(separation) = separation else {
@@ -757,6 +759,12 @@ fn update_separation_tooltip(
         let Ok((_, target_source, target_points, ..)) = query_plot.get(separation.entity) else {
             continue;
         };
+
+        if query_predicting.contains(source.entity)
+            || query_predicting.contains(target_source.entity)
+        {
+            continue;
+        }
 
         let updated_tooltip = SeparationTooltip {
             entity,

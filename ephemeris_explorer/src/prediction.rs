@@ -132,7 +132,7 @@ where
 #[derive(Clone, Copy, Component)]
 pub struct Predicting(pub usize);
 
-/// Marker component to indicate that an entity's trajectory prediction of type `P` is being
+/// Marker component to indicate that an entity's trajectory prediction of type `T` is being
 /// computed.
 #[derive(Clone, Copy, Component)]
 pub struct PredictingWith<T>(std::marker::PhantomData<fn(T)>);
@@ -155,8 +155,8 @@ where
 {
     fn build(&self, app: &mut App) {
         app.add_observer(dispatch_predictions::<T>)
-            .add_observer(add_predicting_marker::<T>)
-            .add_observer(remove_predicting_marker::<T>)
+            .add_observer(add_predicting_markers::<T>)
+            .add_observer(remove_predicting_markers::<T>)
             .add_systems(
                 PreUpdate,
                 process_prediction_data::<T>.in_set(PredictionSystems),
@@ -164,7 +164,7 @@ where
     }
 }
 
-/// Tracks an asynchronous prediction for a specific propagator of type `P`.
+/// Tracks an asynchronous prediction for a specific propagation target of type `T`.
 #[derive(Component)]
 pub struct PredictionTracker<T: PropagationTarget> {
     thread: bevy::tasks::Task<()>,
@@ -401,7 +401,7 @@ pub fn process_prediction_data<T>(
     }
 }
 
-fn add_predicting_marker<T>(
+fn add_predicting_markers<T>(
     trigger: On<Add, PredictionTracker<T>>,
     mut commands: Commands,
     query_prediction: Query<&PredictionContext<T>>,
@@ -425,7 +425,7 @@ fn add_predicting_marker<T>(
     };
 }
 
-fn remove_predicting_marker<T>(
+fn remove_predicting_markers<T>(
     trigger: On<Remove, PredictionTracker<T>>,
     mut commands: Commands,
     query_prediction: Query<&PredictionContext<T>>,

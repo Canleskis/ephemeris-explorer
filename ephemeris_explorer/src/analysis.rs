@@ -58,7 +58,7 @@ impl Plugin for OrbitalAnalysisPlugin {
                 (
                     (
                         setup_initial_soi_transition.run_if(is_system_initialized),
-                        setup_in_soi_plotting,
+                        setup_segment_plotting,
                         setup_target_plotting,
                     )
                         .chain()
@@ -181,7 +181,7 @@ pub struct BurnPlotSegment;
 // for different segments (reference, color, etc.). There may be multiple plot segments for the same
 // segment of a trajectory.
 #[expect(clippy::type_complexity)]
-fn setup_in_soi_plotting(
+fn setup_segment_plotting(
     query: Query<
         (
             Entity,
