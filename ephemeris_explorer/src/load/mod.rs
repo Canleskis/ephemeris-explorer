@@ -29,7 +29,7 @@ use bevy::{
     asset::RecursiveDependencyLoadState, core_pipeline::Skybox, platform::hash::FixedState,
 };
 use ephemeris::DIV;
-use ftime::Duration;
+use ftime::{Duration, Epoch};
 use std::hash::{BuildHasher, Hash};
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, SubStates)]
@@ -343,8 +343,8 @@ fn spawn_loaded_bodies(
             SoiTransitionsAnalysis::Static,
             OrbitPlotConfig {
                 enabled: depth <= 1,
-                start: system.epoch - Duration::from_years(1000.0),
-                end: system.epoch + Duration::from_years(1000.0),
+                start: Epoch::MIN,
+                end: Epoch::MAX,
                 color: visual.orbit.color,
                 bound: PlotBound::Start,
                 resolution: 0.5,
@@ -574,8 +574,8 @@ fn spawn_ship(
         SoiTransitionsAnalysis::Dynamic,
         OrbitPlotConfig {
             enabled: true,
-            start: ship.start - Duration::from_years(1000.0),
-            end: ship.start + Duration::from_years(1000.0),
+            start: Epoch::MIN,
+            end: Epoch::MAX,
             color,
             bound: PlotBound::Start,
             resolution: 0.5,
