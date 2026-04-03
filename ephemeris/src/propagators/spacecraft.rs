@@ -221,19 +221,19 @@ impl<V, F> Timeline<V, F> {
 }
 
 #[derive(Clone)]
-pub struct SpacecraftModel<C, V, F> {
-    pub environment: C,
-    pub current_segment: usize,
-    pub timeline: Timeline<V, F>,
+pub struct SpacecraftModel<V, F, C> {
+    current_segment: usize,
+    timeline: Timeline<V, F>,
+    environment: C,
 }
 
-impl<C, V, F> SpacecraftModel<C, V, F> {
+impl<V, F, C> SpacecraftModel<V, F, C> {
     #[inline]
-    pub fn new(time: Epoch, environment: C, timeline: Timeline<V, F>) -> Self {
+    pub fn new(time: Epoch, timeline: Timeline<V, F>, environment: C) -> Self {
         Self {
-            environment,
             current_segment: timeline.segment_idx_at(time),
             timeline,
+            environment,
         }
     }
 
@@ -280,7 +280,7 @@ impl<C, V, F> SpacecraftModel<C, V, F> {
     }
 }
 
-impl<C, V, F> FirstOrderODE<f64, [StateVector<V>; 1]> for SpacecraftModel<C, V, F>
+impl<V, F, C> FirstOrderODE<f64, [StateVector<V>; 1]> for SpacecraftModel<V, F, C>
 where
     C: AccelerationModel<Vector = V>,
     V: std::ops::Add<Output = V> + Default + Copy,
@@ -294,7 +294,7 @@ where
         [y]: &[StateVector<V>; 1],
         [dy]: &mut [StateVector<V>; 1],
     ) -> Result<(), EvalFailed> {
-        let t = Epoch::from_offset(Duration::from_seconds(t));
+        let t = Epoch::from_offset_seconds(t);
         dy.velocity = self.environment_acceleration(t, y)? + self.manoeuvre_acceleration(t, y)?;
         dy.position = y.velocity;
 
@@ -302,8 +302,79 @@ where
     }
 }
 
-pub type SpacecraftProblem<C, V, F> =
-    ODEProblem<f64, [StateVector<V>; 1], SpacecraftModel<C, V, F>>;
+impl<V, F, C> SecondOrderODEGeneral<f64, [V; 1]> for SpacecraftModel<V, F, C>
+where
+    C: AccelerationModel<Vector = V>,
+    V: std::ops::Add<Output = V> + Default + Copy,
+    F: Frame<V, C>,
+    F::Transform: Transform<V>,
+{
+    #[inline]
+    fn eval(
+        &mut self,
+        t: f64,
+        [y]: &[V; 1],
+        [dy]: &[V; 1],
+        [ddy]: &mut [V; 1],
+    ) -> Result<(), EvalFailed> {
+        let t = Epoch::from_offset_seconds(t);
+        let sv = &StateVector::new(*y, *dy);
+        *ddy = self.environment_acceleration(t, sv)? + self.manoeuvre_acceleration(t, sv)?;
+
+        Ok(())
+    }
+}
+
+pub trait SpacecraftPropagatorState {
+    type Vector;
+
+    fn new(state: StateVector<Self::Vector>) -> Self;
+
+    fn position(&self) -> &Self::Vector;
+
+    fn velocity(&self) -> &Self::Vector;
+}
+
+impl<V> SpacecraftPropagatorState for SecondOrderState<[V; 1]> {
+    type Vector = V;
+
+    #[inline]
+    fn new(state: StateVector<Self::Vector>) -> Self {
+        Self::new([state.position], [state.velocity])
+    }
+
+    #[inline]
+    fn position(&self) -> &Self::Vector {
+        &self.y[0]
+    }
+
+    #[inline]
+    fn velocity(&self) -> &Self::Vector {
+        &self.dy[0]
+    }
+}
+
+impl<V> SpacecraftPropagatorState for [StateVector<V>; 1] {
+    type Vector = V;
+
+    #[inline]
+    fn new(state: StateVector<Self::Vector>) -> Self {
+        [state]
+    }
+
+    #[inline]
+    fn position(&self) -> &Self::Vector {
+        &self[0].position
+    }
+
+    #[inline]
+    fn velocity(&self) -> &Self::Vector {
+        &self[0].velocity
+    }
+}
+
+pub type SpacecraftProblem<S, F, C, V = <S as SpacecraftPropagatorState>::Vector> =
+    ODEProblem<f64, S, SpacecraftModel<V, F, C>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpacecraftPropagatorError {
@@ -333,18 +404,24 @@ impl From<EvalFailed> for SpacecraftPropagatorError {
     }
 }
 
-pub struct SpacecraftPropagator<C, V, F, M: Method<SpacecraftProblem<C, V, F>>> {
+pub struct SpacecraftPropagator<
+    S: SpacecraftPropagatorState,
+    F,
+    C,
+    M: Method<SpacecraftProblem<S, F, C>>,
+> {
     method: M,
-    integration: Integration<SpacecraftProblem<C, V, F>, M>,
+    integration: Integration<SpacecraftProblem<S, F, C>, M>,
 }
 
-impl<C, V, F, M> Clone for SpacecraftPropagator<C, V, F, M>
+impl<S, F, C, M> Clone for SpacecraftPropagator<S, F, C, M>
 where
-    C: Clone,
-    V: Clone,
+    S: SpacecraftPropagatorState + Clone,
+    S::Vector: Clone,
     F: Clone,
-    M: Method<SpacecraftProblem<C, V, F>> + Clone,
-    M::Integrator: IntegratorState + Clone,
+    C: Clone,
+    M: Method<SpacecraftProblem<S, F, C>> + Clone,
+    M::Integrator: Clone,
 {
     #[inline]
     fn clone(&self) -> Self {
@@ -355,31 +432,31 @@ where
     }
 }
 
-impl<C, V, F, M> SpacecraftPropagator<C, V, F, M>
+impl<S, F, C, M> SpacecraftPropagator<S, F, C, M>
 where
-    M: Method<SpacecraftProblem<C, V, F>>,
-    M::Integrator: Integrator<SpacecraftProblem<C, V, F>>,
+    S: SpacecraftPropagatorState,
+    M: Method<SpacecraftProblem<S, F, C>>,
 {
     #[inline]
     pub fn new<Params>(
         initial_time: Epoch,
-        initial_state: StateVector<V>,
+        initial_state: StateVector<S::Vector>,
         params: Params,
+        timeline: Timeline<S::Vector, F>,
         context: C,
-        timeline: Timeline<V, F>,
     ) -> Self
     where
-        C: PropagationEnvironment,
-        M: NewMethod<Params>,
         Params: Clone,
+        M: NewMethod<Params>,
+        M::Integrator: Integrator<SpacecraftProblem<S, F, C>>,
     {
         Self {
             method: M::new(params.clone()),
             integration: M::new(params).integrate(SpacecraftProblem {
                 time: initial_time.as_offset_seconds(),
                 bound: timeline.segment_at(initial_time).end().as_offset_seconds(),
-                state: [initial_state],
-                ode: SpacecraftModel::new(initial_time, context, timeline),
+                state: S::new(initial_state),
+                ode: SpacecraftModel::new(initial_time, timeline, context),
             }),
         }
     }
@@ -393,7 +470,7 @@ where
     }
 
     #[inline]
-    pub fn integration(&self) -> &Integration<SpacecraftProblem<C, V, F>, M> {
+    pub fn integration(&self) -> &Integration<SpacecraftProblem<S, F, C>, M> {
         &self.integration
     }
 
@@ -415,7 +492,7 @@ where
 
     #[inline]
     pub fn time(&self) -> Epoch {
-        Epoch::from_offset(Duration::from_seconds(self.integration.problem.time))
+        Epoch::from_offset_seconds(self.integration.problem.time)
     }
 
     #[inline]
@@ -427,19 +504,19 @@ where
     }
 
     #[inline]
-    pub fn position(&self) -> V
+    pub fn position(&self) -> S::Vector
     where
-        V: Clone,
+        S::Vector: Clone,
     {
-        self.integration.problem.state[0].position.clone()
+        self.integration.problem.state.position().clone()
     }
 
     #[inline]
-    pub fn velocity(&self) -> V
+    pub fn velocity(&self) -> S::Vector
     where
-        V: Clone,
+        S::Vector: Clone,
     {
-        self.integration.problem.state[0].velocity.clone()
+        self.integration.problem.state.velocity().clone()
     }
 
     #[inline]
@@ -448,12 +525,15 @@ where
     }
 
     #[inline]
-    pub fn timeline(&self) -> &Timeline<V, F> {
+    pub fn timeline(&self) -> &Timeline<S::Vector, F> {
         &self.integration.problem.ode.timeline
     }
 
     #[inline]
-    pub fn join(lhs: &mut CubicHermiteSplineSamples<V>, rhs: CubicHermiteSplineSamples<V>) {
+    pub fn join(
+        lhs: &mut CubicHermiteSplineSamples<S::Vector>,
+        rhs: CubicHermiteSplineSamples<S::Vector>,
+    ) {
         lhs.clear_after(rhs.start());
         lhs.extend(rhs);
     }
@@ -464,19 +544,20 @@ where
     }
 }
 
-impl<C, V, F, M> Propagator for SpacecraftPropagator<C, V, F, M>
+impl<S, F, C, M> Propagator for SpacecraftPropagator<S, F, C, M>
 where
-    M: Method<SpacecraftProblem<C, V, F>>,
+    S: SpacecraftPropagatorState,
+    M: Method<SpacecraftProblem<S, F, C>>,
 {
-    type Trajectories = [CubicHermiteSplineSamples<V>; 1];
+    type Trajectories = [CubicHermiteSplineSamples<S::Vector>; 1];
 }
 
-impl<C, V, F, M> IncrementalPropagator for SpacecraftPropagator<C, V, F, M>
+impl<S, F, C, M> IncrementalPropagator for SpacecraftPropagator<S, F, C, M>
 where
-    V: Clone,
-    C: PropagationEnvironment,
-    M: Method<SpacecraftProblem<C, V, F>> + Clone,
-    M::Integrator: Integrator<SpacecraftProblem<C, V, F>> + IntegratorState,
+    S: SpacecraftPropagatorState,
+    S::Vector: Clone,
+    M: Method<SpacecraftProblem<S, F, C>> + Clone,
+    M::Integrator: Integrator<SpacecraftProblem<S, F, C>>,
 {
     type Error = SpacecraftPropagatorError;
 
@@ -492,7 +573,7 @@ where
             self.set_bound(new_end);
             self.reset_integrator();
         }
-        self.integration.step()?;
+        self.integration.advance()?;
 
         trajectory.push(self.time(), self.position(), self.velocity());
 
@@ -500,12 +581,10 @@ where
     }
 }
 
-impl<C, V, F, M> DirectionalPropagator for SpacecraftPropagator<C, V, F, M>
+impl<S, F, C, M> DirectionalPropagator for SpacecraftPropagator<S, F, C, M>
 where
-    V: Clone,
-    C: PropagationEnvironment,
-    M: Method<SpacecraftProblem<C, V, F>>,
-    M::Integrator: Integrator<SpacecraftProblem<C, V, F>>,
+    S: SpacecraftPropagatorState,
+    M: Method<SpacecraftProblem<S, F, C>>,
 {
     #[inline]
     fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
@@ -523,12 +602,11 @@ where
     }
 }
 
-impl<C, V, F, M> BranchingPropagator for SpacecraftPropagator<C, V, F, M>
+impl<S, F, C, M> BranchingPropagator for SpacecraftPropagator<S, F, C, M>
 where
-    V: Clone,
-    C: PropagationEnvironment,
-    M: Method<SpacecraftProblem<C, V, F>>,
-    M::Integrator: Integrator<SpacecraftProblem<C, V, F>>,
+    S: SpacecraftPropagatorState,
+    S::Vector: Clone,
+    M: Method<SpacecraftProblem<S, F, C>>,
 {
     #[inline]
     fn branch(&self) -> Self::Trajectories {

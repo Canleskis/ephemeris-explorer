@@ -110,7 +110,7 @@ where
     R: RKInstance<P>,
 {
     #[inline]
-    fn step(&mut self, problem: &mut P) -> Result<(), StepError> {
+    fn advance(&mut self, problem: &mut P) -> Result<(), StepError> {
         if problem.as_ref().time >= problem.as_ref().bound {
             return Err(StepError::BoundReached);
         }
@@ -411,7 +411,7 @@ where
         + Copy,
 {
     #[inline]
-    fn step(&mut self, problem: &mut P) -> Result<(), StepError> {
+    fn advance(&mut self, problem: &mut P) -> Result<(), StepError> {
         self.prev.store(problem, &self.frk.rk, &self.tol);
 
         loop {

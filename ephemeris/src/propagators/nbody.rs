@@ -335,7 +335,7 @@ where
         M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
         F: Fn(&mut UniformSpline<V>, &mut Interpolation<{ DIV + 1 }, V, A>) -> Result<(), E>,
     {
-        self.integration.step()?;
+        self.integration.advance()?;
 
         let delta_abs = self.delta().abs();
         for ((position, interp), trajectory) in self

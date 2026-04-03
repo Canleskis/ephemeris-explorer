@@ -86,13 +86,13 @@ pub trait IncrementalPropagator: Propagator {
     /// Advances all trajectories by a single step using the propagator.
     fn step(&mut self, trajs: &mut Self::Trajectories) -> Result<(), Self::Error>;
 
-    /// Advances all trajectories until the specified time is reached.
+    /// Advances all trajectories until the specified time bound is reached.
     #[inline]
-    fn step_until(&mut self, trajs: &mut Self::Trajectories, to: Epoch) -> Result<(), Self::Error>
+    fn step_to(&mut self, trajs: &mut Self::Trajectories, bound: Epoch) -> Result<(), Self::Error>
     where
         Self: DirectionalPropagator,
     {
-        while !Self::has_reached(trajs, to) {
+        while !Self::has_reached(trajs, bound) {
             self.step(trajs)?;
         }
         Ok(())
@@ -114,7 +114,7 @@ where
 
     #[inline]
     fn propagate(&mut self, trajs: &mut Self::Trajectories, to: Epoch) -> Result<(), Self::Error> {
-        self.step_until(trajs, to)
+        self.step_to(trajs, to)
     }
 }
 
@@ -144,7 +144,7 @@ impl<P: Propagator> Propagation<P> {
         }
     }
 
-    /// Consumes self and returns the inner propagator and trajectories.
+    /// Returns the inner propagator and trajectories.
     #[inline]
     pub fn into_inner(self) -> (P, P::Trajectories) {
         (self.propagator, self.trajectories)

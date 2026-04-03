@@ -318,9 +318,9 @@ impl Frame<DVec3, &CelestialBodies> for ReferenceFrame {
 type ConstantThrust = ephemeris::ConstantThrust<DVec3, ReferenceFrame>;
 type Timeline = ephemeris::Timeline<DVec3, ReferenceFrame>;
 type SpacecraftPropagator<'a> = ephemeris::SpacecraftPropagator<
-    &'a CelestialBodies,
-    DVec3,
+    [StateVector; 1],
     ReferenceFrame,
+    &'a CelestialBodies,
     Verner87<f64, AbsTol, f64>,
 >;
 
@@ -438,8 +438,8 @@ fn spacecraft_propagation() -> Result<(), Box<dyn std::error::Error>> {
         initial_time,
         initial_state,
         ADAPTIVE_PARAMETERS,
-        &celestial_bodies,
         timeline,
+        &celestial_bodies,
     ));
 
     let end = "1951-01-01 00:00:00".parse()?;

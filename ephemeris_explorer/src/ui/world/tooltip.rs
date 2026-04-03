@@ -496,7 +496,6 @@ fn trajectory_tooltips_world(
         };
 
         let Ok(plot) = query_plot.get(*tooltip_entity) else {
-            error!("{tooltip_entity:?} with a tooltip does not exist or is not a plot segment");
             continue;
         };
         materials.get_mut(&cache.material).unwrap().base_color = plot.color;

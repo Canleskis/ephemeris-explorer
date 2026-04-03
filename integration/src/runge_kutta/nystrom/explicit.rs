@@ -93,7 +93,7 @@ where
                 }
             }
             // kᵢ' = f(tᵢ, yᵢ)
-            problem.ode.eval(ti, &self.yi, self.dk[s].zero())?; // TODO: Set kᵢ to zeroes.
+            problem.ode.eval(ti, &self.yi, self.dk[s].zero())?;
         }
 
         // yₙ₊₁ = yₙ + hyₙ' + h²∑ᵢb̄ᵢkᵢ'

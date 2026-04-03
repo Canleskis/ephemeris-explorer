@@ -488,7 +488,7 @@ where
 
                 let mut error = 0f64;
                 loop {
-                    let step_result = integrator.step();
+                    let step_result = integrator.advance();
 
                     let time = integrator.problem.as_ref().time;
                     let exact = (self.exact)(time);

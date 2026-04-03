@@ -133,7 +133,7 @@ where
         let problem = problem.as_mut();
         problem
             .ode
-            .eval(problem.time, &problem.state, &mut self.current_dy)?;
+            .eval(problem.time, &problem.state, self.current_dy.zero())?;
 
         Ok(())
     }

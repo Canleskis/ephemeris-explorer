@@ -204,7 +204,7 @@ impl ShipSpawnerWindow {
                         )
                         .changed()
                     {
-                        data.start = Epoch::from_offset(Duration::from_seconds(start));
+                        data.start = Epoch::from_offset_seconds(start);
                         window.valid_preview = false;
                     }
                 });

@@ -76,7 +76,7 @@ fn jpl_comparison() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut t = *initial_epoch;
     loop {
-        integrator.step()?;
+        integrator.advance()?;
         t += h;
 
         if let Some(real_system) = systems.get(&t) {

@@ -99,9 +99,9 @@ where
     S: Integrator<P>,
 {
     #[inline]
-    fn step(&mut self, problem: &mut P) -> Result<(), StepError> {
+    fn advance(&mut self, problem: &mut P) -> Result<(), StepError> {
         for _ in 0..SUBSTEPS {
-            self.0.step(problem)?;
+            self.0.advance(problem)?;
         }
         Ok(())
     }
@@ -199,7 +199,7 @@ where
     S: IntegratorState + Integrator<P>,
 {
     #[inline]
-    fn step(&mut self, problem: &mut P) -> Result<(), StepError> {
+    fn advance(&mut self, problem: &mut P) -> Result<(), StepError> {
         if problem.as_ref().time >= problem.as_ref().bound {
             return Err(StepError::BoundReached);
         }
@@ -213,7 +213,7 @@ where
                 self.lm.advance_with(problem, |_| Ok::<_, EvalFailed>(()))?;
             }
 
-            self.lm.advance_with(problem, |p| self.starter.step(p))?;
+            self.lm.advance_with(problem, |p| self.starter.advance(p))?;
 
             return Ok(());
         }

@@ -339,10 +339,10 @@ impl From<problem::EvalFailed> for StepError {
 }
 
 pub trait Integrator<P> {
-    fn step(&mut self, problem: &mut P) -> Result<(), StepError>;
+    fn advance(&mut self, problem: &mut P) -> Result<(), StepError>;
 
     #[inline]
-    fn step_until_bound(&mut self, problem: &mut P) -> Result<(), StepError>
+    fn advance_to_bound(&mut self, problem: &mut P) -> Result<(), StepError>
     where
         P: Problem,
         P::Time: PartialOrd,
@@ -350,7 +350,7 @@ pub trait Integrator<P> {
         // If the bound is already reached, `step` should return an error and so we don't need to
         // check it here.
         loop {
-            self.step(problem)?;
+            self.advance(problem)?;
             if problem.as_ref().time >= problem.as_ref().bound {
                 return Ok(());
             }
@@ -358,11 +358,11 @@ pub trait Integrator<P> {
     }
 
     #[inline]
-    fn advance<'a>(&mut self, problem: &'a mut P) -> Result<(&'a P::Time, &'a P::State), StepError>
+    fn step<'a>(&mut self, problem: &'a mut P) -> Result<(&'a P::Time, &'a P::State), StepError>
     where
         P: Problem,
     {
-        self.step(problem)?;
+        self.advance(problem)?;
 
         Ok((&(*problem).as_ref().time, &(*problem).as_ref().state))
     }
@@ -373,7 +373,7 @@ pub trait Integrator<P> {
         P: Problem,
         P::Time: PartialOrd,
     {
-        self.step_until_bound(problem)?;
+        self.advance_to_bound(problem)?;
 
         Ok((&(*problem).as_ref().time, &(*problem).as_ref().state))
     }
@@ -462,8 +462,8 @@ where
     M::Integrator: Integrator<P>,
 {
     #[inline]
-    pub fn step(&mut self) -> Result<(), StepError> {
-        self.integrator.step(&mut self.problem)
+    pub fn advance(&mut self) -> Result<(), StepError> {
+        self.integrator.advance(&mut self.problem)
     }
 }
 
@@ -474,8 +474,8 @@ where
     M::Integrator: Integrator<P>,
 {
     #[inline]
-    pub fn advance(&mut self) -> Result<(&P::Time, &P::State), StepError> {
-        self.integrator.advance(&mut self.problem)
+    pub fn step(&mut self) -> Result<(&P::Time, &P::State), StepError> {
+        self.integrator.step(&mut self.problem)
     }
 }
 
@@ -487,8 +487,8 @@ where
     M::Integrator: Integrator<P>,
 {
     #[inline]
-    pub fn step_until_bound(&mut self) -> Result<(), StepError> {
-        self.integrator.step_until_bound(&mut self.problem)
+    pub fn advance_to_bound(&mut self) -> Result<(), StepError> {
+        self.integrator.advance_to_bound(&mut self.problem)
     }
 
     #[inline]
@@ -509,7 +509,7 @@ where
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.advance().ok().map(|(t, state)| (*t, state.clone()))
+        self.step().ok().map(|(t, state)| (*t, state.clone()))
     }
 
     #[inline]

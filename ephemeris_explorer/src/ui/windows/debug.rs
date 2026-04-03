@@ -228,8 +228,8 @@ fn compute_interpolation_errors(
     let mut integrator = method.integrate(nbody);
 
     let mut errors = bevy::ecs::entity::EntityHashMap::<f64>::default();
-    while let Ok((t, state)) = integrator.advance() {
-        let epoch = Epoch::from_offset(Duration::from_seconds(*t));
+    while let Ok((t, state)) = integrator.step() {
+        let epoch = Epoch::from_offset_seconds(*t);
         for ((entity, _, traj), position) in query.iter().zip(&state.y) {
             let traj_position = traj.position(epoch).unwrap();
 

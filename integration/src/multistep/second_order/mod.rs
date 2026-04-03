@@ -147,7 +147,7 @@ where
         let problem = problem.as_mut();
         problem
             .ode
-            .eval(problem.time, &problem.state.y, &mut self.current_ddy)?;
+            .eval(problem.time, &problem.state.y, self.current_ddy.zero())?;
 
         Ok(())
     }
