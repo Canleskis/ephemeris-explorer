@@ -1,7 +1,7 @@
 use crate::{
     dynamics::{
-        AbsTol, ConstantThrust, PredictionTrajectory, ReferenceFrame,
-        SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, Timeline, Trajectory,
+        AbsTol, Bodies, ConstantThrust, PredictionTrajectory, ReferenceFrame, SpacecraftPropagator,
+        SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, StateVector, Timeline, Trajectory,
     },
     prediction::{
         ComputePrediction, PredictingWith, PredictionContext, PredictionSystems, Synchronisation,
@@ -127,8 +127,69 @@ impl Burn {
     }
 }
 
+macro_rules! integration_methods {
+    ($($variant:ident => $display:expr),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub enum IntegrationMethod {
+            $($variant),+
+        }
+
+        impl IntegrationMethod {
+            #[inline]
+            pub fn values() -> &'static [Self] {
+                &[$(IntegrationMethod::$variant),+]
+            }
+
+            #[inline]
+            pub fn as_propagator(
+                &self,
+                time: Epoch,
+                sv: StateVector,
+                parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
+                context: Bodies,
+                timeline: Timeline,
+            ) -> SpacecraftPropagator {
+                match self {
+                    $(IntegrationMethod::$variant => SpacecraftPropagator::$variant(
+                        SpacecraftPropagatorSoiDetection::new(time, sv, parameters, context, timeline)
+                    )),+
+                }
+            }
+        }
+
+        impl PartialEq<SpacecraftPropagator> for IntegrationMethod {
+            #[inline]
+            fn eq(&self, propagator: &SpacecraftPropagator) -> bool {
+                match (self, propagator) {
+                    $((IntegrationMethod::$variant, SpacecraftPropagator::$variant(_)) => true,)+
+                    _ => false,
+                }
+            }
+        }
+
+        impl std::fmt::Display for IntegrationMethod {
+            #[inline]
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                match self {
+                    $(IntegrationMethod::$variant => write!(f, $display)),+
+                }
+            }
+        }
+    };
+}
+
+integration_methods! {
+    DormandPrince54 => "Dormand-Prince 5(4)",
+    DormandPrince87 => "Dormand-Prince 8(7)",
+    Tsitouras75 => "Tsitouras 7(5)",
+    Verner87 => "Verner 8(7)",
+    Fine45 => "Fine 4(5)",
+}
+
+// TODO: Add context to flight plan.
 #[derive(Component, Clone)]
 pub struct FlightPlan {
+    pub method: IntegrationMethod,
     pub parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
     pub end: Epoch,
     pub burns: indexmap::IndexMap<uuid::Uuid, Burn>,
@@ -141,8 +202,9 @@ impl FlightPlan {
         burns: Vec<Burn>,
     ) -> Self {
         Self {
-            end,
+            method: IntegrationMethod::Verner87,
             parameters,
+            end,
             burns: burns
                 .into_iter()
                 .map(|burn| (uuid::Uuid::new_v4(), burn))
@@ -220,7 +282,7 @@ fn apply_flight_plan(
         unreachable!()
     };
 
-    if !propagator.environment().is_valid_at(trajectory.start()) {
+    if !propagator.context().is_valid_at(trajectory.start()) {
         return;
     };
 
@@ -243,8 +305,9 @@ fn apply_flight_plan(
     // 3. If no change was previously detected, we restart from the last event preceding the end of
     //    the flight plan (this ensures the prediction reaches the flight plan end).
     let restart_epoch = {
-        if propagator.max_iterations() != flight_plan.parameters.n_max as usize
-            || propagator.tolerance() != &flight_plan.parameters.tol
+        if &flight_plan.method != propagator
+            || flight_plan.parameters.n_max as usize != propagator.max_iterations()
+            || &flight_plan.parameters.tol != propagator.tolerance()
         {
             trajectory.start()
         } else {
@@ -258,16 +321,16 @@ fn apply_flight_plan(
     };
 
     let Some(&restart_sv) = trajectory.get(restart_epoch) else {
-        error!("something went wrong when trying to compute the flight plan from {restart_epoch}",);
+        error!("something went wrong when trying to compute the flight plan from {restart_epoch}");
         return;
     };
     debug!("restarting propagation from {}", restart_epoch);
 
-    let propagator = SpacecraftPropagatorSoiDetection::new(
+    let propagator = flight_plan.method.as_propagator(
         restart_epoch,
         restart_sv,
         flight_plan.parameters,
-        propagator.environment().clone(),
+        propagator.context().clone(),
         timeline,
     );
 
@@ -302,9 +365,9 @@ fn trigger_on_trajectory_updates(
     {
         // Only trigger if the trajectory hasn't previously reached the end of the flight plan and
         // if the context allows for the prediction to start being computed.
-        if traj.end() < flight_plan.end && propagator.environment().is_valid_at(traj.start()) {
+        if traj.end() < flight_plan.end && propagator.context().is_valid_at(traj.start()) {
             // TODO: Remove this guard once we can restart the prediction from the end.
-            if !propagator.environment().is_valid_at(flight_plan.end) {
+            if !propagator.context().is_valid_at(flight_plan.end) {
                 continue;
             }
 

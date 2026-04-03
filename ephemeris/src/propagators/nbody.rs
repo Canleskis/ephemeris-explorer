@@ -364,9 +364,9 @@ where
     M: Method<NBodyProblem<V>>,
 {
     #[inline]
-    pub fn join(rhs: &mut UniformSpline<V>, lhs: UniformSpline<V>) {
-        rhs.clear_after(lhs.start());
-        rhs.append(lhs);
+    pub fn join(lhs: &mut UniformSpline<V>, rhs: UniformSpline<V>) {
+        lhs.clear_after(rhs.start());
+        lhs.append(rhs);
     }
 }
 
@@ -375,9 +375,9 @@ where
     M: Method<NBodyProblem<V>>,
 {
     #[inline]
-    pub fn join(rhs: &mut UniformSpline<V>, lhs: UniformSpline<V>) {
-        rhs.clear_before(lhs.end());
-        rhs.prepend(lhs);
+    pub fn join(lhs: &mut UniformSpline<V>, rhs: UniformSpline<V>) {
+        lhs.clear_before(rhs.end());
+        lhs.prepend(rhs);
     }
 }
 

@@ -74,16 +74,16 @@ pub mod coeffs {
 
         const ORDER: u16 = 4;
 
-        const A: &'static [&'static [Ratio]] = &[
+        const A: &[&[Ratio]] = &[
             &[],
             &[frac!(1, 2)],
             &[frac!(0, 1), frac!(1, 2)],
             &[frac!(0, 1), frac!(0, 1), frac!(1, 1)],
         ];
 
-        const B: &'static [Ratio] = &[frac!(1, 6), frac!(1, 3), frac!(1, 3), frac!(1, 6)];
+        const B: &[Ratio] = &[frac!(1, 6), frac!(1, 3), frac!(1, 3), frac!(1, 6)];
 
-        const C: &'static [Ratio] = &[frac!(0, 1), frac!(1, 2), frac!(1, 2), frac!(1, 1)];
+        const C: &[Ratio] = &[frac!(0, 1), frac!(1, 2), frac!(1, 2), frac!(1, 1)];
     }
 
     #[doc(hidden)]
@@ -97,7 +97,7 @@ pub mod coeffs {
 
         const ORDER: u16 = 4;
 
-        const A: &'static [&'static [Ratio]] = &[
+        const A: &[&[Ratio]] = &[
             &[],
             &[frac!(1, 5)],
             &[frac!(3, 40), frac!(9, 40)],
@@ -112,7 +112,7 @@ pub mod coeffs {
             ],
         ];
 
-        const B: &'static [Ratio] = &[
+        const B: &[Ratio] = &[
             frac!(2825, 27648),
             frac!(0, 1),
             frac!(18575, 48384),
@@ -121,7 +121,7 @@ pub mod coeffs {
             frac!(1, 4),
         ];
 
-        const C: &'static [Ratio] = &[
+        const C: &[Ratio] = &[
             frac!(0, 1),
             frac!(1, 5),
             frac!(3, 10),
@@ -133,7 +133,7 @@ pub mod coeffs {
     impl EERKCoefficients for CashKarp45 {
         const ORDER_EMBEDDED: u16 = 5;
 
-        const E: &'static [Ratio] = {
+        const E: &[Ratio] = {
             const BH: &[Ratio] = &[
                 frac!(37, 378),
                 frac!(0, 1),
@@ -165,7 +165,7 @@ pub mod coeffs {
 
         const ORDER: u16 = 5;
 
-        const A: &'static [&'static [Ratio]] = &[
+        const A: &[&[Ratio]] = &[
             &[],
             &[frac!(1, 5)],
             &[frac!(3, 40), frac!(9, 40)],
@@ -193,7 +193,7 @@ pub mod coeffs {
             ],
         ];
 
-        const B: &'static [Ratio] = &[
+        const B: &[Ratio] = &[
             Self::A[6][0],
             Self::A[6][1],
             Self::A[6][2],
@@ -203,7 +203,7 @@ pub mod coeffs {
             frac!(0, 1),
         ];
 
-        const C: &'static [Ratio] = &[
+        const C: &[Ratio] = &[
             frac!(0, 1),
             frac!(1, 5),
             frac!(3, 10),
@@ -216,7 +216,7 @@ pub mod coeffs {
     impl EERKCoefficients for DormandPrince54 {
         const ORDER_EMBEDDED: u16 = 4;
 
-        const E: &'static [Ratio] = {
+        const E: &[Ratio] = {
             const BH: &[Ratio] = &[
                 frac!(5179, 57600),
                 frac!(0, 1),
@@ -250,7 +250,7 @@ pub mod coeffs {
 
         const ORDER: u16 = 8;
 
-        const A: &'static [&'static [Ratio]] = &[
+        const A: &[&[Ratio]] = &[
             &[],
             &[frac!(1, 18)],
             &[frac!(1, 48), frac!(1, 16)],
@@ -342,7 +342,7 @@ pub mod coeffs {
             ],
         ];
 
-        const B: &'static [Ratio] = &[
+        const B: &[Ratio] = &[
             frac!(14005451, 335480064),
             frac!(0, 1),
             frac!(0, 1),
@@ -358,7 +358,7 @@ pub mod coeffs {
             frac!(1, 4),
         ];
 
-        const C: &'static [Ratio] = &[
+        const C: &[Ratio] = &[
             frac!(0, 1),
             frac!(1, 18),
             frac!(1, 12),
@@ -377,7 +377,7 @@ pub mod coeffs {
     impl EERKCoefficients for DormandPrince87 {
         const ORDER_EMBEDDED: u16 = 7;
 
-        const E: &'static [Ratio] = {
+        const E: &[Ratio] = {
             const BH: &[Ratio] = &[
                 frac!(13451932, 455176623),
                 frac!(0, 1),
@@ -423,7 +423,7 @@ pub mod coeffs {
 
         const ORDER: u16 = 4;
 
-        const A: &'static [&'static [Ratio]] = &[
+        const A: &[&[Ratio]] = &[
             &[],
             &[frac!(1, 4)],
             &[frac!(3, 32), frac!(9, 32)],
@@ -444,7 +444,7 @@ pub mod coeffs {
         ];
 
         // Integration is continued with the 4th order solution.
-        const B: &'static [Ratio] = &[
+        const B: &[Ratio] = &[
             frac!(25, 216),
             frac!(0, 1),
             frac!(1408, 2565),
@@ -453,7 +453,7 @@ pub mod coeffs {
             frac!(0, 1),
         ];
 
-        const C: &'static [Ratio] = &[
+        const C: &[Ratio] = &[
             frac!(0, 1),
             frac!(1, 4),
             frac!(3, 8),
@@ -465,7 +465,7 @@ pub mod coeffs {
     impl EERKCoefficients for Fehlberg45 {
         const ORDER_EMBEDDED: u16 = 5;
 
-        const E: &'static [Ratio] = {
+        const E: &[Ratio] = {
             const BH: &[Ratio] = &[
                 frac!(16, 135),
                 frac!(0, 1),
@@ -499,7 +499,7 @@ pub mod coeffs {
 
         const ORDER: u16 = 8;
 
-        const A: &'static [&'static [Ratio]] = &[
+        const A: &[&[Ratio]] = &[
             &[],
             &[frac!(1, 4)],
             &[
@@ -707,7 +707,7 @@ pub mod coeffs {
             ],
         ];
 
-        const B: &'static [Ratio] = &[
+        const B: &[Ratio] = &[
             frac!(105711409411029096011, 2363345366733216286848),
             frac!(0, 1),
             frac!(0, 1),
@@ -732,7 +732,7 @@ pub mod coeffs {
             frac!(0, 1),
         ];
 
-        const C: &'static [Ratio] = &[
+        const C: &[Ratio] = &[
             frac!(0, 1),
             frac!(1, 4),
             frac!(86021, 762000),
@@ -751,7 +751,7 @@ pub mod coeffs {
     impl EERKCoefficients for Verner87 {
         const ORDER_EMBEDDED: u16 = 7;
 
-        const E: &'static [Ratio] = {
+        const E: &[Ratio] = {
             const BH: &[Ratio] = &[
                 frac!(415143901557332051, 9054963090931863168),
                 frac!(0, 1),
@@ -809,7 +809,7 @@ pub mod coeffs {
 
         const ORDER: u16 = 7;
 
-        const A: &'static [&'static [Ratio]] = &[
+        const A: &[&[Ratio]] = &[
             &[],
             &[frac!(1, 18)],
             &[frac!(0, 1), frac!(1, 9)],
@@ -856,7 +856,7 @@ pub mod coeffs {
             ],
         ];
 
-        const B: &'static [Ratio] = &[
+        const B: &[Ratio] = &[
             frac!(597988726, 12374436915),
             frac!(0, 1),
             frac!(0, 1),
@@ -868,7 +868,7 @@ pub mod coeffs {
             frac!(1016647712, 23899101975),
         ];
 
-        const C: &'static [Ratio] = &[
+        const C: &[Ratio] = &[
             frac!(0, 1),
             frac!(1, 18),
             frac!(1, 9),
@@ -883,7 +883,7 @@ pub mod coeffs {
     impl EERKCoefficients for Tsitouras75 {
         const ORDER_EMBEDDED: u16 = 5;
 
-        const E: &'static [Ratio] = {
+        const E: &[Ratio] = {
             const BH: &[Ratio] = &[
                 frac!(1421940313, 46193547077),
                 frac!(0, 1),
@@ -921,7 +921,7 @@ pub mod coeffs {
 
         const ORDER: u16 = 7;
 
-        const A: &'static [&'static [Ratio]] = &[
+        const A: &[&[Ratio]] = &[
             &[],
             &[frac!(5107771, 767472028)],
             &[frac!(5107771, 575604021), frac!(16661485, 938806552)],
@@ -953,17 +953,17 @@ pub mod coeffs {
             ],
         ];
 
-        const BP: &'static [Ratio] = &[
-            <Self as ERKNCoefficients>::A[6][0],
-            <Self as ERKNCoefficients>::A[6][1],
-            <Self as ERKNCoefficients>::A[6][2],
-            <Self as ERKNCoefficients>::A[6][3],
-            <Self as ERKNCoefficients>::A[6][4],
-            <Self as ERKNCoefficients>::A[6][5],
+        const BP: &[Ratio] = &[
+            Self::A[6][0],
+            Self::A[6][1],
+            Self::A[6][2],
+            Self::A[6][3],
+            Self::A[6][4],
+            Self::A[6][5],
             frac!(0, 1),
         ];
 
-        const BV: &'static [Ratio] = &[
+        const BV: &[Ratio] = &[
             frac!(53103334, 780726093),
             frac!(0, 1),
             frac!(244481296, 685635505),
@@ -973,7 +973,7 @@ pub mod coeffs {
             frac!(191595797, 1038702495),
         ];
 
-        const C: &'static [Ratio] = &[
+        const C: &[Ratio] = &[
             frac!(0, 1),
             frac!(108816483, 943181462),
             frac!(108816483, 471590731),
@@ -986,7 +986,7 @@ pub mod coeffs {
     impl EERKNCoefficients for Tsitouras75Nystrom {
         const ORDER_EMBEDDED: u16 = 5;
 
-        const EP: &'static [Ratio] = {
+        const EP: &[Ratio] = {
             const BHP: &[Ratio] = &[
                 frac!(41808761, 935030896),
                 frac!(0, 1),
@@ -998,17 +998,17 @@ pub mod coeffs {
             ];
 
             &[
-                <Self as ERKNCoefficients>::BP[0].const_sub(BHP[0]),
-                <Self as ERKNCoefficients>::BP[1].const_sub(BHP[1]),
-                <Self as ERKNCoefficients>::BP[2].const_sub(BHP[2]),
-                <Self as ERKNCoefficients>::BP[3].const_sub(BHP[3]),
-                <Self as ERKNCoefficients>::BP[4].const_sub(BHP[4]),
-                <Self as ERKNCoefficients>::BP[5].const_sub(BHP[5]),
-                <Self as ERKNCoefficients>::BP[6].const_sub(BHP[6]),
+                Self::BP[0].const_sub(BHP[0]),
+                Self::BP[1].const_sub(BHP[1]),
+                Self::BP[2].const_sub(BHP[2]),
+                Self::BP[3].const_sub(BHP[3]),
+                Self::BP[4].const_sub(BHP[4]),
+                Self::BP[5].const_sub(BHP[5]),
+                Self::BP[6].const_sub(BHP[6]),
             ]
         };
 
-        const EV: &'static [Ratio] = {
+        const EV: &[Ratio] = {
             const BHV: &[Ratio] = &[
                 frac!(41808761, 935030896),
                 frac!(0, 1),
@@ -1020,13 +1020,13 @@ pub mod coeffs {
             ];
 
             &[
-                <Self as ERKNCoefficients>::BV[0].const_sub(BHV[0]),
-                <Self as ERKNCoefficients>::BV[1].const_sub(BHV[1]),
-                <Self as ERKNCoefficients>::BV[2].const_sub(BHV[2]),
-                <Self as ERKNCoefficients>::BV[3].const_sub(BHV[3]),
-                <Self as ERKNCoefficients>::BV[4].const_sub(BHV[4]),
-                <Self as ERKNCoefficients>::BV[5].const_sub(BHV[5]),
-                <Self as ERKNCoefficients>::BV[6].const_sub(BHV[6]),
+                Self::BV[0].const_sub(BHV[0]),
+                Self::BV[1].const_sub(BHV[1]),
+                Self::BV[2].const_sub(BHV[2]),
+                Self::BV[3].const_sub(BHV[3]),
+                Self::BV[4].const_sub(BHV[4]),
+                Self::BV[5].const_sub(BHV[5]),
+                Self::BV[6].const_sub(BHV[6]),
             ]
         };
     }
@@ -1043,7 +1043,7 @@ pub mod coeffs {
 
         const ORDER: u16 = 4;
 
-        const AP: &'static [&'static [Ratio]] = &[
+        const AP: &[&[Ratio]] = &[
             &[],
             &[frac!(32, 1521)],
             &[frac!(4, 169), frac!(4, 169)],
@@ -1071,7 +1071,7 @@ pub mod coeffs {
             ],
         ];
 
-        const AV: &'static [&'static [Ratio]] = &[
+        const AV: &[&[Ratio]] = &[
             &[],
             &[frac!(8, 39)],
             &[frac!(1, 13), frac!(3, 13)],
@@ -1099,27 +1099,27 @@ pub mod coeffs {
             ],
         ];
 
-        const BP: &'static [Ratio] = &[
-            frac!(4817, 51600),
-            frac!(0, 1),
-            frac!(388869, 1216880),
-            frac!(3276, 23575),
-            frac!(-1142053, 22015140),
-            frac!(0, 1),
-            frac!(0, 1),
-        ];
-
-        const BV: &'static [Ratio] = &[
-            frac!(4817, 51600),
-            frac!(0, 1),
-            frac!(1685099, 3650640),
-            frac!(19656, 23575),
-            frac!(-53676491, 88060560),
-            frac!(53, 240),
+        const BP: &[Ratio] = &[
+            Self::AP[6][0],
+            Self::AP[6][1],
+            Self::AP[6][2],
+            Self::AP[6][3],
+            Self::AP[6][4],
+            Self::AP[6][5],
             frac!(0, 1),
         ];
 
-        const C: &'static [Ratio] = &[
+        const BV: &[Ratio] = &[
+            Self::AV[6][0],
+            Self::AV[6][1],
+            Self::AV[6][2],
+            Self::AV[6][3],
+            Self::AV[6][4],
+            Self::AV[6][5],
+            frac!(0, 1),
+        ];
+
+        const C: &[Ratio] = &[
             frac!(0, 1),
             frac!(8, 39),
             frac!(4, 13),
@@ -1132,7 +1132,7 @@ pub mod coeffs {
     impl EERKNGCoefficients for Fine45 {
         const ORDER_EMBEDDED: u16 = 5;
 
-        const EP: &'static [Ratio] = &[
+        const EP: &[Ratio] = &[
             frac!(8151, 2633750),
             frac!(0, 1),
             frac!(-1377519, 186334750),
@@ -1142,7 +1142,7 @@ pub mod coeffs {
             frac!(0, 1),
         ];
 
-        const EV: &'static [Ratio] = &[
+        const EV: &[Ratio] = &[
             frac!(8151, 2633750),
             frac!(0, 1),
             frac!(-5969249, 559004250),
@@ -1427,9 +1427,9 @@ pub mod coeffs {
     impl ELM1Coefficients for AdamsBashforth2 {
         const ORDER: u16 = 2;
 
-        const ALPHA: &'static [i128] = &[1, -1, 0];
+        const ALPHA: &[i128] = &[1, -1, 0];
 
-        const BETA_N: &'static [i128] = &[0, 3, -1];
+        const BETA_N: &[i128] = &[0, 3, -1];
 
         const BETA_D: i128 = 2;
     }
@@ -1443,9 +1443,9 @@ pub mod coeffs {
     impl ELM1Coefficients for AdamsBashforth3 {
         const ORDER: u16 = 3;
 
-        const ALPHA: &'static [i128] = &[1, -1, 0, 0];
+        const ALPHA: &[i128] = &[1, -1, 0, 0];
 
-        const BETA_N: &'static [i128] = &[0, 23, -16, 5];
+        const BETA_N: &[i128] = &[0, 23, -16, 5];
 
         const BETA_D: i128 = 12;
     }
@@ -1459,9 +1459,9 @@ pub mod coeffs {
     impl ELM1Coefficients for AdamsBashforth4 {
         const ORDER: u16 = 4;
 
-        const ALPHA: &'static [i128] = &[1, -1, 0, 0, 0];
+        const ALPHA: &[i128] = &[1, -1, 0, 0, 0];
 
-        const BETA_N: &'static [i128] = &[0, 55, -59, 37, -9];
+        const BETA_N: &[i128] = &[0, 55, -59, 37, -9];
 
         const BETA_D: i128 = 24;
     }
@@ -1475,9 +1475,9 @@ pub mod coeffs {
     impl ELM1Coefficients for AdamsBashforth5 {
         const ORDER: u16 = 5;
 
-        const ALPHA: &'static [i128] = &[1, -1, 0, 0, 0, 0];
+        const ALPHA: &[i128] = &[1, -1, 0, 0, 0, 0];
 
-        const BETA_N: &'static [i128] = &[0, 1901, -2774, 2616, -1274, 251];
+        const BETA_N: &[i128] = &[0, 1901, -2774, 2616, -1274, 251];
 
         const BETA_D: i128 = 720;
     }
@@ -1491,9 +1491,9 @@ pub mod coeffs {
     impl ELM1Coefficients for AdamsBashforth6 {
         const ORDER: u16 = 6;
 
-        const ALPHA: &'static [i128] = &[1, -1, 0, 0, 0, 0, 0];
+        const ALPHA: &[i128] = &[1, -1, 0, 0, 0, 0, 0];
 
-        const BETA_N: &'static [i128] = &[0, 4277, -7923, 9982, -7298, 2877, -475];
+        const BETA_N: &[i128] = &[0, 4277, -7923, 9982, -7298, 2877, -475];
 
         const BETA_D: i128 = 1440;
     }
@@ -1507,9 +1507,9 @@ pub mod coeffs {
     impl ELM2Coefficients for QuinlanTremaine12 {
         const ORDER: u16 = 12;
 
-        const ALPHA: &'static [i128] = &[1, -2, 2, -1, 0, 0, 0, 0, 0, -1, 2, -2, 1];
+        const ALPHA: &[i128] = &[1, -2, 2, -1, 0, 0, 0, 0, 0, -1, 2, -2, 1];
 
-        const BETA_N: &'static [i128] = &[
+        const BETA_N: &[i128] = &[
             0,
             90987349,
             -229596838,
@@ -1537,9 +1537,9 @@ pub mod coeffs {
     impl ELM2Coefficients for Stormer13 {
         const ORDER: u16 = 13;
 
-        const ALPHA: &'static [i128] = &[1, -2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        const ALPHA: &[i128] = &[1, -2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-        const BETA_N: &'static [i128] = &[
+        const BETA_N: &[i128] = &[
             0,
             4_6211_5547_1343,
             -13_2328_4191_4856,

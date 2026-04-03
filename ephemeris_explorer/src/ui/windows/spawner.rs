@@ -3,12 +3,12 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
-        Bodies, CubicHermiteSplineSamples, GravitationalBody, Mu, SpacecraftPropagatorSoiDetection,
-        SpacecraftTrajectory, SphereOfInfluence, Timeline, Trajectory,
+        Bodies, CubicHermiteSplineSamples, GravitationalBody, Mu, SpacecraftTrajectory,
+        SphereOfInfluence, Timeline, Trajectory,
     },
     floating_origin::BigGridBundle,
     load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
-    prediction::{ComputePrediction, PredictionContext, Synchronisation},
+    prediction::{ComputePrediction, PredictionContext, PropagationTarget, Synchronisation},
     simulation::SimulationTime,
     ui::{
         IdentedInfo, Labelled, PlotBound, PlotSourceOf, WindowsUiSet, duration_formatter,
@@ -145,7 +145,7 @@ impl ShipSpawnerWindow {
                 },
                 PredictionContext::<SpacecraftTrajectory>::new(
                     vec![entity],
-                    SpacecraftPropagatorSoiDetection::new(
+                    <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
                         data.start,
                         sv,
                         INITIAL_ADAPTIVE_PARAMS,
@@ -409,11 +409,11 @@ impl ShipSpawnerWindow {
 
         if !window.valid_preview {
             let sv = data.global_state_vector(data.start, &query_trajectory);
-            let propagator = SpacecraftPropagatorSoiDetection::new(
+            let propagator = <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
                 data.start,
                 sv,
                 INITIAL_ADAPTIVE_PARAMS,
-                prediction.propagator.environment().clone(),
+                prediction.propagator.context().clone(),
                 Timeline::default(),
             );
 

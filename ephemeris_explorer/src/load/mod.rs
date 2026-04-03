@@ -11,12 +11,14 @@ use crate::{
     camera::{CameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
         AbsTol, Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, Forward,
-        GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator, SpacecraftPropagatorSoiDetection,
-        SpacecraftTrajectory, SphereOfInfluence, StateVector, Timeline, Trajectory, UniformSpline,
+        GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator, SpacecraftTrajectory,
+        SphereOfInfluence, StateVector, Timeline, Trajectory, UniformSpline,
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, CellCoord, FloatingOrigin},
-    prediction::{ComputePrediction, PredictionContext, PredictionTracker, Synchronisation},
+    prediction::{
+        ComputePrediction, PredictionContext, PredictionTracker, PropagationTarget, Synchronisation,
+    },
     rotation::Rotating,
     selection::Selectable,
     simulation::{BoundsTime, SimulationTime},
@@ -562,7 +564,7 @@ fn spawn_ship(
         )),
         PredictionContext::<SpacecraftTrajectory>::new(
             vec![id],
-            SpacecraftPropagatorSoiDetection::new(
+            <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
                 ship.start,
                 StateVector::new(ship.position, ship.velocity),
                 INITIAL_ADAPTIVE_PARAMS,

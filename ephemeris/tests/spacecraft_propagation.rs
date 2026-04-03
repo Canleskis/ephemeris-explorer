@@ -1,6 +1,6 @@
 use ephemeris::{
     AccelerationModel, BoundedTrajectory, EvaluateTrajectory, Forward, Frame,
-    InterpolationAlgorithm, NBodyPropagatorError, Polynomial, Propagation, PropagationEnvironment,
+    InterpolationAlgorithm, NBodyPropagatorError, Polynomial, Propagation, PropagationContext,
     Transform, eval_slice_horner,
 };
 use ftime::{Duration, Epoch};
@@ -228,7 +228,7 @@ impl AccelerationModel for &CelestialBodies {
     }
 }
 
-impl PropagationEnvironment for &CelestialBodies {
+impl PropagationContext for &CelestialBodies {
     #[inline]
     fn max_time(&self) -> Epoch {
         self.bodies
@@ -304,11 +304,11 @@ impl Frame<DVec3, &CelestialBodies> for ReferenceFrame {
         &self,
         t: Epoch,
         sv: &StateVector,
-        environment: &&CelestialBodies,
+        context: &&CelestialBodies,
     ) -> Option<Self::Transform> {
         match self {
             ReferenceFrame::Relative(reference) => Some(TNB::new(
-                *sv - environment.bodies[reference].trajectory.state_vector(t)?,
+                *sv - context.bodies[reference].trajectory.state_vector(t)?,
             )),
             ReferenceFrame::Inertial => Some(TNB::IDENTITY),
         }

@@ -8,8 +8,8 @@ use bevy::math::{DMat3, DVec3};
 use bevy::prelude::*;
 use ephemeris::{
     AccelerationModel, BoundedTrajectory, BranchingPropagator, DirectionalPropagator,
-    EvaluateTrajectory, Frame, IncrementalPropagator, PropagationEnvironment, Propagator,
-    SpacecraftPropagatorState, Transform,
+    EvaluateTrajectory, Frame, IncrementalPropagator, PropagationContext, Propagator,
+    SpacecraftPropagatorError, SpacecraftPropagatorState, Transform,
 };
 use ftime::{Duration, Epoch};
 use integration::prelude::*;
@@ -247,7 +247,7 @@ impl AccelerationModel for Bodies {
     }
 }
 
-impl PropagationEnvironment for Bodies {
+impl PropagationContext for Bodies {
     #[inline]
     fn max_time(&self) -> Epoch {
         self.0
@@ -261,7 +261,8 @@ pub type Timeline = ephemeris::Timeline<DVec3, ReferenceFrame>;
 
 pub type SpacecraftProblem<S, V = DVec3> =
     ephemeris::SpacecraftProblem<S, ReferenceFrame, Bodies, V>;
-pub type SpacecraftPropagator<S, M> = ephemeris::SpacecraftPropagator<S, ReferenceFrame, Bodies, M>;
+pub type BaseSpacecraftPropagator<S, M> =
+    ephemeris::SpacecraftPropagator<S, ReferenceFrame, Bodies, M>;
 
 /// Stores the times at which an entity entered spheres of influence.
 #[derive(Clone, Debug, Default, Component)]
@@ -336,7 +337,7 @@ impl SoiTransitions {
     }
 }
 
-pub struct SpacecraftPropagatorSoiDetection<S, M>(pub SpacecraftPropagator<S, M>)
+pub struct SpacecraftPropagatorSoiDetection<S, M>(pub BaseSpacecraftPropagator<S, M>)
 where
     S: SpacecraftPropagatorState<Vector = DVec3>,
     M: Method<SpacecraftProblem<S>>;
@@ -372,7 +373,7 @@ where
         M: NewMethod<Params>,
         M::Integrator: Integrator<SpacecraftProblem<S>>,
     {
-        Self(SpacecraftPropagator::new(
+        Self(BaseSpacecraftPropagator::new(
             initial_time,
             initial_state,
             params,
@@ -421,8 +422,8 @@ where
     }
 
     #[inline]
-    pub fn environment(&self) -> &Bodies {
-        self.0.environment()
+    pub fn context(&self) -> &Bodies {
+        self.0.context()
     }
 
     #[inline]
@@ -432,7 +433,7 @@ where
 
     #[inline]
     pub fn join(lhs: &mut CubicHermiteSplineSamples, rhs: CubicHermiteSplineSamples) {
-        SpacecraftPropagator::<S, M>::join(lhs, rhs)
+        BaseSpacecraftPropagator::<S, M>::join(lhs, rhs)
     }
 }
 
@@ -450,7 +451,7 @@ where
     M: Method<SpacecraftProblem<S>> + Clone,
     M::Integrator: Integrator<SpacecraftProblem<S>> + IntegratorState,
 {
-    type Error = <SpacecraftPropagator<S, M> as IncrementalPropagator>::Error;
+    type Error = <BaseSpacecraftPropagator<S, M> as IncrementalPropagator>::Error;
 
     #[inline]
     fn step(&mut self, [(traj, transitions)]: &mut Self::Trajectories) -> Result<(), Self::Error> {
@@ -461,11 +462,11 @@ where
 
         let t1 = self.time();
         let p1 = self.position();
-        for (entity, body) in self.environment().iter() {
+        for (entity, body) in self.context().iter() {
             if let Some((time, pos, rate)) = body.soi_transition_with(&*traj, t0, t1, p0, p1) {
                 if rate.is_sign_negative() {
                     transitions.insert(time, *entity);
-                } else if let Some(entered) = self.environment().soi_at(time, pos, &[*entity]) {
+                } else if let Some(entered) = self.context().soi_at(time, pos, &[*entity]) {
                     transitions.insert(time, entered);
                 }
             }
@@ -482,17 +483,17 @@ where
 {
     #[inline]
     fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
-        SpacecraftPropagator::<S, M>::cmp(lhs, rhs)
+        BaseSpacecraftPropagator::<S, M>::cmp(lhs, rhs)
     }
 
     #[inline]
     fn offset(time: Epoch, duration: Duration) -> Epoch {
-        SpacecraftPropagator::<S, M>::offset(time, duration)
+        BaseSpacecraftPropagator::<S, M>::offset(time, duration)
     }
 
     #[inline]
     fn boundaries([(trajectory, _)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
-        SpacecraftPropagator::<S, M>::boundaries(std::array::from_ref(trajectory))
+        BaseSpacecraftPropagator::<S, M>::boundaries(std::array::from_ref(trajectory))
     }
 }
 
@@ -544,8 +545,134 @@ impl Tolerance<SecondOrderState<[DVec3; 1]>> for AbsTol {
     }
 }
 
-pub type SpacecraftState = [StateVector; 1];
-pub type AdaptiveMethod = Verner87<f64, AbsTol, f64>;
+#[derive(Clone)]
+pub enum SpacecraftPropagator {
+    DormandPrince54(
+        SpacecraftPropagatorSoiDetection<[StateVector; 1], DormandPrince54<f64, AbsTol, f64>>,
+    ),
+    DormandPrince87(
+        SpacecraftPropagatorSoiDetection<[StateVector; 1], DormandPrince87<f64, AbsTol, f64>>,
+    ),
+    Tsitouras75(SpacecraftPropagatorSoiDetection<[StateVector; 1], Tsitouras75<f64, AbsTol, f64>>),
+    Verner87(SpacecraftPropagatorSoiDetection<[StateVector; 1], Verner87<f64, AbsTol, f64>>),
+    Fine45(
+        SpacecraftPropagatorSoiDetection<SecondOrderState<[DVec3; 1]>, Fine45<f64, AbsTol, f64>>,
+    ),
+}
+
+macro_rules! delegate {
+    ($self:expr, $method:ident $(, $args:expr)*) => {
+        match $self {
+            SpacecraftPropagator::DormandPrince54(p) => p.$method($($args),*),
+            SpacecraftPropagator::DormandPrince87(p) => p.$method($($args),*),
+            SpacecraftPropagator::Tsitouras75(p) => p.$method($($args),*),
+            SpacecraftPropagator::Verner87(p) => p.$method($($args),*),
+            SpacecraftPropagator::Fine45(p) => p.$method($($args),*),
+        }
+    };
+}
+
+impl SpacecraftPropagator {
+    #[inline]
+    pub fn new(
+        initial_time: Epoch,
+        initial_state: StateVector,
+        params: AdaptiveMethodParams<f64, AbsTol, f64>,
+        context: Bodies,
+        timeline: Timeline,
+    ) -> Self {
+        Self::Verner87(SpacecraftPropagatorSoiDetection::new(
+            initial_time,
+            initial_state,
+            params,
+            context,
+            timeline,
+        ))
+    }
+
+    #[inline]
+    pub fn max_iterations(&self) -> usize {
+        delegate!(self, max_iterations)
+    }
+
+    #[inline]
+    pub fn tolerance(&self) -> &AbsTol {
+        delegate!(self, tolerance)
+    }
+
+    #[inline]
+    pub fn time(&self) -> Epoch {
+        delegate!(self, time)
+    }
+
+    #[inline]
+    pub fn delta(&self) -> Duration {
+        delegate!(self, delta)
+    }
+
+    #[inline]
+    pub fn position(&self) -> DVec3 {
+        delegate!(self, position)
+    }
+
+    #[inline]
+    pub fn velocity(&self) -> DVec3 {
+        delegate!(self, velocity)
+    }
+
+    #[inline]
+    pub fn context(&self) -> &Bodies {
+        delegate!(self, context)
+    }
+
+    #[inline]
+    pub fn timeline(&self) -> &Timeline {
+        delegate!(self, timeline)
+    }
+
+    #[inline]
+    pub fn join(lhs: &mut CubicHermiteSplineSamples, rhs: CubicHermiteSplineSamples) {
+        lhs.clear_after(rhs.start());
+        lhs.extend(rhs);
+    }
+}
+
+impl Propagator for SpacecraftPropagator {
+    type Trajectories = [(CubicHermiteSplineSamples, SoiTransitions); 1];
+}
+
+impl IncrementalPropagator for SpacecraftPropagator {
+    type Error = SpacecraftPropagatorError;
+
+    #[inline]
+    fn step(&mut self, trajectories: &mut Self::Trajectories) -> Result<(), Self::Error> {
+        delegate!(self, step, trajectories)
+    }
+}
+
+impl DirectionalPropagator for SpacecraftPropagator {
+    #[inline]
+    fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
+        lhs.cmp(rhs)
+    }
+
+    #[inline]
+    fn offset(to: Epoch, duration: Duration) -> Epoch {
+        to + duration
+    }
+
+    #[inline]
+    fn boundaries([(trajectory, _)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
+        [trajectory.end()].into_iter()
+    }
+}
+
+impl BranchingPropagator for SpacecraftPropagator {
+    #[inline]
+    fn branch(&self) -> Self::Trajectories {
+        delegate!(self, branch)
+    }
+}
 
 #[derive(QueryData)]
 #[query_data(mutable)]
@@ -555,7 +682,7 @@ pub struct SpacecraftTrajectory {
 }
 
 impl PropagationTarget for SpacecraftTrajectory {
-    type Propagator = SpacecraftPropagatorSoiDetection<SpacecraftState, AdaptiveMethod>;
+    type Propagator = SpacecraftPropagator;
 
     #[inline]
     fn merge(

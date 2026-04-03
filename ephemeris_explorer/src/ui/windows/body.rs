@@ -3,7 +3,7 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, Primary, Satellites},
     camera::{Followed, SetFollowed},
     dynamics::{Bodies, SpacecraftTrajectory, Trajectory},
-    flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
+    flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, IntegrationMethod},
     load::SystemRoot,
     prediction::PredictionContext,
     selection::Selected,
@@ -493,6 +493,27 @@ impl BodyInfoWindow {
                     let max_time = Epoch::MAX;
 
                     ui.horizontal(|ui| {
+                        ui.label("Integrator:");
+
+                        egui::ComboBox::from_id_salt("Integrator")
+                            .selected_text(flight_plan.method.to_string())
+                            .show_ui(ui, |ui| {
+                                for &value in IntegrationMethod::values() {
+                                    if ui
+                                        .selectable_value(
+                                            &mut flight_plan.method,
+                                            value,
+                                            value.to_string(),
+                                        )
+                                        .changed()
+                                    {
+                                        changed = true;
+                                    };
+                                }
+                            });
+                    });
+
+                    ui.horizontal(|ui| {
                         ui.label("Max iterations:");
                         let speed = 1e-1f64.max(flight_plan.parameters.n_max as f64 * 1e-1);
                         if ui
@@ -605,7 +626,7 @@ impl BodyInfoWindow {
                                             idx,
                                             *root,
                                             entity,
-                                            prediction.propagator.environment(),
+                                            prediction.propagator.context(),
                                             &mut query_hierarchy,
                                             &query_satellites,
                                             min_time,

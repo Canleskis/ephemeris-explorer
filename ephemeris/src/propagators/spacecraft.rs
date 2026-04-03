@@ -12,7 +12,7 @@ pub trait AccelerationModel {
     fn acceleration(&self, t: Epoch, state: &StateVector<Self::Vector>) -> Option<Self::Vector>;
 }
 
-pub trait PropagationEnvironment {
+pub trait PropagationContext {
     fn max_time(&self) -> Epoch;
 }
 
@@ -23,7 +23,7 @@ pub trait Transform<V> {
 pub trait Frame<V, C> {
     type Transform;
 
-    fn transform(&self, t: Epoch, sv: &StateVector<V>, environment: &C) -> Option<Self::Transform>;
+    fn transform(&self, t: Epoch, sv: &StateVector<V>, context: &C) -> Option<Self::Transform>;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -42,14 +42,14 @@ impl<V, F> ConstantThrust<V, F> {
     }
 
     #[inline]
-    fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, environment: &C) -> Option<V>
+    fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, context: &C) -> Option<V>
     where
         F: Frame<V, C>,
         F::Transform: Transform<V>,
     {
         Some(
             self.frame
-                .transform(t, sv, environment)?
+                .transform(t, sv, context)?
                 .to_inertial(&self.acceleration),
         )
     }
@@ -102,14 +102,14 @@ impl<V, F> Segment<V, F> {
     }
 
     #[inline]
-    pub fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, environment: &C) -> Option<V>
+    pub fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, context: &C) -> Option<V>
     where
         V: Default,
         F: Frame<V, C>,
         F::Transform: Transform<V>,
     {
         match self {
-            Segment::Burn { thrust, .. } => thrust.acceleration(t, sv, environment),
+            Segment::Burn { thrust, .. } => thrust.acceleration(t, sv, context),
             Segment::Coast { .. } => Some(V::default()),
         }
     }
@@ -224,16 +224,16 @@ impl<V, F> Timeline<V, F> {
 pub struct SpacecraftModel<V, F, C> {
     current_segment: usize,
     timeline: Timeline<V, F>,
-    environment: C,
+    context: C,
 }
 
 impl<V, F, C> SpacecraftModel<V, F, C> {
     #[inline]
-    pub fn new(time: Epoch, timeline: Timeline<V, F>, environment: C) -> Self {
+    pub fn new(time: Epoch, timeline: Timeline<V, F>, context: C) -> Self {
         Self {
             current_segment: timeline.segment_idx_at(time),
             timeline,
-            environment,
+            context,
         }
     }
 
@@ -260,11 +260,11 @@ impl<V, F, C> SpacecraftModel<V, F, C> {
     }
 
     #[inline]
-    pub fn environment_acceleration(&self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
+    pub fn context_acceleration(&self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
     where
         C: AccelerationModel<Vector = V>,
     {
-        self.environment.acceleration(t, sv).ok_or(EvalFailed)
+        self.context.acceleration(t, sv).ok_or(EvalFailed)
     }
 
     #[inline]
@@ -275,7 +275,7 @@ impl<V, F, C> SpacecraftModel<V, F, C> {
         F::Transform: Transform<V>,
     {
         self.current_segment()
-            .acceleration(t, sv, &self.environment)
+            .acceleration(t, sv, &self.context)
             .ok_or(EvalFailed)
     }
 }
@@ -295,7 +295,7 @@ where
         [dy]: &mut [StateVector<V>; 1],
     ) -> Result<(), EvalFailed> {
         let t = Epoch::from_offset_seconds(t);
-        dy.velocity = self.environment_acceleration(t, y)? + self.manoeuvre_acceleration(t, y)?;
+        dy.velocity = self.context_acceleration(t, y)? + self.manoeuvre_acceleration(t, y)?;
         dy.position = y.velocity;
 
         Ok(())
@@ -319,7 +319,7 @@ where
     ) -> Result<(), EvalFailed> {
         let t = Epoch::from_offset_seconds(t);
         let sv = &StateVector::new(*y, *dy);
-        *ddy = self.environment_acceleration(t, sv)? + self.manoeuvre_acceleration(t, sv)?;
+        *ddy = self.context_acceleration(t, sv)? + self.manoeuvre_acceleration(t, sv)?;
 
         Ok(())
     }
@@ -520,8 +520,8 @@ where
     }
 
     #[inline]
-    pub fn environment(&self) -> &C {
-        &self.integration.problem.ode.environment
+    pub fn context(&self) -> &C {
+        &self.integration.problem.ode.context
     }
 
     #[inline]
