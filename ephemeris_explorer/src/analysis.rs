@@ -223,6 +223,10 @@ fn setup_segment_plotting(
                 // Plot relative to the entered SOI until the next transition, if any.
                 let next = transitions.get(i + 1);
 
+                if start > config.end || next.is_some_and(|&(end, _)| end < config.start) {
+                    continue;
+                }
+
                 let parent_name = query_name.get(b).map(Name::as_str).unwrap_or("Unknown");
                 let b_parent = query_transitions
                     .get(b)
