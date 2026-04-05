@@ -74,7 +74,6 @@ impl Plugin for TooltipPlugin {
 fn plot_manoeuvres_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&Trajectory, &FlightPlan, &PlotSourceOf)>,
-    query_trajectory: Query<&Trajectory>,
     query_plot: Query<&PlotPoints, With<BurnPlotSegment>>,
     root: Single<&Grid, With<BigSpace>>,
     camera: Single<(&GlobalTransform, &Projection)>,
@@ -94,11 +93,8 @@ fn plot_manoeuvres_markers(
                 };
 
                 if let Some(transform) = trajectory.state_vector(burn.start).and_then(|sv| {
-                    burn.try_reference_frame(&query_trajectory).ok()?.transform(
-                        burn.start,
-                        &sv,
-                        &(),
-                    )
+                    burn.reference_frame()
+                        .transform(burn.start, &sv, &flight_plan.context)
                 }) {
                     let prograde = root.to_global_vector(transform.0.x_axis).as_vec3();
                     let radial = root.to_global_vector(transform.0.y_axis).as_vec3();

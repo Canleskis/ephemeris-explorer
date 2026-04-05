@@ -1,15 +1,16 @@
 use crate::{
     dynamics::{
-        AbsTol, Bodies, ConstantThrust, PredictionTrajectory, ReferenceFrame, SpacecraftPropagator,
-        SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, StateVector, Timeline, Trajectory,
+        AbsTol, Bodies, ConstantThrust, CubicHermiteSplineSamples, PredictionTrajectory,
+        ReferenceFrame, SpacecraftPropagator, SpacecraftPropagatorSoiDetection,
+        SpacecraftTrajectory, StateVector, Timeline, Trajectory,
     },
     prediction::{
         ComputePrediction, PredictingWith, PredictionContext, PredictionSystems, Synchronisation,
     },
 };
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
-use bevy::{ecs::query::QueryEntityError, math::DVec3};
 use ephemeris::BoundedTrajectory;
 use ftime::{Duration, Epoch};
 use integration::AdaptiveMethodParams;
@@ -99,13 +100,10 @@ impl Burn {
     }
 
     #[inline]
-    pub fn try_reference_frame(
-        &self,
-        query: &Query<&Trajectory>,
-    ) -> Result<ReferenceFrame, QueryEntityError> {
+    pub fn reference_frame(&self) -> ReferenceFrame {
         match self.frame {
-            BurnFrame::Relative => Ok(ReferenceFrame::relative(query.get(self.reference)?.clone())),
-            BurnFrame::Inertial => Ok(ReferenceFrame::inertial()),
+            BurnFrame::Relative => ReferenceFrame::relative(self.reference),
+            BurnFrame::Inertial => ReferenceFrame::inertial(),
         }
     }
 
@@ -115,15 +113,12 @@ impl Burn {
     }
 
     #[inline]
-    pub fn to_constant_thurst(
-        &self,
-        query: &Query<&Trajectory>,
-    ) -> Result<(Epoch, Epoch, ConstantThrust), QueryEntityError> {
-        Ok((
+    pub fn to_constant_thurst(&self) -> (Epoch, Epoch, ConstantThrust) {
+        (
             self.start,
             self.end(),
-            ConstantThrust::new(self.acceleration / 1e3, self.try_reference_frame(query)?),
-        ))
+            ConstantThrust::new(self.acceleration / 1e3, self.reference_frame()),
+        )
     }
 }
 
@@ -160,9 +155,8 @@ macro_rules! integration_methods {
         impl PartialEq<SpacecraftPropagator> for IntegrationMethod {
             #[inline]
             fn eq(&self, propagator: &SpacecraftPropagator) -> bool {
-                match (self, propagator) {
-                    $((IntegrationMethod::$variant, SpacecraftPropagator::$variant(_)) => true,)+
-                    _ => false,
+                match propagator {
+                    $(SpacecraftPropagator::$variant(..) => matches!(self, IntegrationMethod::$variant),)+
                 }
             }
         }
@@ -176,11 +170,13 @@ macro_rules! integration_methods {
             }
         }
     };
+
 }
 
 integration_methods! {
     DormandPrince54 => "Dormand-Prince 5(4)",
     DormandPrince87 => "Dormand-Prince 8(7)",
+    Fehlberg45 => "Fehlberg 4(5)",
     Tsitouras75 => "Tsitouras 7(5)",
     Verner87 => "Verner 8(7)",
     Fine45 => "Fine 4(5)",
@@ -191,24 +187,30 @@ integration_methods! {
 pub struct FlightPlan {
     pub method: IntegrationMethod,
     pub parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
+    pub synchronisation: Synchronisation,
     pub end: Epoch,
     pub burns: indexmap::IndexMap<uuid::Uuid, Burn>,
+    pub context: Bodies,
 }
 
 impl FlightPlan {
+    #[inline]
     pub fn new(
         end: Epoch,
         parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
         burns: Vec<Burn>,
+        context: Bodies,
     ) -> Self {
         Self {
             method: IntegrationMethod::Verner87,
             parameters,
+            synchronisation: Synchronisation::hertz(1000),
             end,
             burns: burns
                 .into_iter()
                 .map(|burn| (uuid::Uuid::new_v4(), burn))
                 .collect(),
+            context,
         }
     }
 
@@ -233,17 +235,68 @@ impl FlightPlan {
     }
 
     #[inline]
-    pub fn generate_timeline(
-        &self,
-        query: &Query<&Trajectory>,
-    ) -> Result<Timeline, QueryEntityError> {
-        Ok(Timeline::new(
+    pub fn generate_timeline(&self) -> Timeline {
+        Timeline::new(
             self.burns
                 .values()
                 .filter(|burn| burn.is_active())
-                .map(|burn| burn.to_constant_thurst(query))
-                .collect::<Result<_, _>>()?,
-        ))
+                .map(|burn| burn.to_constant_thurst())
+                .collect(),
+        )
+    }
+
+    #[inline]
+    pub fn build_propagator_at(&self, time: Epoch, sv: StateVector) -> SpacecraftPropagator {
+        self.method.as_propagator(
+            time,
+            sv,
+            self.parameters,
+            self.context.clone(),
+            self.generate_timeline(),
+        )
+    }
+
+    #[inline]
+    pub fn restart_propagator(
+        &self,
+        previous: &SpacecraftPropagator,
+        trajectory: &CubicHermiteSplineSamples,
+    ) -> Option<SpacecraftPropagator> {
+        let timeline = self.generate_timeline();
+
+        // This determines the epoch from which we restart the propagation.
+        //
+        // Propagation is divided into segments that span from one manoeuvre event to the next.
+        // Propagation can only be restarted at the start of a segment.
+        //
+        // We want to restart from the latest possible time that is unaffected by the changes.
+        // Specifically:
+        // 1. If an integration parameter changed, we recompute the entire propagation.
+        // 2. Otherwise, we find the first point where the new timeline differs from the old one. We
+        //    restart from the last common event before this difference.
+        // 3. If no change was previously detected, we restart from the last event preceding the end
+        //    of the flight plan.
+        let restart_epoch = if &self.method != previous
+            || &self.parameters.tol != previous.tolerance()
+            || self.parameters.n_max as usize != previous.max_iterations()
+        {
+            trajectory.start()
+        } else {
+            timeline
+                .divergence_time_before(previous.timeline(), self.end.min(trajectory.end()))
+                .max(trajectory.start())
+        };
+
+        // Try to get the state vector at the restart epoch and return the new propagator
+        trajectory.get(restart_epoch).map(|&restart_sv| {
+            self.method.as_propagator(
+                restart_epoch,
+                restart_sv,
+                self.parameters,
+                previous.context().clone(),
+                timeline,
+            )
+        })
     }
 }
 
@@ -270,7 +323,6 @@ fn apply_flight_plan(
     trigger: On<FlightPlanChanged>,
     mut commands: Commands,
     mut query: Query<(&mut FlightPlan, &SpacecraftPredictionContext, &Trajectory)>,
-    query_trajectory: Query<&Trajectory>,
 ) {
     let entity = trigger.event_target();
     let Ok((mut flight_plan, PredictionContext { propagator, .. }, trajectory)) =
@@ -287,59 +339,17 @@ fn apply_flight_plan(
     };
 
     flight_plan.compute_overlaps();
-    let Ok(timeline) = flight_plan.generate_timeline(&query_trajectory) else {
-        error!("something went wrong when trying to compute the new flight plan timeline");
+    let Some(propagator) = flight_plan.restart_propagator(propagator, trajectory) else {
+        error!("could not restart propagation after the flight plan changed");
         return;
     };
-
-    // This determines the epoch from which we restart the propagation.
-    //
-    // Propagation is divided into segments that span from one manoeuvre event to the next.
-    // Propagation can only be restarted at the start of a segment.
-    //
-    // We want to restart from the latest possible time that is unaffected by the changes.
-    // Specifically:
-    // 1. If `max_iterations` changed, we recompute the entire propagation.
-    // 2. Otherwise, we find the first point where the new timeline differs from the old one. We
-    //    restart from the last common event before this difference.
-    // 3. If no change was previously detected, we restart from the last event preceding the end of
-    //    the flight plan (this ensures the prediction reaches the flight plan end).
-    let restart_epoch = {
-        if &flight_plan.method != propagator
-            || flight_plan.parameters.n_max as usize != propagator.max_iterations()
-            || &flight_plan.parameters.tol != propagator.tolerance()
-        {
-            trajectory.start()
-        } else {
-            timeline
-                .divergence_time_before(
-                    propagator.timeline(),
-                    flight_plan.end.min(trajectory.end()),
-                )
-                .max(trajectory.start())
-        }
-    };
-
-    let Some(&restart_sv) = trajectory.get(restart_epoch) else {
-        error!("something went wrong when trying to compute the flight plan from {restart_epoch}");
-        return;
-    };
-    debug!("restarting propagation from {}", restart_epoch);
-
-    let propagator = flight_plan.method.as_propagator(
-        restart_epoch,
-        restart_sv,
-        flight_plan.parameters,
-        propagator.context().clone(),
-        timeline,
-    );
+    let restart_epoch = propagator.time();
 
     commands.trigger(ComputePrediction::<SpacecraftTrajectory>::extend(
         entity,
         propagator,
         flight_plan.end - restart_epoch,
-        Synchronisation::hertz(1000),
-        // Synchronisation::completed(),
+        flight_plan.synchronisation,
     ));
 }
 

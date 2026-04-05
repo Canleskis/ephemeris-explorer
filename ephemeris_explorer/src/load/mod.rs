@@ -12,13 +12,11 @@ use crate::{
     dynamics::{
         AbsTol, Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, Forward,
         GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator, SpacecraftTrajectory,
-        SphereOfInfluence, StateVector, Timeline, Trajectory, UniformSpline,
+        SphereOfInfluence, StateVector, Trajectory, UniformSpline,
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, CellCoord, FloatingOrigin},
-    prediction::{
-        ComputePrediction, PredictionContext, PredictionTracker, PropagationTarget, Synchronisation,
-    },
+    prediction::{ComputePrediction, PredictionContext, PredictionTracker, Synchronisation},
     rotation::Rotating,
     selection::Selectable,
     simulation::{BoundsTime, SimulationTime},
@@ -485,10 +483,12 @@ fn spawn_ship(
 
     let radius = 0.01;
 
-    let context = query_context
-        .iter()
-        .map(|(e, traj, mu, soi)| (e, GravitationalBody::new(traj.clone(), *mu, *soi)))
-        .collect();
+    let bodies = Bodies(
+        query_context
+            .iter()
+            .map(|(e, traj, mu, soi)| (e, GravitationalBody::new(traj.clone(), *mu, *soi)))
+            .collect(),
+    );
 
     let mut entity = match trigger.event().entity {
         Some(entity) => commands.entity(entity),
@@ -538,6 +538,8 @@ fn spawn_ship(
     )
     .into();
 
+    let flight_plan = FlightPlan::new(ship.end, INITIAL_ADAPTIVE_PARAMS, mapped_burns, bodies);
+
     entity.insert((
         // No state scope needed as this is always a child of the root.
         Name::new(ship.name.to_string()),
@@ -564,15 +566,10 @@ fn spawn_ship(
         )),
         PredictionContext::<SpacecraftTrajectory>::new(
             vec![id],
-            <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
-                ship.start,
-                StateVector::new(ship.position, ship.velocity),
-                INITIAL_ADAPTIVE_PARAMS,
-                Bodies(context),
-                Timeline::default(),
-            ),
+            flight_plan
+                .build_propagator_at(ship.start, StateVector::new(ship.position, ship.velocity)),
         ),
-        FlightPlan::new(ship.end, INITIAL_ADAPTIVE_PARAMS, mapped_burns),
+        flight_plan,
         SoiTransitionsAnalysis::Dynamic,
         OrbitPlotConfig {
             enabled: true,

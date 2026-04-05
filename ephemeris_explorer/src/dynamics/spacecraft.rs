@@ -17,62 +17,6 @@ use particular::gravity::newtonian::AccelerationAt;
 
 pub type CubicHermiteSplineSamples = ephemeris::CubicHermiteSplineSamples<DVec3>;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TNB(pub DMat3);
-
-impl TNB {
-    pub const IDENTITY: Self = Self(DMat3::IDENTITY);
-
-    #[inline]
-    pub fn new(sv: StateVector) -> Self {
-        let x = sv.velocity.normalize_or_zero();
-        let y = sv.position.cross(sv.velocity).normalize_or_zero();
-        let z = x.cross(y).normalize_or_zero();
-        Self(DMat3::from_cols(x, z, y))
-    }
-}
-
-impl Transform<DVec3> for TNB {
-    #[inline]
-    fn to_inertial(&self, v: &DVec3) -> DVec3 {
-        self.0.mul_vec3(*v)
-    }
-}
-
-#[derive(Clone, Default, Debug, PartialEq)]
-pub enum ReferenceFrame {
-    /// Relative to a reference trajectory.
-    Relative(Trajectory),
-    #[default]
-    Inertial,
-}
-
-impl ReferenceFrame {
-    #[inline]
-    pub fn relative(trajectory: Trajectory) -> Self {
-        Self::Relative(trajectory)
-    }
-
-    #[inline]
-    pub fn inertial() -> Self {
-        Self::Inertial
-    }
-}
-
-impl<C> Frame<DVec3, C> for ReferenceFrame {
-    type Transform = TNB;
-
-    #[inline]
-    fn transform(&self, t: Epoch, sv: &StateVector, _: &C) -> Option<Self::Transform> {
-        match &self {
-            ReferenceFrame::Relative(reference) => Some(TNB::new(*sv - reference.state_vector(t)?)),
-            ReferenceFrame::Inertial => Some(TNB::IDENTITY),
-        }
-    }
-}
-
-pub type ConstantThrust = ephemeris::ConstantThrust<DVec3, ReferenceFrame>;
-
 #[derive(Clone, Copy, Debug, Component, Deref, DerefMut)]
 pub struct Mu(pub f64);
 
@@ -256,6 +200,63 @@ impl PropagationContext for Bodies {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TNB(pub DMat3);
+
+impl TNB {
+    pub const IDENTITY: Self = Self(DMat3::IDENTITY);
+
+    #[inline]
+    pub fn new(sv: StateVector) -> Self {
+        let x = sv.velocity.normalize_or_zero();
+        let y = sv.position.cross(sv.velocity).normalize_or_zero();
+        let z = x.cross(y).normalize_or_zero();
+        Self(DMat3::from_cols(x, z, y))
+    }
+}
+
+impl Transform<DVec3> for TNB {
+    #[inline]
+    fn to_inertial(&self, v: &DVec3) -> DVec3 {
+        self.0.mul_vec3(*v)
+    }
+}
+
+#[derive(Clone, Default, Debug, PartialEq)]
+pub enum ReferenceFrame {
+    /// Relative to a reference trajectory.
+    Relative(Entity),
+    #[default]
+    Inertial,
+}
+
+impl ReferenceFrame {
+    #[inline]
+    pub fn relative(entity: Entity) -> Self {
+        Self::Relative(entity)
+    }
+
+    #[inline]
+    pub fn inertial() -> Self {
+        Self::Inertial
+    }
+}
+
+impl Frame<DVec3, Bodies> for ReferenceFrame {
+    type Transform = TNB;
+
+    #[inline]
+    fn transform(&self, t: Epoch, sv: &StateVector, bodies: &Bodies) -> Option<Self::Transform> {
+        match &self {
+            ReferenceFrame::Relative(reference) => Some(TNB::new(
+                *sv - bodies.0.get(reference)?.trajectory.state_vector(t)?,
+            )),
+            ReferenceFrame::Inertial => Some(TNB::IDENTITY),
+        }
+    }
+}
+
+pub type ConstantThrust = ephemeris::ConstantThrust<DVec3, ReferenceFrame>;
 pub type Segment = ephemeris::Segment<DVec3, ReferenceFrame>;
 pub type Timeline = ephemeris::Timeline<DVec3, ReferenceFrame>;
 
@@ -553,6 +554,7 @@ pub enum SpacecraftPropagator {
     DormandPrince87(
         SpacecraftPropagatorSoiDetection<[StateVector; 1], DormandPrince87<f64, AbsTol, f64>>,
     ),
+    Fehlberg45(SpacecraftPropagatorSoiDetection<[StateVector; 1], Fehlberg45<f64, AbsTol, f64>>),
     Tsitouras75(SpacecraftPropagatorSoiDetection<[StateVector; 1], Tsitouras75<f64, AbsTol, f64>>),
     Verner87(SpacecraftPropagatorSoiDetection<[StateVector; 1], Verner87<f64, AbsTol, f64>>),
     Fine45(
@@ -565,6 +567,7 @@ macro_rules! delegate {
         match $self {
             SpacecraftPropagator::DormandPrince54(p) => p.$method($($args),*),
             SpacecraftPropagator::DormandPrince87(p) => p.$method($($args),*),
+            SpacecraftPropagator::Fehlberg45(p) => p.$method($($args),*),
             SpacecraftPropagator::Tsitouras75(p) => p.$method($($args),*),
             SpacecraftPropagator::Verner87(p) => p.$method($($args),*),
             SpacecraftPropagator::Fine45(p) => p.$method($($args),*),
