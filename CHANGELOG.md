@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Automatic in-SOI plotting.
 - SOI visualisations.
 - Dashed lines for trajectory segments where a burn is happening.
+- Add spacecraft integration settings selection (method, tolerance, etc.).
 
 ### Changed
 
@@ -21,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - Flight plan recomputations inconsistencies when many changes are made in a short period.
-- Wront results when the flight plan is changed.
+- Wrong results when the flight plan is changed.
 - Auto-extend inconsistent behavior.
 
 ## [0.1.2] - 2025-03-01

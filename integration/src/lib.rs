@@ -103,6 +103,7 @@
 //! - [`Fehlberg45`](methods::Fehlberg45)
 //! - [`Tsitouras75`](methods::Tsitouras75)
 //! - [`Verner87`](methods::Verner87)
+//! - [`Verner98`](methods::Verner98)
 //! - [`Fine45`](methods::Fine45)
 //! - [`Tsitouras75Nystrom`](methods::Tsitouras75Nystrom)
 //! - [`BlanesMoan6B`](methods::BlanesMoan6B)

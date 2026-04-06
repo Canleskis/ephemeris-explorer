@@ -87,6 +87,7 @@ Aliases exposed under `integration::methods` include:
 - `Fehlberg45`
 - `Tsitouras75`
 - `Verner87`
+- `Verner98`
 - `Fine45`
 - `Tsitouras75Nystrom`
 - `BlanesMoan6B`
