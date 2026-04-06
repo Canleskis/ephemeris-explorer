@@ -151,7 +151,7 @@ impl Bodies {
             self.0
                 .iter()
                 .filter(|(entity, _)| !except.contains(entity))
-                .flat_map(|(entity, body)| {
+                .filter_map(|(entity, body)| {
                     Some((*entity, body.trajectory.position(t)?, body.soi.radius))
                 }),
             position,
@@ -549,6 +549,7 @@ impl Tolerance<SecondOrderState<[DVec3; 1]>> for AbsTol {
 #[derive(Clone)]
 #[expect(clippy::large_enum_variant)]
 pub enum SpacecraftPropagator {
+    CashKarp45(SpacecraftPropagatorSoiDetection<[StateVector; 1], CashKarp45<f64, AbsTol, f64>>),
     DormandPrince54(
         SpacecraftPropagatorSoiDetection<[StateVector; 1], DormandPrince54<f64, AbsTol, f64>>,
     ),
@@ -567,6 +568,7 @@ pub enum SpacecraftPropagator {
 macro_rules! delegate {
     ($self:expr, $method:ident $(, $args:expr)*) => {
         match $self {
+            SpacecraftPropagator::CashKarp45(p) => p.$method($($args),*),
             SpacecraftPropagator::DormandPrince54(p) => p.$method($($args),*),
             SpacecraftPropagator::DormandPrince87(p) => p.$method($($args),*),
             SpacecraftPropagator::Fehlberg45(p) => p.$method($($args),*),

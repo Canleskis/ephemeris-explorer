@@ -174,6 +174,7 @@ macro_rules! integration_methods {
 }
 
 integration_methods! {
+    CashKarp45 => "Cash-Karp 4(5)",
     DormandPrince54 => "Dormand-Prince 5(4)",
     DormandPrince87 => "Dormand-Prince 8(7)",
     Fehlberg45 => "Fehlberg 4(5)",
