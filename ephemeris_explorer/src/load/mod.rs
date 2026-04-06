@@ -638,32 +638,17 @@ fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>)
     }
 }
 
-#[expect(clippy::type_complexity)]
-fn compute_ephemerides_bodies(
-    mut commands: Commands,
-    root: Single<
-        (
-            Entity,
-            &PredictionContext<CelestialTrajectory<Forward>>,
-            &PredictionContext<CelestialTrajectory<Backward>>,
-        ),
-        With<SystemRoot>,
-    >,
-) {
-    let (root, forward, backward) = *root;
-
+fn compute_ephemerides_bodies(mut commands: Commands, root: Single<Entity, With<SystemRoot>>) {
     let duration = Duration::from_days(365.0 * 2.0);
     let synchronisation = Synchronisation::hertz(100);
 
     commands.trigger(ComputePrediction::<CelestialTrajectory<Forward>>::extend(
-        root,
-        forward.propagator.clone(),
+        *root,
         duration,
         synchronisation,
     ));
     commands.trigger(ComputePrediction::<CelestialTrajectory<Backward>>::extend(
-        root,
-        backward.propagator.clone(),
+        *root,
         duration,
         synchronisation,
     ));

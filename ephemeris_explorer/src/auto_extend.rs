@@ -64,7 +64,7 @@ fn auto_extend<T>(
     mut commands: Commands,
     sim_time: Res<SimulationTime>,
     auto_extend: Res<AutoExtendSettings<T>>,
-    query_tracker: Query<(Entity, &PredictionContext<T>, Has<PredictionTracker<T>>)>,
+    query_tracker: Query<(Entity, Has<PredictionTracker<T>>), With<PredictionContext<T>>>,
     mut last_time_scale: Local<f64>,
 ) where
     T: PropagationTarget,
@@ -82,16 +82,15 @@ fn auto_extend<T>(
         return;
     }
 
-    for (entity, prediction, has_tracker) in query_tracker.iter() {
+    for (entity, has_tracker) in query_tracker.iter() {
         if has_tracker && *last_time_scale == sim_time.time_scale {
             continue;
         }
 
         commands.trigger(ComputePrediction::<T>::extend(
             entity,
-            prediction.propagator.clone(),
             delta.abs(),
-            Synchronisation::hertz(200),
+            Synchronisation::hertz(1000),
         ));
     }
     *last_time_scale = sim_time.time_scale;

@@ -68,7 +68,7 @@ impl<T: PropagationTarget> PredictionContext<T> {
 #[derive(Clone, Copy, EntityEvent)]
 pub struct ComputePrediction<T: PropagationTarget> {
     pub entity: Entity,
-    pub propagator: T::Propagator,
+    pub propagator: Option<T::Propagator>,
     pub duration: Duration,
     pub synchronisation: Synchronisation,
     pub overwrite: bool,
@@ -85,7 +85,7 @@ impl<T: PropagationTarget> ComputePrediction<T> {
     ) -> Self {
         Self {
             entity,
-            propagator,
+            propagator: Some(propagator),
             duration,
             synchronisation,
             overwrite,
@@ -93,13 +93,20 @@ impl<T: PropagationTarget> ComputePrediction<T> {
     }
 
     #[inline]
-    pub fn extend(
-        entity: Entity,
-        propagator: T::Propagator,
-        duration: Duration,
-        synchronisation: Synchronisation,
-    ) -> Self {
-        Self::new(entity, propagator, duration, synchronisation, false)
+    pub fn extend(entity: Entity, duration: Duration, synchronisation: Synchronisation) -> Self {
+        Self {
+            entity,
+            propagator: None,
+            duration,
+            synchronisation,
+            overwrite: false,
+        }
+    }
+
+    #[inline]
+    pub fn with_propagator(mut self, propagator: T::Propagator) -> Self {
+        self.propagator = Some(propagator);
+        self
     }
 }
 
@@ -318,8 +325,11 @@ async fn prediction_task<T>(
 }
 
 /// Starts async task for the targeted [`PredictionContext<P>`].
-fn dispatch_predictions<T>(trigger: On<ComputePrediction<T>>, mut commands: Commands)
-where
+fn dispatch_predictions<T>(
+    trigger: On<ComputePrediction<T>>,
+    query_propagator: Query<&PredictionContext<T>>,
+    mut commands: Commands,
+) where
     T: PropagationTarget,
 {
     let name = pretty_type_name::pretty_type_name::<T::Propagator>();
@@ -338,6 +348,17 @@ where
     }
 
     debug!("Starting {name} prediction for {duration}",);
+
+    let propagator = match propagator {
+        Some(propagator) => propagator,
+        None => match query_propagator.get(trigger.event_target()) {
+            Ok(context) => &context.propagator,
+            Err(err) => {
+                error!("Cancelled {name} prediction: failed to get propagator from context: {err}");
+                return;
+            }
+        },
+    };
 
     let propagation = Propagation::new(propagator.clone());
     let current = propagation.time();

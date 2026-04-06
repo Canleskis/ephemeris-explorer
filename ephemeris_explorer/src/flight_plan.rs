@@ -347,12 +347,14 @@ fn apply_flight_plan(
     };
     let restart_epoch = propagator.time();
 
-    commands.trigger(ComputePrediction::<SpacecraftTrajectory>::extend(
-        entity,
-        propagator,
-        flight_plan.end - restart_epoch,
-        flight_plan.synchronisation,
-    ));
+    commands.trigger(
+        ComputePrediction::<SpacecraftTrajectory>::extend(
+            entity,
+            flight_plan.end - restart_epoch,
+            flight_plan.synchronisation,
+        )
+        .with_propagator(propagator),
+    );
 }
 
 fn trigger_on_trajectory_updates(

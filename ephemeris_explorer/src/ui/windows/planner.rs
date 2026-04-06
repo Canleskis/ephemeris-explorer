@@ -3,9 +3,7 @@ use crate::{
     auto_extend::AutoExtendSettings,
     dynamics::{Backward, CelestialTrajectory, Forward},
     load::SystemRoot,
-    prediction::{
-        ComputePrediction, PredictionContext, PredictionTracker, PropagationTarget, Synchronisation,
-    },
+    prediction::{ComputePrediction, PredictionTracker, PropagationTarget, Synchronisation},
     simulation::SimulationTime,
     ui::WindowsUiSet,
 };
@@ -37,7 +35,6 @@ impl PredictionPlannerWindow {
         commands: &mut Commands,
         root: Entity,
         auto_extend: &mut AutoExtendSettings<T>,
-        prediction: &PredictionContext<T>,
         tracker: Option<Ref<PredictionTracker<T>>>,
         buffer: &mut String,
         parser: impl Fn(&str) -> Option<Epoch>,
@@ -98,7 +95,6 @@ impl PredictionPlannerWindow {
                     {
                         commands.trigger(ComputePrediction::<T>::extend(
                             root,
-                            prediction.propagator.clone(),
                             duration,
                             Synchronisation::hertz(100),
                         ));
@@ -134,8 +130,6 @@ impl PredictionPlannerWindow {
         prediction: Query<
             (
                 Entity,
-                &PredictionContext<CelestialTrajectory<Forward>>,
-                &PredictionContext<CelestialTrajectory<Backward>>,
                 Option<Ref<PredictionTracker<CelestialTrajectory<Forward>>>>,
                 Option<Ref<PredictionTracker<CelestialTrajectory<Backward>>>>,
             ),
@@ -146,7 +140,7 @@ impl PredictionPlannerWindow {
         mut backward_time: Local<Option<std::time::Duration>>,
     ) {
         // One system for now (maybe ever).
-        let (root, forward, backward, forward_tracker, backward_tracker) =
+        let (root, forward_tracker, backward_tracker) =
             prediction.single().expect("No root entity found");
 
         let Ok(ctx) = contexts.ctx_mut() else {
@@ -175,7 +169,6 @@ impl PredictionPlannerWindow {
                     &mut commands,
                     root,
                     &mut auto_extend_backward,
-                    backward,
                     backward_tracker,
                     &mut start_buffer,
                     |buf| Epoch::from_str(buf).ok().filter(|e| e < &sim_time.start()),
@@ -201,7 +194,6 @@ impl PredictionPlannerWindow {
                     &mut commands,
                     root,
                     &mut auto_extend_forward,
-                    forward,
                     forward_tracker,
                     &mut end_buffer,
                     |buf| Epoch::from_str(buf).ok().filter(|e| e > &sim_time.end()),
