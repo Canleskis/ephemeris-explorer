@@ -265,7 +265,7 @@ pub type SpacecraftProblem<S, V = DVec3> =
 pub type BaseSpacecraftPropagator<S, M> =
     ephemeris::SpacecraftPropagator<S, ReferenceFrame, Bodies, M>;
 
-/// Stores the times at which an entity entered spheres of influence.
+/// A list of sphere of influence transitions, sorted by time.
 #[derive(Clone, Debug, Default, Component)]
 pub struct SoiTransitions(Vec<(Epoch, Entity)>);
 
@@ -692,14 +692,14 @@ impl PropagationTarget for SpacecraftTrajectory {
         item: &mut Self::Item<'_, '_>,
         (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
+        let PredictionTrajectory::CubicHermiteSplineSamples(world_trajectory) =
+            &mut *item.trajectory.write()
+        else {
+            unreachable!()
+        };
         item.transitions.clear_after(trajectory.start());
         item.transitions.extend(transitions);
-        match &mut *item.trajectory.write() {
-            PredictionTrajectory::CubicHermiteSplineSamples(item_traj) => {
-                Self::Propagator::join(item_traj, trajectory)
-            }
-            _ => unreachable!(),
-        };
+        Self::Propagator::join(world_trajectory, trajectory)
     }
 
     #[inline]
@@ -707,10 +707,12 @@ impl PropagationTarget for SpacecraftTrajectory {
         item: &mut Self::Item<'_, '_>,
         (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
+        let PredictionTrajectory::CubicHermiteSplineSamples(world_trajectory) =
+            &mut *item.trajectory.write()
+        else {
+            unreachable!()
+        };
         *item.transitions = transitions;
-        match &mut *item.trajectory.write() {
-            PredictionTrajectory::CubicHermiteSplineSamples(item_traj) => *item_traj = trajectory,
-            _ => unreachable!(),
-        }
+        *world_trajectory = trajectory;
     }
 }

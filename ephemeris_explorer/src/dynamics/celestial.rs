@@ -146,21 +146,19 @@ impl PropagationTarget for CelestialTrajectory<Forward> {
 
     #[inline]
     fn merge(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
-        match &mut *item.trajectory.write() {
-            PredictionTrajectory::UniformSpline(trajectory) => {
-                Self::Propagator::join(trajectory, propagated)
-            }
-            _ => unreachable!(),
-        }
+        let PredictionTrajectory::UniformSpline(world_traj) = &mut *item.trajectory.write() else {
+            unreachable!()
+        };
+        Self::Propagator::join(world_traj, propagated)
     }
 
     #[inline]
     fn overwrite(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
         // Should we keep the previous allocation?
-        match &mut *item.trajectory.write() {
-            PredictionTrajectory::UniformSpline(trajectory) => *trajectory = propagated,
-            _ => unreachable!(),
-        }
+        let PredictionTrajectory::UniformSpline(world_traj) = &mut *item.trajectory.write() else {
+            unreachable!()
+        };
+        *world_traj = propagated;
     }
 }
 
@@ -169,20 +167,17 @@ impl PropagationTarget for CelestialTrajectory<Backward> {
 
     #[inline]
     fn merge(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
-        match &mut *item.trajectory.write() {
-            PredictionTrajectory::UniformSpline(trajectory) => {
-                Self::Propagator::join(trajectory, propagated)
-            }
-            _ => unreachable!(),
-        }
+        let PredictionTrajectory::UniformSpline(world_traj) = &mut *item.trajectory.write() else {
+            unreachable!()
+        };
+        Self::Propagator::join(world_traj, propagated)
     }
 
     #[inline]
     fn overwrite(item: &mut Self::Item<'_, '_>, propagated: UniformSpline) {
-        // Should we keep the previous allocation?
-        match &mut *item.trajectory.write() {
-            PredictionTrajectory::UniformSpline(trajectory) => *trajectory = propagated,
-            _ => unreachable!(),
-        }
+        let PredictionTrajectory::UniformSpline(world_traj) = &mut *item.trajectory.write() else {
+            unreachable!()
+        };
+        *world_traj = propagated;
     }
 }
