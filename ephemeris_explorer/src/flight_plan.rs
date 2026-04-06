@@ -179,6 +179,7 @@ integration_methods! {
     Fehlberg45 => "Fehlberg 4(5)",
     Tsitouras75 => "Tsitouras 7(5)",
     Verner87 => "Verner 8(7)",
+    Verner98 => "Verner 9(8)",
     Fine45 => "Fine 4(5)",
 }
 

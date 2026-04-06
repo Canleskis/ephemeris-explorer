@@ -547,6 +547,7 @@ impl Tolerance<SecondOrderState<[DVec3; 1]>> for AbsTol {
 }
 
 #[derive(Clone)]
+#[expect(clippy::large_enum_variant)]
 pub enum SpacecraftPropagator {
     DormandPrince54(
         SpacecraftPropagatorSoiDetection<[StateVector; 1], DormandPrince54<f64, AbsTol, f64>>,
@@ -557,6 +558,7 @@ pub enum SpacecraftPropagator {
     Fehlberg45(SpacecraftPropagatorSoiDetection<[StateVector; 1], Fehlberg45<f64, AbsTol, f64>>),
     Tsitouras75(SpacecraftPropagatorSoiDetection<[StateVector; 1], Tsitouras75<f64, AbsTol, f64>>),
     Verner87(SpacecraftPropagatorSoiDetection<[StateVector; 1], Verner87<f64, AbsTol, f64>>),
+    Verner98(SpacecraftPropagatorSoiDetection<[StateVector; 1], Verner98<f64, AbsTol, f64>>),
     Fine45(
         SpacecraftPropagatorSoiDetection<SecondOrderState<[DVec3; 1]>, Fine45<f64, AbsTol, f64>>,
     ),
@@ -570,6 +572,7 @@ macro_rules! delegate {
             SpacecraftPropagator::Fehlberg45(p) => p.$method($($args),*),
             SpacecraftPropagator::Tsitouras75(p) => p.$method($($args),*),
             SpacecraftPropagator::Verner87(p) => p.$method($($args),*),
+            SpacecraftPropagator::Verner98(p) => p.$method($($args),*),
             SpacecraftPropagator::Fine45(p) => p.$method($($args),*),
         }
     };
