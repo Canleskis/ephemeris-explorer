@@ -1,8 +1,8 @@
 use crate::{
     dynamics::{
-        AbsTol, Bodies, ConstantThrust, CubicHermiteSplineSamples, PredictionTrajectory,
-        ReferenceFrame, SpacecraftPropagator, SpacecraftPropagatorSoiDetection,
-        SpacecraftTrajectory, StateVector, Timeline, Trajectory,
+        AbsTol, Bodies, ConstantThrust, CubicHermiteSpline, PredictionTrajectory, ReferenceFrame,
+        SpacecraftPropagator, SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, StateVector,
+        Timeline, Trajectory,
     },
     prediction::{
         ComputePrediction, PredictingWith, PredictionContext, PredictionSystems, Synchronisation,
@@ -262,7 +262,7 @@ impl FlightPlan {
     pub fn restart_propagator(
         &self,
         previous: &SpacecraftPropagator,
-        trajectory: &CubicHermiteSplineSamples,
+        trajectory: &CubicHermiteSpline,
     ) -> Option<SpacecraftPropagator> {
         let timeline = self.generate_timeline();
 
@@ -332,7 +332,7 @@ fn apply_flight_plan(
     else {
         return;
     };
-    let PredictionTrajectory::CubicHermiteSplineSamples(trajectory) = &*trajectory.read() else {
+    let PredictionTrajectory::CubicHermiteSpline(trajectory) = &*trajectory.read() else {
         unreachable!()
     };
 

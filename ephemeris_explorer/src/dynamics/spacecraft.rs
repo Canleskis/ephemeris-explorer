@@ -15,7 +15,7 @@ use ftime::{Duration, Epoch};
 use integration::prelude::*;
 use particular::gravity::newtonian::AccelerationAt;
 
-pub type CubicHermiteSplineSamples = ephemeris::CubicHermiteSplineSamples<DVec3>;
+pub type CubicHermiteSplineSamples = ephemeris::CubicHermiteSpline<DVec3>;
 
 #[derive(Clone, Copy, Debug, Component, Deref, DerefMut)]
 pub struct Mu(pub f64);
@@ -697,14 +697,13 @@ impl PropagationTarget for SpacecraftTrajectory {
         item: &mut Self::Item<'_, '_>,
         (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
-        let PredictionTrajectory::CubicHermiteSplineSamples(world_trajectory) =
-            &mut *item.trajectory.write()
+        let PredictionTrajectory::CubicHermiteSpline(world_traj) = &mut *item.trajectory.write()
         else {
             unreachable!()
         };
         item.transitions.clear_after(trajectory.start());
         item.transitions.extend(transitions);
-        Self::Propagator::join(world_trajectory, trajectory)
+        Self::Propagator::join(world_traj, trajectory)
     }
 
     #[inline]
@@ -712,12 +711,11 @@ impl PropagationTarget for SpacecraftTrajectory {
         item: &mut Self::Item<'_, '_>,
         (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
     ) {
-        let PredictionTrajectory::CubicHermiteSplineSamples(world_trajectory) =
-            &mut *item.trajectory.write()
+        let PredictionTrajectory::CubicHermiteSpline(world_traj) = &mut *item.trajectory.write()
         else {
             unreachable!()
         };
         *item.transitions = transitions;
-        *world_trajectory = trajectory;
+        *world_traj = trajectory;
     }
 }

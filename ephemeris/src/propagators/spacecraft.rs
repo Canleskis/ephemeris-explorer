@@ -1,6 +1,6 @@
 use crate::{
     BranchingPropagator, DirectionalPropagator, IncrementalPropagator, Iterable, Propagator,
-    trajectory::{BoundedTrajectory, CubicHermiteSplineSamples, StateVector},
+    trajectory::{BoundedTrajectory, CubicHermiteSpline, StateVector},
 };
 
 use ftime::{Duration, Epoch};
@@ -530,10 +530,7 @@ where
     }
 
     #[inline]
-    pub fn join(
-        lhs: &mut CubicHermiteSplineSamples<S::Vector>,
-        rhs: CubicHermiteSplineSamples<S::Vector>,
-    ) {
+    pub fn join(lhs: &mut CubicHermiteSpline<S::Vector>, rhs: CubicHermiteSpline<S::Vector>) {
         lhs.clear_after(rhs.start());
         lhs.extend(rhs);
     }
@@ -549,7 +546,7 @@ where
     S: SpacecraftPropagatorState,
     M: Method<SpacecraftProblem<S, F, C>>,
 {
-    type Trajectories = [CubicHermiteSplineSamples<S::Vector>; 1];
+    type Trajectories = [CubicHermiteSpline<S::Vector>; 1];
 }
 
 impl<S, F, C, M> IncrementalPropagator for SpacecraftPropagator<S, F, C, M>
@@ -610,7 +607,7 @@ where
 {
     #[inline]
     fn branch(&self) -> Self::Trajectories {
-        [CubicHermiteSplineSamples::new(
+        [CubicHermiteSpline::new(
             self.time(),
             self.position(),
             self.velocity(),

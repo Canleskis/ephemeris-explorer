@@ -420,7 +420,7 @@ fn plot_knots(
                 let knots = (0..traj.len()).map(|i| traj.start() + traj.interval() * i as f64);
                 plot_knots(&mut gizmos, *camera, knots, points);
             }
-            PredictionTrajectory::CubicHermiteSplineSamples(traj) => {
+            PredictionTrajectory::CubicHermiteSpline(traj) => {
                 let knots = traj.points().iter().map(|(t, _)| *t);
                 plot_knots(&mut gizmos, *camera, knots, points);
             }

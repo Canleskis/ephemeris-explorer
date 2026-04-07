@@ -3,8 +3,8 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
-        Bodies, CubicHermiteSplineSamples, GravitationalBody, Mu, SpacecraftTrajectory,
-        SphereOfInfluence, Timeline, Trajectory,
+        Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftTrajectory, SphereOfInfluence,
+        Timeline, Trajectory,
     },
     floating_origin::BigGridBundle,
     load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
@@ -153,7 +153,7 @@ impl ShipSpawnerWindow {
                         Timeline::default(),
                     ),
                 ),
-                Trajectory::from(CubicHermiteSplineSamples::new(
+                Trajectory::from(CubicHermiteSpline::new(
                     data.start,
                     sv.position,
                     sv.velocity,

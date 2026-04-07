@@ -703,15 +703,15 @@ impl<V> CubicHermite<V> {
 }
 
 #[derive(Clone, Debug)]
-pub struct CubicHermiteSplineSamples<V>(Vec<(Epoch, StateVector<V>)>);
+pub struct CubicHermiteSpline<V>(Vec<(Epoch, StateVector<V>)>);
 
-impl<V> DeepSizeOf for CubicHermiteSplineSamples<V> {
+impl<V> DeepSizeOf for CubicHermiteSpline<V> {
     fn deep_size_of_children(&self, _: &mut deepsize::Context) -> usize {
         self.0.capacity() * size_of::<(Epoch, StateVector<V>)>()
     }
 }
 
-impl<V> BoundedTrajectory for CubicHermiteSplineSamples<V> {
+impl<V> BoundedTrajectory for CubicHermiteSpline<V> {
     #[inline]
     fn start(&self) -> Epoch {
         self.0.first().unwrap().0
@@ -728,7 +728,7 @@ impl<V> BoundedTrajectory for CubicHermiteSplineSamples<V> {
     }
 }
 
-impl<V> EvaluateTrajectory for CubicHermiteSplineSamples<V>
+impl<V> EvaluateTrajectory for CubicHermiteSpline<V>
 where
     V: std::ops::Add<Output = V>
         + std::ops::Sub<Output = V>
@@ -766,7 +766,7 @@ where
     }
 }
 
-impl<V> CubicHermiteSplineSamples<V> {
+impl<V> CubicHermiteSpline<V> {
     #[inline]
     pub fn new(start: Epoch, position: V, velocity: V) -> Self {
         Self(vec![(start, StateVector::new(position, velocity))])
@@ -808,7 +808,7 @@ impl<V> CubicHermiteSplineSamples<V> {
     }
 
     #[inline]
-    pub fn extend(&mut self, rhs: CubicHermiteSplineSamples<V>) {
+    pub fn extend(&mut self, rhs: CubicHermiteSpline<V>) {
         self.0.extend(rhs.0);
     }
 

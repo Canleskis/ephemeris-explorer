@@ -10,7 +10,7 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, SoiTransitionsAnalysis},
     camera::{CameraController, CanFollow, Followed, OrbitCamera},
     dynamics::{
-        AbsTol, Backward, Bodies, CelestialTrajectory, CubicHermiteSplineSamples, Forward,
+        AbsTol, Backward, Bodies, CelestialTrajectory, CubicHermiteSpline, Forward,
         GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator, SpacecraftTrajectory,
         SphereOfInfluence, StateVector, Trajectory, UniformSpline,
     },
@@ -559,7 +559,7 @@ fn spawn_ship(
             offset: Vec2::new(0.0, radius) * 1.1,
             index: 99,
         },
-        Trajectory::from(CubicHermiteSplineSamples::new(
+        Trajectory::from(CubicHermiteSpline::new(
             ship.start,
             ship.position,
             ship.velocity,

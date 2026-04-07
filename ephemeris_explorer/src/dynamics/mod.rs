@@ -12,11 +12,11 @@ use ftime::Epoch;
 
 pub type StateVector = ephemeris::StateVector<DVec3>;
 
-pub type CubicHermiteSplineSamples = ephemeris::CubicHermiteSplineSamples<DVec3>;
+pub type CubicHermiteSpline = ephemeris::CubicHermiteSpline<DVec3>;
 
 pub enum PredictionTrajectory {
     UniformSpline(UniformSpline),
-    CubicHermiteSplineSamples(CubicHermiteSplineSamples),
+    CubicHermiteSpline(CubicHermiteSpline),
 }
 
 impl DeepSizeOf for PredictionTrajectory {
@@ -24,7 +24,7 @@ impl DeepSizeOf for PredictionTrajectory {
     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
         match self {
             Self::UniformSpline(traj) => traj.deep_size_of_children(context),
-            Self::CubicHermiteSplineSamples(traj) => traj.deep_size_of_children(context),
+            Self::CubicHermiteSpline(traj) => traj.deep_size_of_children(context),
         }
     }
 }
@@ -34,7 +34,7 @@ impl BoundedTrajectory for PredictionTrajectory {
     fn start(&self) -> Epoch {
         match self {
             Self::UniformSpline(traj) => traj.start(),
-            Self::CubicHermiteSplineSamples(traj) => traj.start(),
+            Self::CubicHermiteSpline(traj) => traj.start(),
         }
     }
 
@@ -42,7 +42,7 @@ impl BoundedTrajectory for PredictionTrajectory {
     fn end(&self) -> Epoch {
         match self {
             Self::UniformSpline(traj) => traj.end(),
-            Self::CubicHermiteSplineSamples(traj) => traj.end(),
+            Self::CubicHermiteSpline(traj) => traj.end(),
         }
     }
 
@@ -50,7 +50,7 @@ impl BoundedTrajectory for PredictionTrajectory {
     fn contains(&self, time: Epoch) -> bool {
         match self {
             Self::UniformSpline(traj) => traj.contains(time),
-            Self::CubicHermiteSplineSamples(traj) => traj.contains(time),
+            Self::CubicHermiteSpline(traj) => traj.contains(time),
         }
     }
 
@@ -58,7 +58,7 @@ impl BoundedTrajectory for PredictionTrajectory {
     fn len(&self) -> usize {
         match self {
             Self::UniformSpline(traj) => traj.len(),
-            Self::CubicHermiteSplineSamples(traj) => traj.len(),
+            Self::CubicHermiteSpline(traj) => traj.len(),
         }
     }
 }
@@ -70,7 +70,7 @@ impl EvaluateTrajectory for PredictionTrajectory {
     fn position(&self, at: Epoch) -> Option<Self::Vector> {
         match self {
             Self::UniformSpline(traj) => traj.position(at),
-            Self::CubicHermiteSplineSamples(traj) => traj.position(at),
+            Self::CubicHermiteSpline(traj) => traj.position(at),
         }
     }
 
@@ -78,7 +78,7 @@ impl EvaluateTrajectory for PredictionTrajectory {
     fn state_vector(&self, at: Epoch) -> Option<StateVector> {
         match self {
             Self::UniformSpline(traj) => traj.state_vector(at),
-            Self::CubicHermiteSplineSamples(traj) => traj.state_vector(at),
+            Self::CubicHermiteSpline(traj) => traj.state_vector(at),
         }
     }
 }
@@ -103,10 +103,10 @@ impl From<UniformSpline> for Trajectory {
     }
 }
 
-impl From<CubicHermiteSplineSamples> for Trajectory {
+impl From<CubicHermiteSpline> for Trajectory {
     #[inline]
-    fn from(trajectory: CubicHermiteSplineSamples) -> Self {
-        Self::new(PredictionTrajectory::CubicHermiteSplineSamples(trajectory))
+    fn from(trajectory: CubicHermiteSpline) -> Self {
+        Self::new(PredictionTrajectory::CubicHermiteSpline(trajectory))
     }
 }
 
