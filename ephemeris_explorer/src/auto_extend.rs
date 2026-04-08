@@ -78,12 +78,11 @@ fn auto_extend<T>(
 
     let next = sim_time.current() + delta;
     let boundary = std::cmp::max_by(sim_time.start(), sim_time.end(), T::Propagator::cmp);
-    if T::Propagator::cmp(&next, &boundary).is_lt() {
-        return;
-    }
+    let should_extend = T::Propagator::cmp(&next, &boundary).is_ge();
+    let time_scale_changed = *last_time_scale != sim_time.time_scale;
 
-    for (entity, has_tracker) in query_tracker.iter() {
-        if has_tracker && *last_time_scale == sim_time.time_scale {
+    for (entity, is_predicting) in query_tracker.iter() {
+        if (is_predicting && !time_scale_changed) || (!is_predicting && !should_extend) {
             continue;
         }
 
@@ -93,5 +92,6 @@ fn auto_extend<T>(
             Synchronisation::hertz(1000),
         ));
     }
+
     *last_time_scale = sim_time.time_scale;
 }
