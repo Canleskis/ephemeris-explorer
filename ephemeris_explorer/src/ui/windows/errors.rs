@@ -24,9 +24,7 @@ impl ErrorsWindow {
             return;
         }
 
-        let Ok(ctx) = contexts.ctx_mut() else {
-            return;
-        };
+        let Ok(ctx) = contexts.ctx_mut() else { return };
 
         egui::Window::new("Loading Errors")
             .fixed_size([300.0, 600.0])

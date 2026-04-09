@@ -45,17 +45,13 @@ impl EphemeridesDebugWindow {
         query: Query<(Entity, &Id, &Name, &Trajectory)>,
         errors: Option<Single<&InterpolationErrors>>,
     ) {
-        let Ok(ctx) = contexts.ctx_mut() else {
-            return;
-        };
+        let Ok(ctx) = contexts.ctx_mut() else { return };
 
         let mut open = window.is_some();
         egui::Window::new("Ephemerides debug")
             .open(&mut open)
             .show(ctx, |ui| {
-                let Some(system) = system.get() else {
-                    return;
-                };
+                let Some(system) = system.get() else { return };
 
                 let start = system.epoch;
                 let duration = Duration::from_days(365.0 * 2.0).min(sim_time.end() - start);
@@ -191,9 +187,7 @@ fn compute_interpolation_errors(
     root: Single<Entity, With<SystemRoot>>,
     mut commands: Commands,
 ) {
-    let Some(system) = system.get() else {
-        return;
-    };
+    let Some(system) = system.get() else { return };
 
     let prediction = query_prediction.single().unwrap();
     let dt = prediction.propagator.delta();

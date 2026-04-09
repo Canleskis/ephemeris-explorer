@@ -63,9 +63,7 @@ impl ExportWindow {
         mut cached_exports: Local<Option<[ExportType; 1]>>,
         mut current: Local<usize>,
     ) {
-        let Ok(ctx) = contexts.ctx_mut() else {
-            return;
-        };
+        let Ok(ctx) = contexts.ctx_mut() else { return };
 
         let mut open = window.is_some();
         egui::Window::new("Export").open(&mut open).show(ctx, |ui| {

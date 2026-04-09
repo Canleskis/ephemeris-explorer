@@ -18,9 +18,7 @@ pub fn solar_system_hierarchy(
     query_selectable: Query<&Selectable>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
-    let Ok(ctx) = contexts.ctx_mut() else {
-        return;
-    };
+    let Ok(ctx) = contexts.ctx_mut() else { return };
 
     egui::SidePanel::left("Hierarchy")
         .resizable(false)

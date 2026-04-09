@@ -203,9 +203,8 @@ pub struct SetFollowed(pub Option<Entity>);
 
 impl Command for SetFollowed {
     fn apply(self, world: &mut World) {
-        let Some(followed) = self.0 else {
-            return;
-        };
+        let Some(followed) = self.0 else { return };
+
         let can_follow = *world.entity(followed).get::<CanFollow>().unwrap();
         let (camera_entity, mut orbit) = world
             .query::<(Entity, &mut OrbitCamera)>()
@@ -399,7 +398,7 @@ fn scale_mouse_to_fov(
     mut input: ResMut<CameraInput>,
 ) {
     let Projection::Perspective(perspective) = *perspective else {
-        unreachable!("Camera is not perspective");
+        unreachable!("Camera is not perspective")
     };
     input.pitch *= perspective.fov as f64;
     input.yaw *= perspective.fov as f64;

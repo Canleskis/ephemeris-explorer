@@ -118,9 +118,7 @@ impl BodyInfoWindow {
     ) {
         let mut open = selected.is_some();
         if let Some(entity) = **selected {
-            let Ok(ctx) = contexts.ctx_mut() else {
-                return;
-            };
+            let Ok(ctx) = contexts.ctx_mut() else { return };
 
             let Ok((_, name, _)) = query_hierarchy.get(entity) else {
                 return;

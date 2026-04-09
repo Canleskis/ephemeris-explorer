@@ -143,9 +143,7 @@ impl PredictionPlannerWindow {
         let (root, forward_tracker, backward_tracker) =
             prediction.single().expect("No root entity found");
 
-        let Ok(ctx) = contexts.ctx_mut() else {
-            return;
-        };
+        let Ok(ctx) = contexts.ctx_mut() else { return };
 
         let mut open = window.is_some();
         egui::Window::new("Prediction planner")

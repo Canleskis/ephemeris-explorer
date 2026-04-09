@@ -70,9 +70,7 @@ pub fn time_controls(
     mut scale: Local<TimeScale>,
     mut time_scale_history: Local<History>,
 ) {
-    let Ok(ctx) = contexts.ctx_mut() else {
-        return;
-    };
+    let Ok(ctx) = contexts.ctx_mut() else { return };
 
     const SMALLEST: f64 = 1e-1;
     const LARGEST: f64 = 1e10;

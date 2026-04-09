@@ -333,9 +333,7 @@ fn setup_target_plotting(
     mut commands: Commands,
 ) {
     for (trajectory, plot, source_of, target) in query.iter() {
-        let Some(target) = target else {
-            continue;
-        };
+        let Some(target) = target else { continue };
 
         if !(target.is_changed()
             || trajectory.is_changed()

@@ -91,9 +91,7 @@ impl ShipSpawnerWindow {
         query_context: Query<(Entity, &Trajectory, &Mu, &SphereOfInfluence)>,
         followed: Res<Followed>,
     ) {
-        let Ok(ctx) = contexts.ctx_mut() else {
-            return;
-        };
+        let Ok(ctx) = contexts.ctx_mut() else { return };
 
         let new_context = || {
             query_context
@@ -102,9 +100,7 @@ impl ShipSpawnerWindow {
                 .collect()
         };
 
-        let Some(mut window) = window else {
-            return;
-        };
+        let Some(mut window) = window else { return };
 
         let Ok((preview, mut data, Some((mut name, prediction)))) = query_preview.single_mut()
         else {

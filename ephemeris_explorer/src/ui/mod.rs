@@ -224,9 +224,7 @@ fn top_menu(
     spawner: Option<Res<ShipSpawnerWindow>>,
     settings: Option<Res<SettingsWindow>>,
 ) {
-    let Ok(ctx) = contexts.ctx_mut() else {
-        return;
-    };
+    let Ok(ctx) = contexts.ctx_mut() else { return };
 
     egui::TopBottomPanel::top("Menu")
         .exact_height(23.0)

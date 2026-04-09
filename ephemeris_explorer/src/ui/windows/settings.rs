@@ -40,12 +40,8 @@ impl SettingsWindow {
         window: Option<Res<Self>>,
         mut settings: ResMut<AppSettings>,
     ) {
-        let Some(window) = window else {
-            return;
-        };
-        let Ok(ctx) = contexts.ctx_mut() else {
-            return;
-        };
+        let Some(window) = window else { return };
+        let Ok(ctx) = contexts.ctx_mut() else { return };
 
         let mut open = true;
         let mut should_close = false;

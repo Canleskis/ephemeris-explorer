@@ -206,9 +206,7 @@ fn manoeuvre_tooltip_window(
     query_flight_plan: Query<(&Name, &FlightPlan)>,
     mut contexts: EguiContexts,
 ) {
-    let Ok(ctx) = contexts.ctx_mut() else {
-        return;
-    };
+    let Ok(ctx) = contexts.ctx_mut() else { return };
 
     let Some((tooltip_entity, _, tooltip_data)) = tooltip.0 else {
         return;
@@ -546,9 +544,7 @@ fn trajectory_tooltips_window(
     mut sim_time: ResMut<SimulationTime>,
     mut query_flight_plan: Query<&mut FlightPlan>,
 ) {
-    let Ok(ctx) = contexts.ctx_mut() else {
-        return;
-    };
+    let Ok(ctx) = contexts.ctx_mut() else { return };
 
     let (camera_transform, camera) = *camera;
 
@@ -831,9 +827,7 @@ fn separation_tooltip_window(
     query: Query<(&Name, &SeparationTooltip)>,
     mut contexts: EguiContexts,
 ) {
-    let Ok(ctx) = contexts.ctx_mut() else {
-        return;
-    };
+    let Ok(ctx) = contexts.ctx_mut() else { return };
 
     let (camera_transform, camera) = *camera;
 
