@@ -110,7 +110,7 @@ impl Plugin for LoadSystemPlugin {
         bevy::asset::load_internal_binary_asset!(
             app,
             Handle::default(),
-            "../../assets/fonts/Montserrat-Medium.ttf",
+            "../../assets/fonts/Lexend-Regular.ttf",
             |bytes: &[u8], _: String| { Font::try_from_bytes(bytes.to_vec()).unwrap() }
         );
     }

@@ -80,9 +80,9 @@ fn setup_egui_visuals(trigger: On<Insert, EguiContext>, mut query: Query<&mut Eg
                     .into(),
                 ),
                 (
-                    "Montserrat".to_owned(),
+                    "Lexend".to_owned(),
                     egui::FontData::from_static(include_bytes!(
-                        "../../assets/fonts/Montserrat-Medium.ttf"
+                        "../../assets/fonts/Lexend-Regular.ttf"
                     ))
                     .into(),
                 ),
@@ -115,7 +115,7 @@ fn setup_egui_visuals(trigger: On<Insert, EguiContext>, mut query: Query<&mut Eg
                     egui::FontFamily::Monospace,
                     vec![
                         "Hack".to_owned(),
-                        "Montserrat".to_owned(), // fallback for √ etc
+                        "Lexend".to_owned(), // fallback for √ etc
                         "NotoEmoji-Regular".to_owned(),
                         "emoji-icon-font".to_owned(),
                     ],
@@ -123,7 +123,7 @@ fn setup_egui_visuals(trigger: On<Insert, EguiContext>, mut query: Query<&mut Eg
                 (
                     egui::FontFamily::Proportional,
                     vec![
-                        "Montserrat".to_owned(),
+                        "Lexend".to_owned(),
                         "NotoEmoji-Regular".to_owned(),
                         "emoji-icon-font".to_owned(),
                     ],
