@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    analysis::{BurnPlotSegment, PlotSegment},
+    analysis::{BurnPlotSegment, OverlappingPlotSegment, PlotSegment},
     camera::CameraProximityIgnore,
     dynamics::{SoiTransitions, Trajectory},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
@@ -114,11 +114,10 @@ fn plot_manoeuvres_markers(
     }
 }
 
-// TODO: Make sure we don't plot the marker multiple times at overlapping segment boundaries.
 fn plot_transitions_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&SoiTransitions, &PlotSourceOf)>,
-    query_plot: Query<(&PlotPoints, &PlotConfig)>,
+    query_plot: Query<(&PlotPoints, &PlotConfig), Without<OverlappingPlotSegment>>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
     let (camera_transform, Projection::Perspective(perspective)) = *camera else {

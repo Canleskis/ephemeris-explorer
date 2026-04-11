@@ -174,6 +174,9 @@ pub enum PlotSegment {
 #[derive(Component)]
 pub struct BurnPlotSegment;
 
+#[derive(Component)]
+pub struct OverlappingPlotSegment;
+
 // This function sets up plot segments for entities with `OrbitPlotConfig`. Plot segments are
 // standalone entities.
 // We plot a new segment after every significant trajectory event, currently consisting of SOI
@@ -278,6 +281,7 @@ fn setup_segment_plotting(
                                 },
                                 Name::new(format!("{parent_name} Flyby{burn_name}")),
                                 PlotSegment::Flyby,
+                                OverlappingPlotSegment,
                             ))
                             .insert_if(BurnPlotSegment, || is_burn);
                         }
