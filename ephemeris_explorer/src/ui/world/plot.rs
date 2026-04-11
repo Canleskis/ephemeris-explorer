@@ -312,7 +312,7 @@ pub fn compute_plot_points_parallel(
             let reference = reference.map(|r| r.read());
             let relative = RelativeTrajectory::new(&*trajectory, reference.as_deref());
 
-            if plot.enabled && !relative.is_empty() && plot.start < plot.end {
+            if plot.enabled && !relative.is_empty() {
                 const ARC_MINUTE: f32 = 0.000290888;
                 let tan2_angular_resolution =
                     (plot.threshold * ARC_MINUTE * perspective.fov) as f64;
@@ -329,6 +329,10 @@ pub fn compute_plot_points_parallel(
                     PlotBound::Start => min = min.max(current_clamped),
                     PlotBound::End => max = max.min(current_clamped),
                     PlotBound::None => (),
+                }
+
+                if min >= max {
+                    return;
                 }
 
                 let translation = StateVector::from_position(
