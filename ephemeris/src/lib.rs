@@ -6,50 +6,6 @@ pub use trajectory::*;
 
 use ftime::{Duration, Epoch};
 
-pub trait Iterable: Sized {
-    type Item;
-
-    type Iterator<'a>: Iterator<Item = &'a Self::Item>
-    where
-        Self: 'a;
-
-    type IteratorMut<'a>: Iterator<Item = &'a mut Self::Item>
-    where
-        Self: 'a;
-
-    fn iter(&self) -> Self::Iterator<'_>;
-
-    fn iter_mut(&mut self) -> Self::IteratorMut<'_>;
-}
-
-impl<T, Item> Iterable for T
-where
-    for<'a> &'a T: IntoIterator<Item = &'a Item>,
-    for<'a> &'a mut T: IntoIterator<Item = &'a mut Item>,
-{
-    type Item = Item;
-
-    type Iterator<'a>
-        = <&'a T as IntoIterator>::IntoIter
-    where
-        Self: 'a;
-
-    type IteratorMut<'a>
-        = <&'a mut T as IntoIterator>::IntoIter
-    where
-        Self: 'a;
-
-    #[inline]
-    fn iter(&self) -> Self::Iterator<'_> {
-        self.into_iter()
-    }
-
-    #[inline]
-    fn iter_mut(&mut self) -> Self::IteratorMut<'_> {
-        self.into_iter()
-    }
-}
-
 pub trait Propagator {
     type Trajectories;
 }

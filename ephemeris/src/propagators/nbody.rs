@@ -1,6 +1,5 @@
 use crate::{
-    BranchingPropagator, DirectionalPropagator, IncrementalPropagator, Iterable, Polynomial,
-    Propagator,
+    BranchingPropagator, DirectionalPropagator, IncrementalPropagator, Polynomial, Propagator,
     trajectory::{BoundedTrajectory, DIV, StateVector, UniformSpline},
 };
 
