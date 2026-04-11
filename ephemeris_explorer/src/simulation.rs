@@ -20,6 +20,8 @@ pub struct SimulationTime {
     start: Epoch,
     end: Epoch,
     current: Epoch,
+    previous: Epoch,
+    delta: std::time::Duration,
 }
 
 impl SimulationTime {
@@ -31,6 +33,8 @@ impl SimulationTime {
             start: epoch,
             end: epoch,
             current: epoch,
+            previous: epoch,
+            delta: std::time::Duration::ZERO,
         }
     }
 
@@ -45,13 +49,31 @@ impl SimulationTime {
     }
 
     #[inline]
+    pub fn contains(&self, epoch: Epoch) -> bool {
+        epoch >= self.start && epoch <= self.end
+    }
+
+    #[inline]
     pub fn current(&self) -> Epoch {
         self.current
     }
 
     #[inline]
-    pub fn set_current_clamped(&mut self, epoch: Epoch) {
+    pub fn set_current(&mut self, epoch: Epoch) {
         self.current = epoch.clamp(self.start, self.end);
+        self.real_time_scale =
+            (self.current - self.previous).as_seconds() / self.delta.as_secs_f64();
+    }
+
+    #[inline]
+    pub fn advance(&mut self) {
+        let effective_delta = Duration::from(self.delta) * self.effective_time_scale();
+        self.set_current(self.current + effective_delta);
+    }
+
+    #[inline]
+    pub fn effective_time_scale(&self) -> f64 {
+        if self.paused { 0.0 } else { self.time_scale }
     }
 
     #[inline]
@@ -61,7 +83,7 @@ impl SimulationTime {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
-pub struct SimulationTimeSet;
+pub struct SimulationTimeSystems;
 
 #[derive(Default)]
 pub struct SimulationTimePlugin;
@@ -70,10 +92,10 @@ impl Plugin for SimulationTimePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             First,
-            (sync_bounds, flow_time)
+            (sync_bounds, advance_simulation_time)
                 .chain()
                 .after(bevy::time::TimeSystems)
-                .in_set(SimulationTimeSet)
+                .in_set(SimulationTimeSystems)
                 .run_if(in_state(MainState::Running)),
         )
         .add_systems(
@@ -83,24 +105,21 @@ impl Plugin for SimulationTimePlugin {
     }
 }
 
-fn sync_bounds(mut sim_time: ResMut<SimulationTime>, query: Query<&Trajectory, With<BoundsTime>>) {
+pub fn sync_bounds(
+    mut sim_time: ResMut<SimulationTime>,
+    query: Query<&Trajectory, With<BoundsTime>>,
+) {
     sim_time.start = query.iter().map(|e| e.start()).max().unwrap_or(Epoch::MIN);
     sim_time.end = query.iter().map(|e| e.end()).min().unwrap_or(Epoch::MAX);
 }
 
-fn flow_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {
-    let delta = Duration::from(time.delta());
-    let previous = sim_time.current;
-
-    if !sim_time.paused {
-        let scaled_delta = delta * sim_time.time_scale;
-        sim_time.set_current_clamped(previous + scaled_delta);
-    }
-
-    sim_time.real_time_scale = (sim_time.current - previous).as_seconds() / delta.as_seconds();
+pub fn advance_simulation_time(time: Res<Time>, mut sim_time: ResMut<SimulationTime>) {
+    sim_time.previous = sim_time.current;
+    sim_time.delta = time.delta();
+    sim_time.advance();
 }
 
-fn sync_position_to_time(
+pub fn sync_position_to_time(
     sim_time: Res<SimulationTime>,
     mut query: Query<(&mut Transform, &mut CellCoord, &Trajectory)>,
     root: Single<&Grid, With<BigSpace>>,
@@ -119,7 +138,7 @@ fn sync_position_to_time(
     }
 }
 
-fn sync_rotation_to_time(
+pub fn sync_rotation_to_time(
     sim_time: Res<SimulationTime>,
     mut query: Query<(&mut Transform, &Rotating)>,
 ) {

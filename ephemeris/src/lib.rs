@@ -57,14 +57,20 @@ pub trait Propagator {
 /// Trait for propagators that have a defined direction. Useful for tracking the progress of the
 /// propagation.
 pub trait DirectionalPropagator: Propagator {
-    /// Returns the ordering of two epochs according to the propagator's direction.
-    fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering;
-
     /// Offsets an epoch in time relative to the propagator's direction.
     fn offset(time: Epoch, duration: Duration) -> Epoch;
 
+    /// Returns the temporal distance from one epoch to another along the propagator's direction.
+    fn distance(from: Epoch, to: Epoch) -> Duration;
+
     /// Returns the time boundary of the trajectories.
     fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_;
+
+    /// Returns the ordering of two epochs according to the propagator's direction.
+    #[inline]
+    fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
+        Duration::ZERO.cmp(&Self::distance(*lhs, *rhs))
+    }
 
     /// Returns true if the trajectories have reached the specified epoch.
     #[inline]
@@ -73,7 +79,7 @@ pub trait DirectionalPropagator: Propagator {
     }
 }
 
-/// A trait for propagators that support creating and merging independent trajectory branches.
+/// A trait for propagators that support creating independent trajectory branches.
 pub trait BranchingPropagator: Propagator {
     /// Returns a new collection of trajectory that form an independent branch starting at the
     /// propagator's current boundary.

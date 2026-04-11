@@ -5,7 +5,7 @@ use crate::{
     dynamics::{Bodies, SpacecraftTrajectory, Trajectory},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, IntegrationMethod},
     load::SystemRoot,
-    prediction::PredictionContext,
+    prediction::PredictionPropagator,
     selection::Selected,
     simulation::SimulationTime,
     ui::{
@@ -110,7 +110,7 @@ impl BodyInfoWindow {
             &Primary,
             &mut OrbitPlotConfig,
             Option<&mut OrbitTarget>,
-            Option<(&mut FlightPlan, &PredictionContext<SpacecraftTrajectory>)>,
+            Option<(&mut FlightPlan, &PredictionPropagator<SpacecraftTrajectory>)>,
             &mut Self,
         )>,
         root: Single<Entity, With<SystemRoot>>,
@@ -133,7 +133,7 @@ impl BodyInfoWindow {
                 .resizable([false, true])
                 .max_width(350.0)
                 .show(ctx, |ui| {
-                    let Ok((trajectory, parent, mut plot, target, mut data, mut info)) =
+                    let Ok((trajectory, parent, mut plot, target, mut fp_data, mut info)) =
                         query.get_mut(entity)
                     else {
                         return;
@@ -147,7 +147,7 @@ impl BodyInfoWindow {
                         RelativeTrajectory::new(trajectory, query_trajectory.get(reference).ok());
 
                     if let Some(((flight_plan, _), delete)) =
-                        data.as_mut().zip(info.delete_body.as_mut())
+                        fp_data.as_mut().zip(info.delete_body.as_mut())
                     {
                         ui.horizontal(|ui| {
                             if ui.button("Export").clicked() {
@@ -474,7 +474,7 @@ impl BodyInfoWindow {
                         });
                     }
 
-                    let Some((flight_plan, prediction)) = data.as_mut() else {
+                    let Some((flight_plan, propagator)) = fp_data.as_mut() else {
                         return;
                     };
 
@@ -624,7 +624,7 @@ impl BodyInfoWindow {
                                             idx,
                                             *root,
                                             entity,
-                                            prediction.propagator.context(),
+                                            propagator.context(),
                                             &mut query_hierarchy,
                                             &query_satellites,
                                             min_time,

@@ -14,10 +14,11 @@ pub mod settings;
 pub mod simulation;
 pub mod starlight;
 pub mod ui;
+pub mod warp;
 
 use crate::{
     analysis::OrbitalAnalysisPlugin,
-    auto_extend::AutoExtendPlugin,
+    auto_extend::{AutoExtendPlugin, ExtendPlugin},
     camera::CameraPlugin,
     dynamics::{Backward, CelestialTrajectory, Forward, SpacecraftTrajectory},
     flight_plan::FlightPlanPlugin,
@@ -29,6 +30,7 @@ use crate::{
     simulation::SimulationTimePlugin,
     starlight::StarlightPlugin,
     ui::UiPlugin,
+    warp::WarpPlugin,
 };
 
 use bevy::prelude::*;
@@ -104,8 +106,10 @@ impl PluginGroup for MainPlugins {
             .add(PredictionPlugin::<CelestialTrajectory<Forward>>::default())
             .add(PredictionPlugin::<CelestialTrajectory<Backward>>::default())
             .add(PredictionPlugin::<SpacecraftTrajectory>::default())
-            .add(AutoExtendPlugin::<CelestialTrajectory<Forward>>::default())
-            .add(AutoExtendPlugin::<CelestialTrajectory<Backward>>::default())
+            .add(ExtendPlugin::<CelestialTrajectory<Forward>>::default())
+            .add(ExtendPlugin::<CelestialTrajectory<Backward>>::default())
+            .add(AutoExtendPlugin)
+            .add(WarpPlugin)
             .add(FlightPlanPlugin)
     }
 }
@@ -183,9 +187,8 @@ fn delay_window_visiblity(
 }
 
 fn toggle_full_screen(kb: Res<ButtonInput<KeyCode>>, settings: Option<ResMut<AppSettings>>) {
-    let Some(mut settings) = settings else {
-        return;
-    };
+    let Some(mut settings) = settings else { return };
+
     if kb.pressed(KeyCode::AltLeft) && kb.just_pressed(KeyCode::Enter) {
         settings.user.fullscreen = !settings.user.fullscreen;
     }

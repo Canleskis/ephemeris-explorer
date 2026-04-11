@@ -483,13 +483,13 @@ where
     M: Method<SpacecraftProblem<S>>,
 {
     #[inline]
-    fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
-        BaseSpacecraftPropagator::<S, M>::cmp(lhs, rhs)
+    fn offset(time: Epoch, duration: Duration) -> Epoch {
+        BaseSpacecraftPropagator::<S, M>::offset(time, duration)
     }
 
     #[inline]
-    fn offset(time: Epoch, duration: Duration) -> Epoch {
-        BaseSpacecraftPropagator::<S, M>::offset(time, duration)
+    fn distance(from: Epoch, to: Epoch) -> Duration {
+        BaseSpacecraftPropagator::<S, M>::distance(from, to)
     }
 
     #[inline]
@@ -660,13 +660,13 @@ impl IncrementalPropagator for SpacecraftPropagator {
 
 impl DirectionalPropagator for SpacecraftPropagator {
     #[inline]
-    fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
-        lhs.cmp(rhs)
+    fn offset(to: Epoch, duration: Duration) -> Epoch {
+        to + duration
     }
 
     #[inline]
-    fn offset(to: Epoch, duration: Duration) -> Epoch {
-        to + duration
+    fn distance(from: Epoch, to: Epoch) -> Duration {
+        to - from
     }
 
     #[inline]

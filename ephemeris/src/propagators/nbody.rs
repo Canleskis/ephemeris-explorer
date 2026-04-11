@@ -418,13 +418,13 @@ where
     M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
 {
     #[inline]
-    fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
-        lhs.cmp(rhs)
+    fn offset(to: Epoch, duration: Duration) -> Epoch {
+        to + duration
     }
 
     #[inline]
-    fn offset(to: Epoch, duration: Duration) -> Epoch {
-        to + duration
+    fn distance(from: Epoch, to: Epoch) -> Duration {
+        to - from
     }
 
     #[inline]
@@ -484,13 +484,13 @@ where
     M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
 {
     #[inline]
-    fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
-        rhs.cmp(lhs)
+    fn offset(to: Epoch, duration: Duration) -> Epoch {
+        to - duration
     }
 
     #[inline]
-    fn offset(to: Epoch, duration: Duration) -> Epoch {
-        to - duration
+    fn distance(from: Epoch, to: Epoch) -> Duration {
+        from - to
     }
 
     #[inline]

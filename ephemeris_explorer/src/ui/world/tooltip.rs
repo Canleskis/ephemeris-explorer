@@ -6,13 +6,14 @@ use crate::{
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
     floating_origin::{BigSpace, Grid, GridExt},
     load::SystemRoot,
-    prediction::Predicting,
+    prediction::InPrediction,
     simulation::SimulationTime,
     ui::{
         HitData, Length, MANOEUVRE_SIZE, MarkerGizmoConfigGroup, PICK_THRESHOLD, PickingSet,
         PlotConfig, PlotPoints, PlotSource, PlotSourceOf, PointerHit, PointerHover,
         WorldInteraction, WorldUiSet,
     },
+    warp::StartWarp,
 };
 
 use bevy::picking::backend::ray::RayMap;
@@ -113,6 +114,7 @@ fn plot_manoeuvres_markers(
     }
 }
 
+// TODO: Make sure we don't plot the marker multiple times at overlapping segment boundaries.
 fn plot_transitions_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&SoiTransitions, &PlotSourceOf)>,
@@ -535,13 +537,13 @@ fn trajectory_tooltips_world(
 fn trajectory_tooltips_window(
     root: Single<Entity, With<SystemRoot>>,
     camera: Single<(&GlobalTransform, &Camera)>,
-    mut tooltips: ResMut<TrajectoryTooltips>,
     query_plot: Query<(&PlotSource, &Name)>,
     query_trajectory: Query<&Trajectory>,
     query_name: Query<&Name>,
+    sim_time: Res<SimulationTime>,
     mut commands: Commands,
     mut contexts: EguiContexts,
-    mut sim_time: ResMut<SimulationTime>,
+    mut tooltips: ResMut<TrajectoryTooltips>,
     mut query_flight_plan: Query<&mut FlightPlan>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
@@ -639,7 +641,7 @@ fn trajectory_tooltips_window(
                                                 }
                                                 ui.horizontal(|ui| {
                                                     if ui.button("Go to").clicked() {
-                                                        sim_time.set_current_clamped(time);
+                                                        commands.trigger(StartWarp::new(time));
                                                     }
 
                                                     if let Ok(mut flight_plan) =
@@ -740,7 +742,7 @@ fn update_separation_tooltip(
         Option<&PlotSeparation>,
     )>,
     mut query_tooltip: Query<&mut SeparationTooltip>,
-    query_predicting: Query<(), With<Predicting>>,
+    query_predicting: Query<(), With<InPrediction>>,
 ) {
     for (entity, source, points, segment, separation) in query_plot.iter() {
         let Some(separation) = separation else {

@@ -34,7 +34,6 @@ impl PredictionPlannerWindow {
         ui: &mut egui::Ui,
         commands: &mut Commands,
         root: Entity,
-        auto_extend: &mut AutoExtendSettings<T>,
         tracker: Option<Ref<PredictionTracker<T>>>,
         buffer: &mut String,
         parser: impl Fn(&str) -> Option<Epoch>,
@@ -76,8 +75,6 @@ impl PredictionPlannerWindow {
                 *time_taken += delta;
             }
         }
-
-        ui.checkbox(&mut auto_extend.enabled, "Auto extend");
 
         ui.horizontal(|ui| {
             ui.label(backward_label);
@@ -123,11 +120,10 @@ impl PredictionPlannerWindow {
         mut commands: Commands,
         window: Option<Res<Self>>,
         sim_time: Res<SimulationTime>,
-        mut auto_extend_forward: ResMut<AutoExtendSettings<CelestialTrajectory<Forward>>>,
-        mut auto_extend_backward: ResMut<AutoExtendSettings<CelestialTrajectory<Backward>>>,
+        mut auto_extend: ResMut<AutoExtendSettings>,
         mut start_buffer: Local<String>,
         mut end_buffer: Local<String>,
-        prediction: Query<
+        controller: Single<
             (
                 Entity,
                 Option<Ref<PredictionTracker<CelestialTrajectory<Forward>>>>,
@@ -139,9 +135,7 @@ impl PredictionPlannerWindow {
         mut forward_time: Local<Option<std::time::Duration>>,
         mut backward_time: Local<Option<std::time::Duration>>,
     ) {
-        // One system for now (maybe ever).
-        let (root, forward_tracker, backward_tracker) =
-            prediction.single().expect("No root entity found");
+        let (root, forward_tracker, backward_tracker) = controller.into_inner();
 
         let Ok(ctx) = contexts.ctx_mut() else { return };
 
@@ -150,6 +144,9 @@ impl PredictionPlannerWindow {
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
+                ui.checkbox(&mut auto_extend.enabled, "Auto extend");
+                ui.separator();
+
                 ui.spacing_mut().interact_size.x = 300.0;
 
                 ui.heading("Backward prediction");
@@ -166,7 +163,6 @@ impl PredictionPlannerWindow {
                     ui,
                     &mut commands,
                     root,
-                    &mut auto_extend_backward,
                     backward_tracker,
                     &mut start_buffer,
                     |buf| Epoch::from_str(buf).ok().filter(|e| e < &sim_time.start()),
@@ -191,7 +187,6 @@ impl PredictionPlannerWindow {
                     ui,
                     &mut commands,
                     root,
-                    &mut auto_extend_forward,
                     forward_tracker,
                     &mut end_buffer,
                     |buf| Epoch::from_str(buf).ok().filter(|e| e > &sim_time.end()),

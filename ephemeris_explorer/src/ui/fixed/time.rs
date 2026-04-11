@@ -1,4 +1,4 @@
-use crate::simulation::SimulationTime;
+use crate::{simulation::SimulationTime, warp::StartWarp};
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -33,49 +33,68 @@ fn round(x: f64, decimals: usize) -> f64 {
     (x * factor).round() / factor
 }
 
-struct Sample {
-    time: std::time::Instant,
+pub struct ComputedTimeScale {
     value: f64,
+    last_update: std::time::Instant,
+    sum: f64,
+    count: usize,
 }
 
-#[derive(Default)]
-pub struct History {
-    values: std::collections::VecDeque<Sample>,
+impl Default for ComputedTimeScale {
+    fn default() -> Self {
+        Self {
+            value: 0.0,
+            last_update: std::time::Instant::now(),
+            sum: 0.0,
+            count: 0,
+        }
+    }
 }
 
-impl History {
+impl ComputedTimeScale {
     fn add(&mut self, value: f64) {
         let now = std::time::Instant::now();
 
-        self.values.retain(|sample| {
-            now.duration_since(sample.time) < std::time::Duration::from_millis(200)
-        });
-        self.values.push_back(Sample { time: now, value });
+        self.sum += value;
+        self.count += 1;
+
+        if now.duration_since(self.last_update) > std::time::Duration::from_millis(250) {
+            if self.count > 0 {
+                self.value = self.sum / self.count as f64;
+            }
+            self.last_update = now;
+            self.sum = 0.0;
+            self.count = 0;
+        }
     }
 
-    fn average(&self) -> f64 {
-        if self.values.is_empty() {
-            return 0.0;
-        }
+    fn set_to(&mut self, value: f64) {
+        self.last_update = std::time::Instant::now();
+        self.value = value;
+        self.sum = value;
+        self.count = 1;
+    }
 
-        self.values.iter().map(|v| v.value).sum::<f64>() / self.values.len() as f64
+    fn value(&self) -> f64 {
+        self.value
     }
 }
 
 pub fn time_controls(
+    mut commands: Commands,
     mut contexts: EguiContexts,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut sim_time: ResMut<SimulationTime>,
     mut buffer: Local<String>,
     mut scale: Local<TimeScale>,
-    mut time_scale_history: Local<History>,
+    mut computed_time_scale: Local<ComputedTimeScale>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
 
     const SMALLEST: f64 = 1e-1;
     const LARGEST: f64 = 1e10;
 
-    time_scale_history.add(sim_time.real_time_scale());
+    computed_time_scale.add(sim_time.real_time_scale());
 
     egui::TopBottomPanel::bottom("Time").show(ctx, |ui| {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -83,18 +102,22 @@ pub fn time_controls(
             let edit = ui.add(egui::TextEdit::singleline(&mut *buffer));
 
             if edit.lost_focus()
-                && let Ok(buffer) = Epoch::from_str(&buffer)
+                && let Ok(epoch) = Epoch::from_str(&buffer)
             {
-                sim_time.set_current_clamped(buffer);
+                commands.trigger(StartWarp::new(epoch));
             }
 
             if !edit.has_focus() {
                 *buffer = format!("{}", sim_time.current());
             }
 
-            let button = egui::Button::new(if sim_time.paused { "▶" } else { "⏸" });
-            if ui.add_sized([40.0, 18.0], button).clicked() {
+            let pause_button = ui.add_sized(
+                [40.0, 18.0],
+                egui::Button::new(if sim_time.paused { "▶" } else { "⏸" }),
+            );
+            if pause_button.clicked() {
                 sim_time.paused = !sim_time.paused;
+                computed_time_scale.set_to(sim_time.effective_time_scale());
             }
 
             let step_up = |ts: &mut f64| *ts = (*ts * 10.0).clamp(-LARGEST, LARGEST);
@@ -106,14 +129,13 @@ pub fn time_controls(
                     m if m > 0.0 => step_down(&mut sim_time.time_scale),
                     _ => step_up(&mut sim_time.time_scale),
                 }
+                computed_time_scale.set_to(sim_time.effective_time_scale());
             }
 
             ui.scope(|ui| {
-                let computed_time_scale = time_scale_history.average();
-
                 ui.spacing_mut().slider_width = ui.available_width() / 3.0;
-                ui.spacing_mut().interact_size.x = 175.0;
-                if round(computed_time_scale, 2) != sim_time.time_scale {
+                ui.spacing_mut().interact_size.x = 320.0;
+                if round(computed_time_scale.value(), 2) != sim_time.effective_time_scale() {
                     ui.visuals_mut().override_text_color = Some(egui::Color32::RED);
                 }
 
@@ -127,19 +149,24 @@ pub fn time_controls(
                     TimeScale::TimePerSecond => slider
                         .suffix(" per second")
                         .custom_formatter(|_, _| {
+                            let value = computed_time_scale.value();
                             format!(
                                 "{}{}",
-                                if computed_time_scale < 0.0 { "-" } else { "" },
-                                (Duration::from_seconds(computed_time_scale).abs())
+                                if value < 0.0 { "-" } else { "" },
+                                (Duration::from_seconds(computed_time_scale.value()).abs())
                             )
                         })
                         .custom_parser(|text| Some(Duration::from_str(text).ok()?.as_seconds())),
                     TimeScale::Multiplier => slider.prefix("x").custom_formatter(|_, _| {
-                        format!("{computed_time_scale:.2}").separate_with_commas()
+                        format!("{:.2}", computed_time_scale.value()).separate_with_commas()
                     }),
                 };
 
                 let slider = ui.add(slider);
+                if slider.changed() {
+                    computed_time_scale.set_to(sim_time.effective_time_scale());
+                }
+
                 if slider.is_pointer_button_down_on() {
                     egui::Tooltip::always_open(
                         slider.ctx,
@@ -163,6 +190,7 @@ pub fn time_controls(
                     m if m > 0.0 => step_up(&mut sim_time.time_scale),
                     _ => step_down(&mut sim_time.time_scale),
                 }
+                computed_time_scale.set_to(sim_time.effective_time_scale());
             }
 
             egui::ComboBox::from_id_salt("time_scale")

@@ -16,7 +16,10 @@ use crate::{
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, CellCoord, FloatingOrigin},
-    prediction::{ComputePrediction, PredictionContext, PredictionTracker, Synchronisation},
+    prediction::{
+        ComputePrediction, PredictionController, PredictionControllerOf, PredictionPropagator,
+        PredictionTracker, Synchronisation,
+    },
     rotation::Rotating,
     selection::Selectable,
     simulation::{BoundsTime, SimulationTime},
@@ -335,8 +338,12 @@ fn spawn_loaded_bodies(
                 offset: Vec2::new(0.0, radius) * 1.1,
                 index: depth + 1,
             },
-            Mu(body.mu),
-            Trajectory::from(UniformSpline::new(system.epoch, sample_period * DIV as f64)),
+            (
+                Mu(body.mu),
+                Trajectory::from(UniformSpline::new(system.epoch, sample_period * DIV as f64)),
+                PredictionController::<CelestialTrajectory<Forward>>::new(root),
+                PredictionController::<CelestialTrajectory<Backward>>::new(root),
+            ),
             BoundsTime,
             FlightPlanDependency,
             soi,
@@ -394,14 +401,18 @@ fn spawn_loaded_bodies(
 
     let dt = ephemerides.dt;
     commands.entity(root).insert((
-        PredictionContext::<CelestialTrajectory<Forward>>::new(
-            entities.clone(),
-            NBodyPropagator::with(Forward::new(dt), system.epoch, states.clone()),
-        ),
-        PredictionContext::<CelestialTrajectory<Backward>>::new(
-            entities,
-            NBodyPropagator::with(Backward::new(dt), system.epoch, states),
-        ),
+        PredictionPropagator::<CelestialTrajectory<Forward>>(NBodyPropagator::with(
+            Forward::new(dt),
+            system.epoch,
+            states.clone(),
+        )),
+        PredictionControllerOf::<CelestialTrajectory<Forward>>::new(entities.clone()),
+        PredictionPropagator::<CelestialTrajectory<Backward>>(NBodyPropagator::with(
+            Backward::new(dt),
+            system.epoch,
+            states,
+        )),
+        PredictionControllerOf::<CelestialTrajectory<Backward>>::new(entities),
     ));
 
     commands.insert_resource(SimulationTime::new(system.epoch));
@@ -564,11 +575,12 @@ fn spawn_ship(
             ship.position,
             ship.velocity,
         )),
-        PredictionContext::<SpacecraftTrajectory>::new(
-            vec![id],
+        PredictionPropagator::<SpacecraftTrajectory>(
             flight_plan
                 .build_propagator_at(ship.start, StateVector::new(ship.position, ship.velocity)),
         ),
+        PredictionController::<SpacecraftTrajectory>::new(id),
+        PredictionControllerOf::<SpacecraftTrajectory>::new(vec![id]),
         flight_plan,
         SoiTransitionsAnalysis::Dynamic,
         OrbitPlotConfig {
@@ -630,10 +642,10 @@ fn setup_camera(
         .insert(ChildOf(*root));
 }
 
-fn default_follow(mut commands: Commands, query: Query<(Option<Entity>, &Name)>) {
+fn default_follow(mut commands: Commands, query: Query<(Entity, &Name)>) {
     for (entity, name) in &query {
-        if name.contains("Earth") {
-            commands.insert_resource(Followed(entity));
+        if name.as_str() == "Earth" {
+            commands.insert_resource(Followed(Some(entity)));
         }
     }
 }
@@ -684,7 +696,7 @@ fn ephemerides_ships_progress(
     mut query: Query<&mut Text, With<LoadingText>>,
     query_tracker: Query<
         Option<&PredictionTracker<SpacecraftTrajectory>>,
-        With<PredictionContext<SpacecraftTrajectory>>,
+        With<PredictionPropagator<SpacecraftTrajectory>>,
     >,
 ) {
     if query_tracker.iter().all(|t| t.is_none()) {

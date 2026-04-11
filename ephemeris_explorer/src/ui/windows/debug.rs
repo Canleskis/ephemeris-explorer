@@ -2,7 +2,7 @@ use crate::{
     MainState,
     dynamics::{CelestialTrajectory, Forward, PredictionTrajectory, Trajectory},
     load::{SolarSystemState, SystemRoot, UniqueAsset},
-    prediction::PredictionContext,
+    prediction::PredictionPropagator,
     simulation::SimulationTime,
     ui::WindowsUiSet,
 };
@@ -182,15 +182,14 @@ struct ComputeInterpolationErrors {
 fn compute_interpolation_errors(
     trigger: On<ComputeInterpolationErrors>,
     system: UniqueAsset<SolarSystemState>,
-    query_prediction: Query<&PredictionContext<CelestialTrajectory<Forward>>>,
+    propagator: Single<&PredictionPropagator<CelestialTrajectory<Forward>>>,
     query: Query<(Entity, &Id, &Name, &Trajectory)>,
     root: Single<Entity, With<SystemRoot>>,
     mut commands: Commands,
 ) {
     let Some(system) = system.get() else { return };
 
-    let prediction = query_prediction.single().unwrap();
-    let dt = prediction.propagator.delta();
+    let dt = propagator.delta();
 
     let (query, positions, velocities, mus): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = query
         .iter()

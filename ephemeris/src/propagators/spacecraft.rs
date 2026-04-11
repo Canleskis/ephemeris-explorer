@@ -584,13 +584,13 @@ where
     M: Method<SpacecraftProblem<S, F, C>>,
 {
     #[inline]
-    fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
-        lhs.cmp(rhs)
+    fn offset(to: Epoch, duration: Duration) -> Epoch {
+        to + duration
     }
 
     #[inline]
-    fn offset(to: Epoch, duration: Duration) -> Epoch {
-        to + duration
+    fn distance(from: Epoch, to: Epoch) -> Duration {
+        to - from
     }
 
     #[inline]

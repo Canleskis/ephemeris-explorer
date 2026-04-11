@@ -5,7 +5,7 @@ use crate::{
         Segment, SoiTransitions, SpacecraftTrajectory, SphereOfInfluence, Trajectory, find_soi,
     },
     load::SystemRoot,
-    prediction::{PredictionContext, PredictionSystems},
+    prediction::{PredictionPropagator, PredictionSystems},
     simulation::SimulationTime,
     ui::{PlotBound, PlotConfig, PlotSeparation, PlotSource, PlotSourceOf, remove_tooltip},
 };
@@ -187,7 +187,7 @@ fn setup_segment_plotting(
             Entity,
             &SoiTransitions,
             &OrbitPlotConfig,
-            Option<&PredictionContext<SpacecraftTrajectory>>,
+            Option<&PredictionPropagator<SpacecraftTrajectory>>,
         ),
         Or<(Changed<SoiTransitions>, Changed<OrbitPlotConfig>)>,
     >,
@@ -196,7 +196,7 @@ fn setup_segment_plotting(
     root: Single<Entity, With<SystemRoot>>,
     mut commands: Commands,
 ) {
-    for (e, transitions, config, prediction) in query.iter() {
+    for (e, transitions, config, propagator) in query.iter() {
         commands.entity(e).despawn_related::<PlotSourceOf>();
         commands.entity(e).with_children(|cmds| {
             let plot = PlotConfig {
@@ -238,8 +238,8 @@ fn setup_segment_plotting(
                 let start = start.max(config.start);
                 let end = next.map_or(config.end, |&(end, _)| end.min(config.end));
 
-                let segments = prediction
-                    .map(|p| p.propagator.timeline().segments_between(start, end))
+                let segments = propagator
+                    .map(|p| p.timeline().segments_between(start, end))
                     .unwrap_or(DEFAULT);
 
                 let is_from_parent = previous.is_some_and(|&(_, a)| a == b_parent);
@@ -247,6 +247,7 @@ fn setup_segment_plotting(
                 for segment in segments {
                     let start = segment.start().max(start);
                     let end = segment.end().min(end);
+
                     let is_burn = matches!(segment, Segment::Burn { .. });
                     let plot = PlotConfig {
                         start,

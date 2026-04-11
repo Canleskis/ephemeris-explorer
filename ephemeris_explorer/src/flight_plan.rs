@@ -5,7 +5,8 @@ use crate::{
         Timeline, Trajectory,
     },
     prediction::{
-        ComputePrediction, PredictingWith, PredictionContext, PredictionSystems, Synchronisation,
+        ComputePrediction, InPredictionWith, PredictionPropagator, PredictionSystems,
+        Synchronisation,
     },
 };
 
@@ -14,8 +15,6 @@ use bevy::prelude::*;
 use ephemeris::BoundedTrajectory;
 use ftime::{Duration, Epoch};
 use integration::AdaptiveMethodParams;
-
-type SpacecraftPredictionContext = PredictionContext<SpacecraftTrajectory>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BurnFrame {
@@ -324,12 +323,14 @@ impl Plugin for FlightPlanPlugin {
 fn apply_flight_plan(
     trigger: On<FlightPlanChanged>,
     mut commands: Commands,
-    mut query: Query<(&mut FlightPlan, &SpacecraftPredictionContext, &Trajectory)>,
+    mut query: Query<(
+        &mut FlightPlan,
+        &PredictionPropagator<SpacecraftTrajectory>,
+        &Trajectory,
+    )>,
 ) {
     let entity = trigger.event_target();
-    let Ok((mut flight_plan, PredictionContext { propagator, .. }, trajectory)) =
-        query.get_mut(entity)
-    else {
+    let Ok((mut flight_plan, propagator, trajectory)) = query.get_mut(entity) else {
         return;
     };
     let PredictionTrajectory::CubicHermiteSpline(trajectory) = &*trajectory.read() else {
@@ -357,6 +358,7 @@ fn apply_flight_plan(
     );
 }
 
+#[expect(clippy::type_complexity)]
 fn trigger_on_trajectory_updates(
     mut commands: Commands,
     query: Query<(), (Changed<Trajectory>, With<FlightPlanDependency>)>,
@@ -365,18 +367,16 @@ fn trigger_on_trajectory_updates(
             Entity,
             &Trajectory,
             &FlightPlan,
-            &SpacecraftPredictionContext,
+            &PredictionPropagator<SpacecraftTrajectory>,
         ),
-        Without<PredictingWith<SpacecraftTrajectory>>,
+        Without<InPredictionWith<SpacecraftTrajectory>>,
     >,
 ) {
     if query.is_empty() {
         return;
     }
 
-    for (entity, traj, flight_plan, PredictionContext { propagator, .. }) in
-        query_flight_plan.iter()
-    {
+    for (entity, traj, flight_plan, propagator) in query_flight_plan.iter() {
         // Only trigger if the trajectory hasn't previously reached the end of the flight plan and
         // if the context allows for the prediction to start being computed.
         if traj.end() < flight_plan.end && propagator.context().is_valid_at(traj.start()) {

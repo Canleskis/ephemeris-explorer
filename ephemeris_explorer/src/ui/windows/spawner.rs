@@ -8,7 +8,10 @@ use crate::{
     },
     floating_origin::BigGridBundle,
     load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
-    prediction::{ComputePrediction, PredictionContext, PropagationTarget, Synchronisation},
+    prediction::{
+        ComputePrediction, PredictionController, PredictionControllerOf, PredictionPropagator,
+        PropagationTarget, Synchronisation,
+    },
     simulation::SimulationTime,
     ui::{
         IdentedInfo, Labelled, PlotBound, PlotSourceOf, WindowsUiSet, duration_formatter,
@@ -85,7 +88,7 @@ impl ShipSpawnerWindow {
         mut query_preview: Query<(
             Entity,
             &mut ShipSpawnerData,
-            Option<(&mut Name, &PredictionContext<SpacecraftTrajectory>)>,
+            Option<(&mut Name, &PredictionPropagator<SpacecraftTrajectory>)>,
         )>,
         query_trajectory: Query<&Trajectory>,
         query_context: Query<(Entity, &Trajectory, &Mu, &SphereOfInfluence)>,
@@ -102,7 +105,7 @@ impl ShipSpawnerWindow {
 
         let Some(mut window) = window else { return };
 
-        let Ok((preview, mut data, Some((mut name, prediction)))) = query_preview.single_mut()
+        let Ok((preview, mut data, Some((mut name, propagator)))) = query_preview.single_mut()
         else {
             let (entity, data) = match query_preview.single() {
                 Ok((entity, data, _)) => (entity, data.clone()),
@@ -139,8 +142,7 @@ impl ShipSpawnerWindow {
                     offset: Vec2::new(0.0, radius) * 1.1,
                     index: 99,
                 },
-                PredictionContext::<SpacecraftTrajectory>::new(
-                    vec![entity],
+                PredictionPropagator::<SpacecraftTrajectory>(
                     <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
                         data.start,
                         sv,
@@ -149,6 +151,8 @@ impl ShipSpawnerWindow {
                         Timeline::default(),
                     ),
                 ),
+                PredictionController::<SpacecraftTrajectory>::new(entity),
+                PredictionControllerOf::<SpacecraftTrajectory>::new(vec![entity]),
                 Trajectory::from(CubicHermiteSpline::new(
                     data.start,
                     sv.position,
@@ -405,17 +409,16 @@ impl ShipSpawnerWindow {
 
         if !window.valid_preview {
             let sv = data.global_state_vector(data.start, &query_trajectory);
-            let propagator = <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
-                data.start,
-                sv,
-                INITIAL_ADAPTIVE_PARAMS,
-                prediction.propagator.context().clone(),
-                Timeline::default(),
-            );
 
             commands.trigger(ComputePrediction::<SpacecraftTrajectory>::new(
                 preview,
-                propagator,
+                <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
+                    data.start,
+                    sv,
+                    INITIAL_ADAPTIVE_PARAMS,
+                    propagator.context().clone(),
+                    Timeline::default(),
+                ),
                 data.preview_duration,
                 Synchronisation::hertz(1000),
                 true,
