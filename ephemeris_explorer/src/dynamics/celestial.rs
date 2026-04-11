@@ -1,6 +1,6 @@
 use crate::{
     dynamics::{PredictionTrajectory, Trajectory},
-    prediction::PropagationTarget,
+    prediction::PredictionTarget,
 };
 
 use bevy::ecs::query::QueryData;
@@ -141,7 +141,7 @@ pub struct CelestialTrajectory<D> {
     marker: std::marker::PhantomData<D>,
 }
 
-impl PropagationTarget for CelestialTrajectory<Forward> {
+impl PredictionTarget for CelestialTrajectory<Forward> {
     type Propagator = NBodyPropagator<Forward>;
 
     #[inline]
@@ -162,7 +162,7 @@ impl PropagationTarget for CelestialTrajectory<Forward> {
     }
 }
 
-impl PropagationTarget for CelestialTrajectory<Backward> {
+impl PredictionTarget for CelestialTrajectory<Backward> {
     type Propagator = NBodyPropagator<Backward>;
 
     #[inline]

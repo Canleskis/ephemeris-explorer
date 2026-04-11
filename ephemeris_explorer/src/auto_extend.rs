@@ -1,7 +1,7 @@
 use crate::{
     MainState,
     prediction::{
-        ComputePrediction, PredictionControllerOf, PredictionTracker, PropagationTarget,
+        ComputePrediction, PredictionControllerOf, PredictionTarget, PredictionTracker,
         Synchronisation,
     },
     simulation::{SimulationTime, SimulationTimeSystems},
@@ -17,7 +17,7 @@ pub struct ExtendSettings {
 }
 
 /// Request for the simulation bounds to be extended to the given epoch by extending the prediction
-/// for the given [`PropagationTarget`]s. If `forced` is false, requests will be ignored when one is
+/// for the given [`PredictionTarget`]s. If `forced` is false, requests will be ignored when one is
 /// already being fulfilled. If true, a new request will result in any ongoing extension to be
 /// cancelled, even if the new one is already fullfilled.
 /// The `buffer` corresponds the additonal duration that will be computed whenever an extension is
@@ -86,15 +86,15 @@ impl ExtendAllRequest {
     }
 }
 
-pub struct ExtendPlugin<T: PropagationTarget>(pub std::marker::PhantomData<fn(T)>);
+pub struct ExtendPlugin<T: PredictionTarget>(pub std::marker::PhantomData<fn(T)>);
 
-impl<T: PropagationTarget> Default for ExtendPlugin<T> {
+impl<T: PredictionTarget> Default for ExtendPlugin<T> {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl<T: PropagationTarget> Plugin for ExtendPlugin<T> {
+impl<T: PredictionTarget> Plugin for ExtendPlugin<T> {
     fn build(&self, app: &mut App) {
         app.add_observer(handle_extend_request::<T>)
             .add_observer(handle_extend_all_request::<T>);
@@ -107,7 +107,7 @@ fn handle_extend_request<T>(
     sim_time: Res<SimulationTime>,
     query: Query<&PredictionTracker<T>>,
 ) where
-    T: PropagationTarget,
+    T: PredictionTarget,
 {
     let request = trigger.event();
 
@@ -132,7 +132,7 @@ fn handle_extend_all_request<T>(
     mut commands: Commands,
     query_controller: Query<Entity, With<PredictionControllerOf<T>>>,
 ) where
-    T: PropagationTarget,
+    T: PredictionTarget,
 {
     for entity in query_controller.iter() {
         commands.trigger(ExtendRequest {

@@ -1,6 +1,6 @@
 use crate::{
     dynamics::{PredictionTrajectory, StateVector, Trajectory},
-    prediction::PropagationTarget,
+    prediction::PredictionTarget,
 };
 
 use bevy::ecs::query::QueryData;
@@ -689,7 +689,7 @@ pub struct SpacecraftTrajectory {
     pub transitions: &'static mut SoiTransitions,
 }
 
-impl PropagationTarget for SpacecraftTrajectory {
+impl PredictionTarget for SpacecraftTrajectory {
     type Propagator = SpacecraftPropagator;
 
     #[inline]

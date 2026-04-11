@@ -28,7 +28,7 @@ use ephemeris::{
 };
 use ftime::{Duration, Epoch};
 
-pub trait PropagationTarget: QueryData + 'static {
+pub trait PredictionTarget: QueryData + 'static {
     type Propagator: Propagator<Trajectories: IntoIterator + Send + Sync>
         + IncrementalPropagator<Error: std::error::Error>
         + DirectionalPropagator
@@ -49,18 +49,18 @@ pub trait PropagationTarget: QueryData + 'static {
 }
 
 #[derive(Clone, Component, Deref, DerefMut)]
-pub struct PredictionPropagator<T: PropagationTarget>(pub T::Propagator);
+pub struct PredictionPropagator<T: PredictionTarget>(pub T::Propagator);
 
 // No relation for now since they don't support self-references which are coming in 0.19. For now,
 // manual insertions works since we only use them as static components.
 /// Component linking a propagator to the ECS trajectories it propagates.
 #[derive(Default, Debug, PartialEq, Eq, Component)]
-pub struct PredictionControllerOf<T: PropagationTarget>(
+pub struct PredictionControllerOf<T: PredictionTarget>(
     #[relationship] Vec<Entity>,
     std::marker::PhantomData<fn(T)>,
 );
 
-impl<T: PropagationTarget> PredictionControllerOf<T> {
+impl<T: PredictionTarget> PredictionControllerOf<T> {
     #[inline]
     pub fn new(entities: Vec<Entity>) -> Self {
         Self(entities, Default::default())
@@ -73,12 +73,12 @@ impl<T: PropagationTarget> PredictionControllerOf<T> {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub struct PredictionController<T: PropagationTarget>(
+pub struct PredictionController<T: PredictionTarget>(
     #[relationship] pub Entity,
     std::marker::PhantomData<fn(T)>,
 );
 
-impl<T: PropagationTarget> PredictionController<T> {
+impl<T: PredictionTarget> PredictionController<T> {
     #[inline]
     pub fn new(controller: Entity) -> Self {
         Self(controller, Default::default())
@@ -95,7 +95,7 @@ impl<T: PropagationTarget> PredictionController<T> {
 /// If `overwrite` is `false`, the previous prediction will be discarded. Otherwise, the propagator
 /// will only discard the part of the previous prediction that overlaps with the new prediction.
 #[derive(Clone, Copy, EntityEvent)]
-pub struct ComputePrediction<T: PropagationTarget> {
+pub struct ComputePrediction<T: PredictionTarget> {
     pub entity: Entity,
     pub propagator: Option<T::Propagator>,
     pub duration: Duration,
@@ -103,7 +103,7 @@ pub struct ComputePrediction<T: PropagationTarget> {
     pub overwrite: bool,
 }
 
-impl<T: PropagationTarget> ComputePrediction<T> {
+impl<T: PredictionTarget> ComputePrediction<T> {
     #[inline]
     pub fn new(
         entity: Entity,
@@ -168,7 +168,7 @@ impl<T> Default for PredictionPlugin<T> {
 
 impl<T> Plugin for PredictionPlugin<T>
 where
-    T: PropagationTarget,
+    T: PredictionTarget,
 {
     fn build(&self, app: &mut App) {
         app.add_observer(dispatch_predictions::<T>)
@@ -187,7 +187,7 @@ pub struct Predicting(pub usize);
 
 /// Tracks an asynchronous prediction for a specific propagation target of type `T`.
 #[derive(Component)]
-pub struct PredictionTracker<T: PropagationTarget> {
+pub struct PredictionTracker<T: PredictionTarget> {
     thread: bevy::tasks::Task<()>,
     recver: async_channel::Receiver<Propagation<T::Propagator>>,
     paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -197,7 +197,7 @@ pub struct PredictionTracker<T: PropagationTarget> {
     target: Epoch,
 }
 
-impl<T: PropagationTarget> PredictionTracker<T> {
+impl<T: PredictionTarget> PredictionTracker<T> {
     #[inline]
     pub fn progress(&self) -> f32 {
         ((self.current - self.start).as_seconds() / (self.target - self.start).as_seconds())
@@ -302,7 +302,7 @@ fn dispatch_predictions<T>(
     query: Query<(&PredictionPropagator<T>, Option<&PredictionTracker<T>>)>,
     mut commands: Commands,
 ) where
-    T: PropagationTarget,
+    T: PredictionTarget,
 {
     let name = pretty_type_name::pretty_type_name::<T::Propagator>();
 
@@ -369,7 +369,7 @@ async fn prediction_task<T>(
     sender: async_channel::Sender<Propagation<T::Propagator>>,
     paused: std::sync::Weak<std::sync::atomic::AtomicBool>,
 ) where
-    T: PropagationTarget,
+    T: PredictionTarget,
 {
     let name = pretty_type_name::pretty_type_name::<T>();
     info!("Computing {name} prediction until {end}");
@@ -414,7 +414,7 @@ pub fn process_prediction_data<T>(
     )>,
     mut query_target: Query<T>,
 ) where
-    T: PropagationTarget,
+    T: PredictionTarget,
 {
     for (entity, controller_of, mut propagator, mut tracker) in &mut query_prediction {
         if tracker.thread.is_finished() {
@@ -448,7 +448,7 @@ fn add_prediction_markers<T>(
     mut query_prediction: Query<(&PredictionControllerOf<T>, Option<&mut Predicting>)>,
     mut query_in_prediction: Query<&mut InPrediction>,
 ) where
-    T: PropagationTarget,
+    T: PredictionTarget,
 {
     if let Ok((controller_of, predicting)) = query_prediction.get_mut(trigger.event_target()) {
         match predicting {
@@ -478,7 +478,7 @@ fn remove_prediction_markers<T>(
     mut query_prediction: Query<(&PredictionControllerOf<T>, &mut Predicting)>,
     mut query_in_prediction: Query<&mut InPrediction>,
 ) where
-    T: PropagationTarget,
+    T: PredictionTarget,
 {
     if let Ok((controller_of, mut predicting)) = query_prediction.get_mut(trigger.event_target()) {
         **predicting = predicting.saturating_sub(1);

@@ -3,7 +3,7 @@ use crate::{
     auto_extend::AutoExtendSettings,
     dynamics::{Backward, CelestialTrajectory, Forward},
     load::SystemRoot,
-    prediction::{ComputePrediction, PredictionTracker, PropagationTarget, Synchronisation},
+    prediction::{ComputePrediction, PredictionTarget, PredictionTracker, Synchronisation},
     simulation::SimulationTime,
     ui::WindowsUiSet,
 };
@@ -42,7 +42,7 @@ impl PredictionPlannerWindow {
         time_taken: &mut Option<std::time::Duration>,
         delta: std::time::Duration,
     ) where
-        T: PropagationTarget,
+        T: PredictionTarget,
     {
         let (backward_duration, backward_label) = match parser(buffer) {
             Some(start) if tracker.is_none() => {

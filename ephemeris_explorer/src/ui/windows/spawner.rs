@@ -10,7 +10,7 @@ use crate::{
     load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
     prediction::{
         ComputePrediction, PredictionController, PredictionControllerOf, PredictionPropagator,
-        PropagationTarget, Synchronisation,
+        PredictionTarget, Synchronisation,
     },
     simulation::SimulationTime,
     ui::{
@@ -143,7 +143,7 @@ impl ShipSpawnerWindow {
                     index: 99,
                 },
                 PredictionPropagator::<SpacecraftTrajectory>(
-                    <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
+                    <SpacecraftTrajectory as PredictionTarget>::Propagator::new(
                         data.start,
                         sv,
                         INITIAL_ADAPTIVE_PARAMS,
@@ -412,7 +412,7 @@ impl ShipSpawnerWindow {
 
             commands.trigger(ComputePrediction::<SpacecraftTrajectory>::new(
                 preview,
-                <SpacecraftTrajectory as PropagationTarget>::Propagator::new(
+                <SpacecraftTrajectory as PredictionTarget>::Propagator::new(
                     data.start,
                     sv,
                     INITIAL_ADAPTIVE_PARAMS,
