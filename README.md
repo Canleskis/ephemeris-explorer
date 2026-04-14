@@ -68,10 +68,11 @@ Allows to export the current state of the system to a file, selecting which bodi
 
 ### Loading a System
 
-Allows loading a system from a directory. The directory should contain four files: `ephemeris.json` for the ephemerides configuration, `hierarchy.json`, `state.json` for the initial state of the system, and a `skybox.png`. The initial state file should be a JSON containing the state of the system. See `export-solar-system` for a python program that generates such files using NASA's development ephemerides and [skyfield](https://rhodesmill.org/skyfield/). It should be formatted as follows:
+Allows loading a system from a directory. The directory should contain three files: `ephemeris.json` for the ephemerides configuration, a `skybox.png`, and a `state.json` for the initial state of the system, which should be formatted as follows:
 
 ```json
 {
+    "name": "System name",
     "epoch": "2000-01-01 00:00:00 TAI",
     "bodies": [
         {
@@ -106,7 +107,7 @@ This implementation was custom made for this project and is not validated in any
 
 - [x] Implement multiple types of integrators appropriate for different problems (symplectic, linear multistep, Runge-Kutta-Nystrom, etc.).
 - [x] Evaluation of accuracy of solar system simulations versus data from JPL and other sources.
-- [ ] Improve UI/UX related to trajectory plotting for spacecrafts. Display more information such as closest approach, SOI changes, etc.
+- [x] Improve UI/UX related to trajectory plotting for spacecrafts. Display more information such as closest approach, SOI changes, etc.
 
 ### Medium term
 
