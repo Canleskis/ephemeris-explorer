@@ -489,14 +489,11 @@ fn remove_prediction_markers<T>(
         }
 
         for entity in controller_of.iter() {
-            match query_in_prediction.get_mut(entity) {
-                Ok(mut in_prediction) => {
-                    **in_prediction = in_prediction.saturating_sub(1);
-                    if **in_prediction == 0 {
-                        commands.entity(entity).remove::<InPrediction>();
-                    }
+            if let Ok(mut in_prediction) = query_in_prediction.get_mut(entity) {
+                **in_prediction = in_prediction.saturating_sub(1);
+                if **in_prediction == 0 {
+                    commands.entity(entity).remove::<InPrediction>();
                 }
-                Err(_) => unreachable!(),
             }
         }
     };

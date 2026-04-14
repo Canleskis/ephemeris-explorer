@@ -278,7 +278,7 @@ fn manoeuvre_tooltip_window(
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.style_mut().interaction.selectable_labels = false;
-                    ui.label(format!("{} — Burn #{}", name.as_str(), burn_idx + 1));
+                    ui.strong(format!("{} — Burn #{}", name.as_str(), burn_idx + 1));
                 });
             });
             ui.separator();
@@ -677,7 +677,7 @@ fn trajectory_tooltips_window(
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.style_mut().interaction.selectable_labels = false;
                         let suffix = if tooltip_data.len() == 1 { "" } else { "s" };
-                        ui.label(format!(
+                        ui.strong(format!(
                             "{} — {} crossing{} ({})",
                             name.as_str(),
                             tooltip_data.len(),
