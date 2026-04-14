@@ -3,7 +3,7 @@
 // we can reimplement what we need.
 
 use crate::{
-    analysis::BurnPlotSegment,
+    analysis::{BurnPlotSegment, Periapsis},
     flight_plan::FlightPlan,
     selection::Selectable,
     ui::{PlotPoints, PlotSourceOf},
@@ -50,6 +50,11 @@ pub struct ManoeuvreHit {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct PeriapsisHit {
+    pub depth: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct BodyHit {
     pub depth: f32,
 }
@@ -58,6 +63,7 @@ pub struct BodyHit {
 pub enum HitData {
     Trajectory(TrajectoryHits),
     Manoeuvre(ManoeuvreHit),
+    Periapsis(PeriapsisHit),
     Body(BodyHit),
     Ui,
 }
@@ -67,6 +73,7 @@ impl HitData {
         match self {
             HitData::Trajectory(hits) => hits.min_distance().unwrap_or(f32::MAX),
             HitData::Manoeuvre(hit) => hit.depth,
+            HitData::Periapsis(hit) => hit.depth,
             HitData::Body(hit) => hit.depth,
             HitData::Ui => -1_000_000.0,
         }
@@ -108,7 +115,7 @@ impl Plugin for CustomPickingPlugin {
                 (
                     (
                         body_picking,
-                        (manoeuvre_picking, trajectory_picking),
+                        (manoeuvre_picking, periapsis_picking, trajectory_picking),
                         // Some inputs are not always properly updated yet when this runs since it's
                         // not guaranteed to run after egui's end pass, but this is better than
                         // forcing all systems that need to run after picking to run after egui's
@@ -246,6 +253,40 @@ pub fn manoeuvre_picking(
         .min_by(|(_, a), (_, b)| a.depth.total_cmp(&b.depth))
     {
         events.write(PointerHit(entity, HitData::Manoeuvre(data)));
+    }
+}
+
+pub const PERIAPSIS_SIZE: f32 = 1e-2;
+
+pub fn periapsis_picking(
+    ray_map: Res<RayMap>,
+    query_plot: Query<(Entity, &Periapsis, &PlotPoints)>,
+    perspective: Single<&Projection, With<Camera>>,
+    mut events: MessageWriter<PointerHit>,
+) {
+    let Projection::Perspective(perspective) = *perspective else {
+        unreachable!("Camera is not perspective");
+    };
+
+    let Some((_, ray)) = ray_map.iter().next() else {
+        return;
+    };
+    let ray = &bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+
+    if let Some((entity, data)) = query_plot
+        .iter()
+        .flat_map(|(entity, periapsis, points)| {
+            let world_pos = points.evaluate(periapsis.time)?;
+            let r = world_pos.distance(Vec3::from(ray.origin));
+            ray.sphere_intersection_at(&BoundingSphere::new(
+                world_pos,
+                r * perspective.fov * PERIAPSIS_SIZE * 2.0,
+            ))
+            .map(|depth| (entity, PeriapsisHit { depth }))
+        })
+        .min_by(|(_, a), (_, b)| a.depth.total_cmp(&b.depth))
+    {
+        events.write(PointerHit(entity, HitData::Periapsis(data)));
     }
 }
 

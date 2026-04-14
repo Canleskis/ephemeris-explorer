@@ -67,7 +67,8 @@ impl Plugin for OrbitalAnalysisPlugin {
                     (spawn_drawn_soi, despawn_drawn_soi).chain(),
                 )
                     .run_if(in_state(MainState::Running)),
-            );
+            )
+            .add_observer(compute_flyby_periapsis);
     }
 }
 
@@ -135,14 +136,6 @@ fn setup_initial_soi_transition(
         transitions.insert(Epoch::MIN, soi.unwrap_or(*root));
     }
 }
-
-pub struct TrajectorySegment<S> {
-    pub time: Epoch,
-    pub reference: Entity,
-    pub segment: S,
-}
-
-// If we make orbital phases flat, we still need to easily get the next transition
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OrbitPlotReference {
@@ -316,6 +309,52 @@ fn setup_segment_plotting(
     }
 }
 
+#[derive(Clone, Copy, Debug, Component)]
+pub struct Periapsis {
+    pub time: Epoch,
+    pub distance: f64,
+}
+
+fn compute_flyby_periapsis(
+    trigger: On<Add, PlotSegment>,
+    query_segment: Query<(Entity, &PlotSegment, &PlotConfig, &PlotSource)>,
+    query_sources: Query<&Trajectory>,
+    query_transitions: Query<&SoiTransitions>,
+    mut commands: Commands,
+) {
+    // When a Flyby is added, it means it is complete so we can compute this immediately even if the
+    // prediction is not complete.
+    if let Ok((entity, segment, plot, source)) = query_segment.get(trigger.event_target()) {
+        if !matches!(segment, PlotSegment::Flyby) {
+            return;
+        }
+
+        let Ok(trajectory) = query_sources.get(source.entity) else {
+            return;
+        };
+        let Ok(transitions) = query_transitions.get(source.entity) else {
+            return;
+        };
+        let reference_entity = transitions.soi_at(plot.start);
+        let Ok(reference) = reference_entity.map(|e| query_sources.get(e)).transpose() else {
+            return;
+        };
+
+        let relative = RelativeTrajectory::new(trajectory, reference);
+
+        let Some(time) =
+            relative.closest_separation_between(plot.start, plot.end, 0.001, 1000, |t1, t2, at| {
+                t1.distance_squared_at(t2, at).unwrap()
+            })
+        else {
+            return;
+        };
+        let distance = relative.position(time).unwrap().length();
+
+        commands.entity(entity).insert(Periapsis { time, distance });
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Component, Hash)]
 pub struct OrbitTarget(pub Option<Entity>);
 
@@ -365,9 +404,7 @@ fn setup_target_plotting(
         let relative = RelativeTrajectory::new(&*trajectory, Some(&*target_trajectory));
         if let Some(time) =
             relative.closest_separation_between(plot.start, plot.end, 0.001, 1000, |t1, t2, at| {
-                t1.position(at)
-                    .unwrap()
-                    .distance_squared(t2.position(at).unwrap())
+                t1.distance_squared_at(t2, at).unwrap()
             })
         {
             for (plot_entity, plot_config) in query_plots.iter_many(&**source_of) {

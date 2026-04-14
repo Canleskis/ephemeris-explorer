@@ -131,6 +131,11 @@ impl Trajectory {
     pub fn heap_size(&self) -> usize {
         self.read().deep_size_of()
     }
+
+    #[inline]
+    pub fn distance_squared_at(&self, other: &Trajectory, at: Epoch) -> Option<f64> {
+        Some(self.position(at)?.distance_squared(other.position(at)?))
+    }
 }
 
 impl BoundedTrajectory for Trajectory {

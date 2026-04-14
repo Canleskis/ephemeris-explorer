@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    analysis::{BurnPlotSegment, OverlappingPlotSegment, PlotSegment},
+    analysis::{BurnPlotSegment, OverlappingPlotSegment, Periapsis, PlotSegment},
     camera::CameraProximityIgnore,
     dynamics::{SoiTransitions, Trajectory},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
@@ -9,9 +9,9 @@ use crate::{
     prediction::InPrediction,
     simulation::SimulationTime,
     ui::{
-        HitData, Length, MANOEUVRE_SIZE, MarkerGizmoConfigGroup, PICK_THRESHOLD, PickingSet,
-        PlotConfig, PlotPoints, PlotSource, PlotSourceOf, PointerHit, PointerHover,
-        WorldInteraction, WorldUiSet,
+        GizmosTriangleExt, HitData, Length, MANOEUVRE_SIZE, MarkerGizmoConfigGroup, PERIAPSIS_SIZE,
+        PICK_THRESHOLD, PickingSet, PlotConfig, PlotPoints, PlotSource, PlotSourceOf, PointerHit,
+        PointerHover, WorldInteraction, WorldUiSet,
     },
     warp::StartWarp,
 };
@@ -38,7 +38,11 @@ impl Plugin for TooltipPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    (plot_manoeuvres_markers, plot_transitions_markers),
+                    (
+                        plot_manoeuvre_markers,
+                        plot_transition_markers,
+                        plot_periapsis_marker,
+                    ),
                     (
                         (
                             manoeuvre_dragging,
@@ -51,7 +55,7 @@ impl Plugin for TooltipPlugin {
                         .before(bevy_egui::EguiPostUpdateSet::EndPass),
                     (
                         trajectory_tooltips_world.after(bevy_egui::EguiPostUpdateSet::EndPass),
-                        separation_tooltip_gizmo,
+                        separation_tooltip_world,
                     ),
                 )
                     .chain()
@@ -64,6 +68,7 @@ impl Plugin for TooltipPlugin {
                 (
                     trajectory_tooltips_window,
                     manoeuvre_tooltip_window,
+                    periapsis_tooltip_window,
                     separation_tooltip_window,
                 )
                     .in_set(WorldUiSet)
@@ -72,7 +77,7 @@ impl Plugin for TooltipPlugin {
     }
 }
 
-fn plot_manoeuvres_markers(
+fn plot_manoeuvre_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&Trajectory, &FlightPlan, &PlotSourceOf)>,
     query_plot: Query<&PlotPoints, With<BurnPlotSegment>>,
@@ -114,7 +119,7 @@ fn plot_manoeuvres_markers(
     }
 }
 
-fn plot_transitions_markers(
+fn plot_transition_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&SoiTransitions, &PlotSourceOf)>,
     query_plot: Query<(&PlotPoints, &PlotConfig), Without<OverlappingPlotSegment>>,
@@ -146,10 +151,37 @@ fn plot_transitions_markers(
     }
 }
 
+fn plot_periapsis_marker(
+    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
+    query_segment: Query<(&Periapsis, &PlotPoints, &PlotConfig)>,
+    camera: Single<(&GlobalTransform, &Projection)>,
+) {
+    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
+
+    for (periapsis, points, plot) in query_segment.iter() {
+        let Some(world_pos) = points.evaluate(periapsis.time) else {
+            continue;
+        };
+
+        let direction = camera_transform.translation() - world_pos;
+        let size = direction.length() * perspective.fov * PERIAPSIS_SIZE;
+
+        gizmos.triangle_3d(
+            Transform::from_translation(world_pos - camera_transform.down() * (size / 2.0))
+                .looking_to(direction, camera_transform.down())
+                .to_isometry(),
+            Vec2::splat(size),
+            plot.color,
+        );
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ManoeuvreTooltipData {
     pub id: uuid::Uuid,
-    time: Epoch,
+    pub time: Epoch,
     pub position: Option<Vec3>,
     pub dragging: bool,
 }
@@ -252,6 +284,60 @@ fn manoeuvre_tooltip_window(
             ui.separator();
             ui.label(burn.start.to_string());
         });
+}
+
+fn periapsis_tooltip_window(
+    hover: Res<PointerHover>,
+    query_plot: Query<(&Name, &Periapsis, &PlotPoints)>,
+    camera: Single<(&GlobalTransform, &Camera)>,
+    mut contexts: EguiContexts,
+) {
+    let Ok(ctx) = contexts.ctx_mut() else { return };
+
+    let (camera_transform, camera) = *camera;
+
+    if let Some(PointerHit(entity, HitData::Periapsis(_))) = &hover.0
+        && let Ok((name, periapsis, points)) = query_plot.get(*entity)
+    {
+        let Some(position) = points.evaluate(periapsis.time) else {
+            return;
+        };
+        let Ok(vp_position) = camera.world_to_viewport(camera_transform, position) else {
+            return;
+        };
+        let window_position = vp_position + Vec2::new(-110.0, -100.0);
+        egui::Window::new("Periapsis")
+            .collapsible(false)
+            .resizable(false)
+            .fade_in(false)
+            .fade_out(false)
+            .title_bar(false)
+            .constrain(false)
+            .fixed_size([220.0, 0.0])
+            .fixed_pos(window_position.to_array())
+            .show(ctx, |ui| {
+                ui.style_mut().interaction.selectable_labels = false;
+
+                ui.centered_and_justified(|ui| {
+                    ui.strong(format!("{} Periapsis", name));
+                });
+
+                ui.separator();
+
+                egui::Grid::new("periapsis_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Time:");
+                        ui.label(periapsis.time.to_string());
+                        ui.end_row();
+
+                        ui.label("Distance:");
+                        ui.label(format!("{}", Length::km(periapsis.distance)));
+                        ui.end_row();
+                    });
+            });
+    }
 }
 
 // A bit janky by nature but still useful.
@@ -780,7 +866,7 @@ fn update_separation_tooltip(
     }
 }
 
-fn separation_tooltip_gizmo(
+fn separation_tooltip_world(
     query: Query<&SeparationTooltip>,
     camera: Single<(&GlobalTransform, &Projection)>,
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,

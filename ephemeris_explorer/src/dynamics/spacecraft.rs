@@ -464,6 +464,8 @@ where
         let t1 = self.time();
         let p1 = self.position();
         for (entity, body) in self.context().iter() {
+            // The trajectory passed here always has at least two points because branching this
+            // propagator creates a trajectory with one point, and we just added a second one.
             if let Some((time, pos, rate)) = body.soi_transition_with(&*traj, t0, t1, p0, p1) {
                 if rate.is_sign_negative() {
                     transitions.insert(time, *entity);

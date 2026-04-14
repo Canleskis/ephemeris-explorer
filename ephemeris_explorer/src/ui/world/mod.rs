@@ -39,3 +39,34 @@ impl Plugin for WorldUiPlugin {
         ));
     }
 }
+
+pub trait GizmosTriangleExt {
+    fn triangle_3d(&mut self, isometry: impl Into<Isometry3d>, size: Vec2, color: impl Into<Color>);
+}
+
+impl<Config, Clear> GizmosTriangleExt for Gizmos<'_, '_, Config, Clear>
+where
+    Config: GizmoConfigGroup,
+    Clear: 'static + Send + Sync,
+{
+    #[inline]
+    fn triangle_3d(
+        &mut self,
+        isometry: impl Into<Isometry3d>,
+        size: Vec2,
+        color: impl Into<Color>,
+    ) {
+        let isometry = isometry.into();
+        let [top, br, bl] = triangle_inner(size).map(|v| isometry * v.extend(0.0));
+        self.lineloop([top, br, bl], color);
+    }
+}
+
+#[inline]
+fn triangle_inner(size: Vec2) -> [Vec2; 3] {
+    let half = size / 2.0;
+    let top = Vec2::new(0.0, half.y);
+    let br = Vec2::new(half.x, -half.y);
+    let bl = Vec2::new(-half.x, -half.y);
+    [top, br, bl]
+}
