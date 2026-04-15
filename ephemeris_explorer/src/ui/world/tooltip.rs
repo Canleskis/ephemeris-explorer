@@ -333,7 +333,7 @@ fn periapsis_tooltip_window(
                         ui.end_row();
 
                         ui.label("Distance:");
-                        ui.label(format!("{}", Length::km(periapsis.distance)));
+                        ui.label(format!("{:.2}", Length::km(periapsis.distance)));
                         ui.end_row();
                     });
             });
@@ -720,7 +720,7 @@ fn trajectory_tooltips_window(
                                             .show(ui, |ui| {
                                                 if let Some(position) = relative.position(time) {
                                                     ui.label(format!(
-                                                        "Distance: {}",
+                                                        "Distance: {:.2}",
                                                         Length::km(position.length())
                                                     ));
                                                 }
@@ -953,7 +953,10 @@ fn separation_tooltip_window(
             .fixed_pos(window_position.to_array())
             .fixed_size([200.0, 200.0])
             .show(ctx, |ui| {
-                ui.label(format!("Separation: {}", Length::km(tooltip.data.distance)));
+                ui.label(format!(
+                    "Separation: {:.2}",
+                    Length::km(tooltip.data.distance)
+                ));
             });
     }
 }

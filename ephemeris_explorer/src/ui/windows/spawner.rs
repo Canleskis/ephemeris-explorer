@@ -180,7 +180,7 @@ impl ShipSpawnerWindow {
         egui::Window::new("Ship spawner")
             .open(&mut open)
             .show(ctx, |ui| {
-                if ui.button("From file").clicked() {
+                if ui.button("From file(s)").clicked() {
                     commands.dialog().load_multiple_files::<ShipFile>();
                 }
 
@@ -250,10 +250,6 @@ impl ShipSpawnerWindow {
                                         .changed()
                                     {
                                         window.valid_preview = false;
-                                        // plot.reference = data.reference;
-                                        // commands
-                                        //     .entity(preview)
-                                        //     .insert(PlotSource::new(preview, data.reference));
                                     }
                                 });
 
@@ -296,7 +292,6 @@ impl ShipSpawnerWindow {
                                     if y.changed() {
                                         window.valid_preview = false;
                                     }
-                                    ui.label("km");
                                 });
                                 ui.horizontal(|ui| {
                                     let speed = speed(pos.z);
@@ -310,7 +305,6 @@ impl ShipSpawnerWindow {
                                     if z.changed() {
                                         window.valid_preview = false;
                                     }
-                                    ui.label("km");
                                 });
                             });
                         IdentedInfo::new("Velocity", &mut data.state_vector.velocity)
@@ -328,7 +322,6 @@ impl ShipSpawnerWindow {
                                     if x.changed() {
                                         window.valid_preview = false;
                                     }
-                                    ui.label("km/s");
                                 });
                                 ui.horizontal(|ui| {
                                     let speed = speed(vel.y);
@@ -342,7 +335,6 @@ impl ShipSpawnerWindow {
                                     if y.changed() {
                                         window.valid_preview = false;
                                     }
-                                    ui.label("km/s");
                                 });
                                 ui.horizontal(|ui| {
                                     let speed = speed(vel.z);
@@ -356,7 +348,6 @@ impl ShipSpawnerWindow {
                                     if z.changed() {
                                         window.valid_preview = false;
                                     }
-                                    ui.label("km/s");
                                 });
                             });
                     });

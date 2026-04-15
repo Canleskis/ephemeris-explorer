@@ -382,30 +382,41 @@ impl Length {
     pub fn as_km(&self) -> f64 {
         self.0.get::<km>()
     }
+
+    #[inline]
+    pub fn as_value_and_unit(&self) -> (f64, &'static str) {
+        let base = &self.0;
+        if base.abs() >= uom::si::f64::Length::new::<ly>(0.1) {
+            (base.get::<ly>(), "ly")
+        } else if base.abs() >= uom::si::f64::Length::new::<au>(0.1) {
+            (base.get::<au>(), "AU")
+        } else if base.abs() >= uom::si::f64::Length::new::<km>(1.0) {
+            (base.get::<km>(), "km")
+        } else if base.abs() >= uom::si::f64::Length::new::<m>(1.0) {
+            (base.get::<m>(), "m")
+        } else if base.abs() >= uom::si::f64::Length::new::<cm>(1.0) {
+            (base.get::<cm>(), "cm")
+        } else if base.abs() >= uom::si::f64::Length::new::<mm>(1.0) {
+            (base.get::<mm>(), "mm")
+        } else if base.abs() >= uom::si::f64::Length::new::<um>(1.0) {
+            (base.get::<um>(), "µm")
+        } else if base.abs() >= uom::si::f64::Length::new::<nm>(1.0) {
+            (base.get::<nm>(), "nm")
+        } else {
+            (base.get::<m>(), "m")
+        }
+    }
 }
 
 impl std::fmt::Display for Length {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let base = &self.0;
-        if base.abs() >= uom::si::f64::Length::new::<ly>(0.1) {
-            write!(f, "{} ly", nformat!("{:.2}", base.get::<ly>()))
-        } else if base.abs() >= uom::si::f64::Length::new::<au>(0.1) {
-            write!(f, "{} AU", nformat!("{:.2}", base.get::<au>()))
-        } else if base.abs() >= uom::si::f64::Length::new::<km>(1.0) {
-            write!(f, "{} km", nformat!("{:.2}", base.get::<km>()))
-        } else if base.abs() >= uom::si::f64::Length::new::<m>(1.0) {
-            write!(f, "{} m", nformat!("{:.2}", base.get::<m>()))
-        } else if base.abs() >= uom::si::f64::Length::new::<cm>(1.0) {
-            write!(f, "{} cm", nformat!("{:.2}", base.get::<cm>()))
-        } else if base.abs() >= uom::si::f64::Length::new::<mm>(1.0) {
-            write!(f, "{} mm", nformat!("{:.2}", base.get::<mm>()))
-        } else if base.abs() >= uom::si::f64::Length::new::<um>(1.0) {
-            write!(f, "{} µm", nformat!("{:.2}", base.get::<um>()))
-        } else if base.abs() >= uom::si::f64::Length::new::<nm>(1.0) {
-            write!(f, "{} nm", nformat!("{:.2}", base.get::<nm>()))
+        let (val, unit) = self.as_value_and_unit();
+
+        if let Some(precision) = f.precision() {
+            write!(f, "{} {}", nformat!("{:.*}", precision, val), unit)
         } else {
-            write!(f, "{} m", nformat!("{:.2}", base.get::<m>()))
+            write!(f, "{} {}", nformat!("{}", val), unit)
         }
     }
 }
@@ -431,22 +442,33 @@ impl Velocity {
     pub fn as_kps(&self) -> f64 {
         self.0.get::<kps>()
     }
+
+    #[inline]
+    pub fn as_value_and_unit(&self) -> (f64, &'static str) {
+        let base = &self.0;
+        if base.abs() >= uom::si::f64::Velocity::new::<kps>(1.0) {
+            (base.get::<kps>(), "km/s")
+        } else if base.abs() >= uom::si::f64::Velocity::new::<mps>(1.0) {
+            (base.get::<mps>(), "m/s")
+        } else if base.abs() >= uom::si::f64::Velocity::new::<cmps>(1.0) {
+            (base.get::<cmps>(), "cm/s")
+        } else if base.abs() >= uom::si::f64::Velocity::new::<mmps>(1.0) {
+            (base.get::<mmps>(), "mm/s")
+        } else {
+            (base.get::<mps>(), "m/s")
+        }
+    }
 }
 
 impl std::fmt::Display for Velocity {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let base = &self.0;
-        if base.abs() >= uom::si::f64::Velocity::new::<kps>(1.0) {
-            write!(f, "{} km/s", nformat!("{:.2}", base.get::<kps>()))
-        } else if base.abs() >= uom::si::f64::Velocity::new::<mps>(1.0) {
-            write!(f, "{} m/s", nformat!("{:.2}", base.get::<mps>()))
-        } else if base.abs() >= uom::si::f64::Velocity::new::<cmps>(1.0) {
-            write!(f, "{} cm/s", nformat!("{:.2}", base.get::<cmps>()))
-        } else if base.abs() >= uom::si::f64::Velocity::new::<mmps>(1.0) {
-            write!(f, "{} mm/s", nformat!("{:.2}", base.get::<mmps>()))
+        let (val, unit) = self.as_value_and_unit();
+
+        if let Some(precision) = f.precision() {
+            write!(f, "{} {}", nformat!("{:.*}", precision, val), unit)
         } else {
-            write!(f, "{} m/s", nformat!("{:.2}", base.get::<mps>()))
+            write!(f, "{} {}", nformat!("{}", val), unit)
         }
     }
 }
@@ -464,30 +486,51 @@ pub struct Acceleration(uom::si::f64::Acceleration);
 
 impl Acceleration {
     #[inline]
+    pub fn kps2(acceleration: f64) -> Self {
+        Self(uom::si::f64::Acceleration::new::<kps2>(acceleration))
+    }
+
+    #[inline]
     pub fn mps2(acceleration: f64) -> Self {
         Self(uom::si::f64::Acceleration::new::<mps2>(acceleration))
+    }
+
+    #[inline]
+    pub fn as_kps2(&self) -> f64 {
+        self.0.get::<kps2>()
     }
 
     #[inline]
     pub fn as_mps2(&self) -> f64 {
         self.0.get::<mps2>()
     }
+
+    #[inline]
+    pub fn as_value_and_unit(&self) -> (f64, &'static str) {
+        let base = &self.0;
+        if base.abs() >= uom::si::f64::Acceleration::new::<kps2>(1.0) {
+            (base.get::<kps2>(), "km/s²")
+        } else if base.abs() >= uom::si::f64::Acceleration::new::<mps2>(1.0) {
+            (base.get::<mps2>(), "m/s²")
+        } else if base.abs() >= uom::si::f64::Acceleration::new::<cmps2>(1.0) {
+            (base.get::<cmps2>(), "cm/s²")
+        } else if base.abs() >= uom::si::f64::Acceleration::new::<mmps2>(1.0) {
+            (base.get::<mmps2>(), "mm/s²")
+        } else {
+            (base.get::<mps2>(), "m/s²")
+        }
+    }
 }
 
 impl std::fmt::Display for Acceleration {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let base = &self.0;
-        if base.abs() >= uom::si::f64::Acceleration::new::<kps2>(1.0) {
-            write!(f, "{} km/s²", nformat!("{:.2}", base.get::<kps2>()))
-        } else if base.abs() >= uom::si::f64::Acceleration::new::<mps2>(1.0) {
-            write!(f, "{} m/s²", nformat!("{:.2}", base.get::<mps2>()))
-        } else if base.abs() >= uom::si::f64::Acceleration::new::<cmps2>(1.0) {
-            write!(f, "{} cm/s²", nformat!("{:.2}", base.get::<cmps2>()))
-        } else if base.abs() >= uom::si::f64::Acceleration::new::<mmps2>(1.0) {
-            write!(f, "{} mm/s²", nformat!("{:.2}", base.get::<mmps2>()))
+        let (val, unit) = self.as_value_and_unit();
+
+        if let Some(precision) = f.precision() {
+            write!(f, "{} {}", nformat!("{:.*}", precision, val), unit)
         } else {
-            write!(f, "{} m/s²", nformat!("{:.2}", base.get::<mps2>()))
+            write!(f, "{} {}", nformat!("{}", val), unit)
         }
     }
 }
@@ -526,7 +569,8 @@ fn epoch_parser_clamped(min: Epoch, max: Epoch) -> impl Fn(&str) -> Option<Epoch
 }
 
 pub fn length_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
-    Length::km(value).to_string()
+    let (val, unit) = Length::km(value).as_value_and_unit();
+    format!("{} {}", fixed_decimals(val), unit)
 }
 
 pub fn length_parser(text: &str) -> Option<f64> {
@@ -536,7 +580,8 @@ pub fn length_parser(text: &str) -> Option<f64> {
 }
 
 pub fn velocity_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
-    Velocity::kps(value).to_string()
+    let (val, unit) = Velocity::kps(value).as_value_and_unit();
+    format!("{} {}", fixed_decimals(val), unit)
 }
 
 pub fn velocity_parser(text: &str) -> Option<f64> {
@@ -546,11 +591,28 @@ pub fn velocity_parser(text: &str) -> Option<f64> {
 }
 
 pub fn acceleration_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
-    Acceleration::mps2(value).to_string()
+    let (val, unit) = Acceleration::kps2(value).as_value_and_unit();
+    format!("{} {}", fixed_decimals(val), unit)
 }
 
 pub fn acceleration_parser(text: &str) -> Option<f64> {
     Acceleration::from_str(&text.replace(',', ""))
         .ok()
-        .map(|a| a.as_mps2())
+        .map(|a| a.as_kps2())
+}
+
+// Adapted from egui::emath::format_with_decimals_in_range
+pub fn fixed_decimals(value: f64) -> String {
+    let min_decimals = 2;
+    let max_decimals = 10;
+
+    for decimals in min_decimals..max_decimals {
+        let text = format!("{value:.decimals$}");
+        let epsilon = 4.0 * f32::EPSILON;
+        if egui::emath::almost_equal(text.parse::<f32>().unwrap(), value as f32, epsilon) {
+            return nformat!("{value:.decimals$}");
+        }
+    }
+
+    nformat!("{value:.max_decimals$}")
 }

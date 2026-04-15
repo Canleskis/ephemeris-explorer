@@ -274,7 +274,7 @@ impl BodyInfoWindow {
                             .hover_text(format!("Distance relative to {plot_reference_name}"))
                             .show(ui, |ui, distance| {
                                 if let Some(distance) = distance {
-                                    ui.label(Length::km(distance).to_string());
+                                    ui.label(format!("{:.2}", Length::km(distance)));
                                 } else {
                                     ui.label("N/A");
                                 }
@@ -283,7 +283,7 @@ impl BodyInfoWindow {
                             .hover_text(format!("Speed relative to {plot_reference_name}"))
                             .show(ui, |ui, speed| {
                                 if let Some(speed) = speed {
-                                    ui.label(Velocity::kps(speed).to_string());
+                                    ui.label(format!("{:.2}", Velocity::kps(speed)));
                                 } else {
                                     ui.label("N/A");
                                 }
@@ -301,10 +301,10 @@ impl BodyInfoWindow {
                                         "Position relative to {plot_reference_name}"
                                     ))
                                     .show(ui, |ui, position| {
-                                        if let Some(position) = position {
-                                            ui.label(format!("x: {}", Length::km(position.x)));
-                                            ui.label(format!("y: {}", Length::km(position.y)));
-                                            ui.label(format!("z: {}", Length::km(position.z)));
+                                        if let Some(pos) = position {
+                                            ui.label(format!("x: {:.6}", Length::km(pos.x)));
+                                            ui.label(format!("y: {:.6}", Length::km(pos.y)));
+                                            ui.label(format!("z: {:.6}", Length::km(pos.z)));
                                         } else {
                                             ui.label("x: N/A");
                                             ui.label("y: N/A");
@@ -316,10 +316,10 @@ impl BodyInfoWindow {
                                         "Velocity relative to {plot_reference_name}"
                                     ))
                                     .show(ui, |ui, velocity| {
-                                        if let Some(velocity) = velocity {
-                                            ui.label(format!("x: {}", Velocity::kps(velocity.x)));
-                                            ui.label(format!("y: {}", Velocity::kps(velocity.y)));
-                                            ui.label(format!("z: {}", Velocity::kps(velocity.z)));
+                                        if let Some(vel) = velocity {
+                                            ui.label(format!("x: {:.3}", Velocity::kps(vel.x)));
+                                            ui.label(format!("y: {:.3}", Velocity::kps(vel.y)));
+                                            ui.label(format!("z: {:.3}", Velocity::kps(vel.z)));
                                         } else {
                                             ui.label("x: N/A");
                                             ui.label("y: N/A");
