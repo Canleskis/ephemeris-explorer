@@ -879,7 +879,7 @@ fn separation_tooltip_world(
 
     for tooltip in query.iter() {
         let Some(position) = tooltip.data.position else {
-            return;
+            continue;
         };
         let direction = camera_transform.translation() - position;
         let size = direction.length() * 6e-3 * perspective.fov;
