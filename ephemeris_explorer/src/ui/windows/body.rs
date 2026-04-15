@@ -604,8 +604,8 @@ impl BodyInfoWindow {
                     ui.add_space(5.0);
 
                     ui.label(format!(
-                        "Total delta-v: {:.3} km/s",
-                        flight_plan.total_delta_v() / 1e3
+                        "Total delta-v: {:.3}",
+                        Velocity::kps(flight_plan.total_delta_v())
                     ));
 
                     ui.add_space(2.0);
@@ -855,7 +855,7 @@ impl BodyInfoWindow {
 
                 ui.add_space(2.0);
 
-                ui.label(format!("Delta-v: {:.3} km/s", burn.delta_v() / 1e3));
+                ui.label(format!("Delta-v: {:.3}", Velocity::kps(burn.delta_v())));
             });
 
         changed

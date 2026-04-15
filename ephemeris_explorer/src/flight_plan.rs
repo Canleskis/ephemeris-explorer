@@ -116,7 +116,7 @@ impl Burn {
         (
             self.start,
             self.end(),
-            ConstantThrust::new(self.acceleration / 1e3, self.reference_frame()),
+            ConstantThrust::new(self.acceleration, self.reference_frame()),
         )
     }
 }
