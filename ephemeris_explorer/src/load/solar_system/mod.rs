@@ -2,7 +2,7 @@ pub mod loaders;
 
 pub use loaders::*;
 
-use crate::MainState;
+use crate::{MainState, flight_plan::IntegrationMethod};
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
@@ -215,9 +215,11 @@ pub struct BurnDe {
 
 #[derive(Clone, Asset, TypePath, Debug, serde::Deserialize)]
 pub struct Ship {
+    pub name: String,
+    pub integrator: IntegrationMethod,
+    pub tolerance: f64,
     pub start: Epoch,
     pub end: Epoch,
-    pub name: String,
     pub position: DVec3,
     pub velocity: DVec3,
     pub burns: Vec<BurnDe>,
@@ -226,6 +228,8 @@ pub struct Ship {
 impl Ship {
     pub fn new(
         name: String,
+        integrator: IntegrationMethod,
+        tolerance: f64,
         start: Epoch,
         end: Epoch,
         position: DVec3,
@@ -234,6 +238,8 @@ impl Ship {
     ) -> Self {
         Ship {
             name,
+            integrator,
+            tolerance,
             start,
             end,
             position,

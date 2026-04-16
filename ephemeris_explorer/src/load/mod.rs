@@ -549,7 +549,19 @@ fn spawn_ship(
     )
     .into();
 
-    let flight_plan = FlightPlan::new(ship.end, INITIAL_ADAPTIVE_PARAMS, mapped_burns, bodies);
+    let flight_plan = FlightPlan::new(
+        ship.end,
+        ship.integrator,
+        AdaptiveMethodParams {
+            tol: AbsTol {
+                position: ship.tolerance,
+                velocity: ship.tolerance,
+            },
+            ..INITIAL_ADAPTIVE_PARAMS
+        },
+        mapped_burns,
+        bodies,
+    );
 
     entity.insert((
         // No state scope needed as this is always a child of the root.

@@ -6,6 +6,7 @@ use crate::{
         Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftTrajectory, SphereOfInfluence,
         Timeline, Trajectory,
     },
+    flight_plan::IntegrationMethod,
     floating_origin::BigGridBundle,
     load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
     prediction::{
@@ -50,8 +51,10 @@ pub struct ShipFile;
 
 #[derive(Component, Clone)]
 pub struct ShipSpawnerData {
-    pub start: Epoch,
     pub name: String,
+    pub integrator: IntegrationMethod,
+    pub tolerance: f64,
+    pub start: Epoch,
     pub state_vector: StateVector<DVec3>,
     pub reference: Option<Entity>,
     pub preview_duration: Duration,
@@ -112,6 +115,8 @@ impl ShipSpawnerWindow {
                 _ => {
                     let data = ShipSpawnerData {
                         name: "Ship".to_string(),
+                        integrator: IntegrationMethod::Verner87,
+                        tolerance: 0.001,
                         start: sim_time.current().floor(Duration::from_seconds(1.0)),
                         state_vector: StateVector::new(
                             DVec3::new(10_000.0, 0.0, 0.0),
@@ -364,6 +369,8 @@ impl ShipSpawnerWindow {
 
                     commands.trigger(SpawnShip::new(Ship::new(
                         data.name.to_string(),
+                        data.integrator,
+                        data.tolerance,
                         data.start,
                         data.start + data.preview_duration,
                         sv.position,

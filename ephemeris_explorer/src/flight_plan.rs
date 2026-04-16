@@ -123,7 +123,7 @@ impl Burn {
 
 macro_rules! integration_methods {
     ($($variant:ident => $display:expr),+ $(,)?) => {
-        #[derive(Clone, Copy, Debug, PartialEq)]
+        #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
         pub enum IntegrationMethod {
             $($variant),+
         }
@@ -198,12 +198,13 @@ impl FlightPlan {
     #[inline]
     pub fn new(
         end: Epoch,
+        method: IntegrationMethod,
         parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
         burns: Vec<Burn>,
         context: Bodies,
     ) -> Self {
         Self {
-            method: IntegrationMethod::Verner87,
+            method,
             parameters,
             synchronisation: Synchronisation::hertz(1000),
             end,
@@ -288,13 +289,12 @@ impl FlightPlan {
                 .max(trajectory.start())
         };
 
-        // Try to get the state vector at the restart epoch and return the new propagator
         trajectory.get(restart_epoch).map(|&restart_sv| {
             self.method.as_propagator(
                 restart_epoch,
                 restart_sv,
                 self.parameters,
-                previous.context().clone(),
+                self.context.clone(),
                 timeline,
             )
         })

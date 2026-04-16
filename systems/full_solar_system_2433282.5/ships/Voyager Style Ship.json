@@ -1,5 +1,7 @@
 {
     "name": "Voyager Style Ship",
+    "integrator": "Verner87",
+    "tolerance": 0.001,
     "start": "1977-09-05 00:00:00.000",
     "end": "2000-01-01 00:00:00.000",
     "position": [

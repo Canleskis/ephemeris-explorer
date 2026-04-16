@@ -1,5 +1,7 @@
 {
     "name": "Moon Slingshot",
+    "integrator": "Verner87",
+    "tolerance": 0.001,
     "start": "1950-01-01 00:00:00",
     "end": "1950-01-10 00:00:00",
     "position": [

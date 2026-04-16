@@ -162,6 +162,8 @@ impl BodyInfoWindow {
                                 let bytes = Some(
                                     serde_json::to_vec_pretty(&serde_json::json!({
                                         "name": name,
+                                        "integrator": flight_plan.method,
+                                        "tolerance": flight_plan.parameters.tol.position,
                                         "start": start,
                                         "end": flight_plan.end,
                                         "position": sv.position,
