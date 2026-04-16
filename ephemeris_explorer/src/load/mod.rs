@@ -265,6 +265,7 @@ fn spawn_loaded_bodies(
                 min_distance: 1e3,
                 max_distance: 1e10,
             },
+            Visibility::default(),
         ))
         .id();
 
@@ -618,40 +619,41 @@ fn setup_camera(
     skybox: UniqueAsset<SkyboxImage>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
-    commands
-        .spawn((
-            // No state scope needed as this is always a child of the root.
-            bevy_egui::PrimaryEguiContext,
-            Camera3d::default(),
-            Camera {
-                order: 1,
-                ..default()
-            },
-            Projection::Perspective(PerspectiveProjection {
-                near: 0.001,
-                ..default()
-            }),
-            bevy::camera::Exposure { ev100: 12.0 },
-            bevy::post_process::bloom::Bloom::NATURAL,
-            Msaa::Sample4,
-            Skybox {
-                image: skybox.get().unwrap().0.clone(),
-                brightness: 1000.0,
-                rotation: Quat::IDENTITY,
-            },
-            FloatingOrigin,
-            CellCoord::default(),
-            OrbitCamera::default().with_distance(5e4),
-            CameraController::default()
-                .with_speed_bounds([1e-17, 10e35])
-                .with_smoothness(0.0, 0.0)
-                .with_speed(1.0)
-                .with_speed_pitch(0.02)
-                .with_speed_yaw(0.02)
-                .with_speed_roll(0.5),
-            IsDefaultUiCamera,
-        ))
-        .insert(ChildOf(*root));
+    let mut camera = commands.spawn((
+        // No state scope needed as this is always a child of the root.
+        bevy_egui::PrimaryEguiContext,
+        Camera3d::default(),
+        Camera {
+            order: 1,
+            ..default()
+        },
+        Projection::Perspective(PerspectiveProjection {
+            near: 0.001,
+            ..default()
+        }),
+        bevy::camera::Exposure { ev100: 12.0 },
+        bevy::post_process::bloom::Bloom::NATURAL,
+        Msaa::Sample4,
+        FloatingOrigin,
+        CellCoord::default(),
+        OrbitCamera::default().with_distance(5e4),
+        CameraController::default()
+            .with_speed_bounds([1e-17, 10e35])
+            .with_smoothness(0.0, 0.0)
+            .with_speed(1.0)
+            .with_speed_pitch(0.02)
+            .with_speed_yaw(0.02)
+            .with_speed_roll(0.5),
+        IsDefaultUiCamera,
+        ChildOf(*root),
+    ));
+    if let Some(image) = skybox.get() {
+        camera.insert(Skybox {
+            image: image.0.clone(),
+            brightness: 1000.0,
+            rotation: Quat::IDENTITY,
+        });
+    }
 }
 
 fn default_follow(mut commands: Commands, query: Query<(Entity, &Name)>) {
