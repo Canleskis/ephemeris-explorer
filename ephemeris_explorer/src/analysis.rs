@@ -335,17 +335,24 @@ fn compute_flyby_periapsis(
         let Ok(transitions) = query_transitions.get(source.entity) else {
             return;
         };
-        let reference_entity = transitions.soi_at(plot.start);
-        let Ok(reference) = reference_entity.map(|e| query_sources.get(e)).transpose() else {
+        let Some(i) = transitions.soi_at_idx(plot.start) else {
+            return;
+        };
+        let (start, reference_entity) = transitions.get(i).unwrap();
+        // Never panics because `setup_segment_plotting` checks for this when adding the segment.
+        let (end, _) = transitions.get(i + 1).unwrap();
+
+        let Ok(reference) = query_sources.get(*reference_entity) else {
             return;
         };
 
-        let relative = RelativeTrajectory::new(trajectory, reference);
+        let relative = RelativeTrajectory::new(trajectory, Some(reference));
 
-        let Some(time) =
-            relative.closest_separation_between(plot.start, plot.end, 0.001, 1000, |t1, t2, at| {
+        let Some(time) = relative
+            .closest_separation_between(*start, *end, 0.001, 1000, |t1, t2, at| {
                 t1.distance_squared_at(t2, at).unwrap()
             })
+            .filter(|t| &plot.start <= t && &plot.end >= t)
         else {
             return;
         };

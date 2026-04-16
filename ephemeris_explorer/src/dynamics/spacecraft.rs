@@ -276,7 +276,7 @@ impl SoiTransitions {
     }
 
     #[inline]
-    fn soi_at_idx(&self, time: Epoch) -> Option<usize> {
+    pub fn soi_at_idx(&self, time: Epoch) -> Option<usize> {
         match self.binary_search(time) {
             Ok(i) => Some(i),
             Err(0) => None,
@@ -286,10 +286,6 @@ impl SoiTransitions {
 
     #[inline]
     pub fn soi_at(&self, time: Epoch) -> Option<Entity> {
-        if self.0.is_empty() {
-            return None;
-        }
-
         Some(self.0[self.soi_at_idx(time)?].1)
     }
 
