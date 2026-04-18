@@ -210,25 +210,6 @@ impl PlotPoints {
     }
 }
 
-#[derive(Clone, Copy, Message)]
-pub struct TrajectoryHitPoint {
-    pub entity: Entity,
-    pub time: Epoch,
-    // Closest approach distance between the ray and the trajectory.
-    pub separation: f32,
-    // Distance along the ray.
-    pub distance: f32,
-}
-
-#[derive(Clone, Copy, Message)]
-pub struct ManoeuvreHitPoint {
-    pub plot_entity: Entity,
-    pub flight_plan_entity: Entity,
-    pub id: uuid::Uuid,
-    // Distance along the ray.
-    pub distance: f32,
-}
-
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct LineGizmoConfigGroup;
 
@@ -251,8 +232,6 @@ impl Plugin for PlotPlugin {
         app.init_gizmo_group::<LineGizmoConfigGroup>()
             .init_gizmo_group::<DashedLineGizmoConfigGroup>()
             .init_gizmo_group::<MarkerGizmoConfigGroup>()
-            .add_message::<TrajectoryHitPoint>()
-            .add_message::<ManoeuvreHitPoint>()
             .add_systems(
                 PostUpdate,
                 (
