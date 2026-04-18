@@ -814,7 +814,7 @@ impl BodyInfoWindow {
                         if ui
                             .add(
                                 egui::DragValue::new(&mut acc.x)
-                                    .speed(0.01)
+                                    .speed(1e-4)
                                     .custom_formatter(acceleration_formatter)
                                     .custom_parser(acceleration_parser),
                             )
@@ -829,7 +829,7 @@ impl BodyInfoWindow {
                         if ui
                             .add(
                                 egui::DragValue::new(&mut acc.y)
-                                    .speed(0.01)
+                                    .speed(1e-4)
                                     .custom_formatter(acceleration_formatter)
                                     .custom_parser(acceleration_parser),
                             )
@@ -844,7 +844,7 @@ impl BodyInfoWindow {
                         if ui
                             .add(
                                 egui::DragValue::new(&mut acc.z)
-                                    .speed(0.01)
+                                    .speed(1e-4)
                                     .custom_formatter(acceleration_formatter)
                                     .custom_parser(acceleration_parser),
                             )
