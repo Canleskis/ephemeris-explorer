@@ -1,7 +1,8 @@
 use crate::{
     MainState,
     dynamics::Trajectory,
-    floating_origin::{BigSpace, CellCoord, Grid},
+    floating_origin::{CellCoord, Grid},
+    load::SystemRoot,
     rotation::Rotating,
 };
 
@@ -122,7 +123,7 @@ pub fn advance_simulation_time(time: Res<Time>, mut sim_time: ResMut<SimulationT
 pub fn sync_position_to_time(
     sim_time: Res<SimulationTime>,
     mut query: Query<(&mut Transform, &mut CellCoord, &Trajectory)>,
-    root: Single<&Grid, With<BigSpace>>,
+    root: Single<&Grid, With<SystemRoot>>,
 ) {
     if sim_time.start() >= sim_time.end() {
         return;

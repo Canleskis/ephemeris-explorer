@@ -7,6 +7,7 @@ pub mod dynamics;
 pub mod flight_plan;
 pub mod floating_origin;
 pub mod load;
+pub mod ouf_of_bounds;
 pub mod prediction;
 pub mod rotation;
 pub mod selection;
@@ -24,6 +25,7 @@ use crate::{
     flight_plan::FlightPlanPlugin,
     floating_origin::{BigSpaceCorePlugin, BigSpacePropagationPlugin, BigSpaceValidationPlugin},
     load::{LoadSolarSystem, LoadSystemPlugin},
+    ouf_of_bounds::OutOfBoundsPlugin,
     prediction::PredictionPlugin,
     selection::SelectionPlugin,
     settings::{AppSettings, PersistentSettingsPlugin},
@@ -100,6 +102,7 @@ impl PluginGroup for MainPlugins {
             .add(BigSpacePropagationPlugin)
             .add(BigSpaceValidationPlugin)
             .add(SimulationTimePlugin)
+            .add(OutOfBoundsPlugin)
             .add(OrbitalAnalysisPlugin)
             .add(UiPlugin)
             .add(LoadSystemPlugin)

@@ -8,6 +8,7 @@ pub struct LabelSettings {
 }
 
 #[derive(Component, Default)]
+#[require(Visibility)]
 pub struct Labelled {
     pub font: TextFont,
     pub colour: TextColor,
@@ -94,6 +95,7 @@ fn update_labels_text(
     }
 }
 
+// Ui layout being ordered before transform propagation means this is delayed by one frame.
 fn update_labels_position(
     query_camera: Query<(&Camera, &GlobalTransform), With<IsDefaultUiCamera>>,
     query_labelled: Query<(&LabelEntity, &Labelled, &GlobalTransform)>,
@@ -120,12 +122,17 @@ fn update_labels_position(
             .map(|position| position - computed_node.size() / 2.0);
 
         if let Ok(viewport_position) = viewport_position {
-            node.display = Display::DEFAULT;
-            node.position_type = PositionType::Absolute;
+            node.reborrow()
+                .map_unchanged(|n| &mut n.display)
+                .set_if_neq(Display::DEFAULT);
+            node.reborrow()
+                .map_unchanged(|n| &mut n.position_type)
+                .set_if_neq(PositionType::Absolute);
             node.left = Val::Px(viewport_position.x);
             node.top = Val::Px(viewport_position.y);
         } else {
-            node.display = Display::None;
+            node.map_unchanged(|n| &mut n.display)
+                .set_if_neq(Display::None);
         }
     }
 }
@@ -134,41 +141,61 @@ fn update_labels_visibility(
     settings: Res<LabelSettings>,
     query_camera: Query<&GlobalTransform, With<IsDefaultUiCamera>>,
     query_labels: Query<(&UiGlobalTransform, &ComputedNode), With<Label>>,
-    query_labelled: Query<(&GlobalTransform, &Labelled, &LabelEntity)>,
-    mut query_visibility: Query<&mut Visibility, With<Label>>,
+    query_labelled: Query<(Entity, &GlobalTransform, &Labelled, &LabelEntity)>,
+    mut query_visibility: Query<&mut Visibility>,
 ) {
     let Ok(camera_transform) = query_camera.single() else {
         return;
     };
 
+    let mut iter = query_visibility.iter_many_mut(query_labelled.iter().map(|i| **i.3));
     if !settings.enabled {
-        for mut vis in query_visibility.iter_mut() {
-            *vis = Visibility::Hidden;
+        while let Some(mut vis) = iter.fetch_next() {
+            vis.set_if_neq(Visibility::Hidden);
         }
         return;
     } else {
-        for mut vis in query_visibility.iter_mut() {
-            *vis = Visibility::Visible;
+        while let Some(mut vis) = iter.fetch_next() {
+            vis.set_if_neq(Visibility::Inherited);
         }
     }
 
-    for (pos, labelled, entity) in query_labelled.iter() {
-        let Ok((transform, node)) = query_labels.get(**entity) else {
+    // Sync labelled and label visibilities
+    for (labelled_entity, .., label) in query_labelled.iter() {
+        if let Ok(&visiblity) = query_visibility.get(labelled_entity)
+            && let Ok(mut label_visiblity) = query_visibility.get_mut(**label)
+        {
+            label_visiblity.set_if_neq(visiblity);
+        }
+    }
+
+    // Handle label overlap.
+    for (labelled_entity, transform, labelled, label) in query_labelled.iter() {
+        let Ok((ui_transform, node)) = query_labels.get(**label) else {
             continue;
         };
 
-        let distance = pos.translation().distance(camera_transform.translation());
-        let rect = Rect::from_center_size(transform.translation, node.size());
+        if query_visibility
+            .get(labelled_entity)
+            .is_ok_and(|v| matches!(v, Visibility::Hidden))
+        {
+            continue;
+        }
 
-        let is_overlapped = query_labelled
+        let distance = transform
+            .translation()
+            .distance(camera_transform.translation());
+        let rect = Rect::from_center_size(ui_transform.translation, node.size());
+
+        let is_hidden = query_labelled
             .iter()
-            .filter(|(.., e)| ***e != **entity)
-            .flat_map(|(pos, labelled, entity)| {
+            .filter(|(.., e)| ***e != **label)
+            .flat_map(|(_, other_transform, other, other_label)| {
                 Some((
-                    pos,
-                    labelled,
-                    query_labels.get(**entity).ok()?,
-                    query_visibility.get(**entity).ok()?,
+                    other_transform,
+                    other,
+                    query_labels.get(**other_label).ok()?,
+                    query_visibility.get(**other_label).ok()?,
                 ))
             })
             .any(
@@ -187,13 +214,11 @@ fn update_labels_visibility(
                 },
             );
 
-        let Ok(mut vis) = query_visibility.get_mut(**entity) else {
-            continue;
-        };
-
-        match is_overlapped {
-            true => *vis = Visibility::Hidden,
-            false => *vis = Visibility::Visible,
+        if let Ok(mut vis) = query_visibility.get_mut(**label) {
+            match is_hidden {
+                true => vis.set_if_neq(Visibility::Hidden),
+                false => vis.set_if_neq(Visibility::Inherited),
+            };
         }
     }
 }
