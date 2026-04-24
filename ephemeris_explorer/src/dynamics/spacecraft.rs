@@ -38,6 +38,18 @@ impl SphereOfInfluence {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum CrossingDirection {
+    Ascending,
+    Descending,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Event {
+    pub time: Epoch,
+    pub direction: CrossingDirection,
+}
+
 #[derive(Clone)]
 pub struct GravitationalBody {
     pub trajectory: Trajectory,
@@ -68,70 +80,85 @@ impl GravitationalBody {
                 - self.soi.radius * self.soi.radius,
         )
     }
-}
 
-impl GravitationalBody {
     #[inline]
-    pub fn soi_transition_with<T>(
-        &self,
-        trajectory: T,
-        t0: Epoch,
-        t1: Epoch,
-        p0: DVec3,
-        p1: DVec3,
-    ) -> Option<(Epoch, DVec3, f64)>
+    fn radial_velocity_at(&self, t: Epoch, sv: StateVector) -> Option<f64> {
+        let relative_sv = sv - self.trajectory.state_vector(t)?;
+        Some(relative_sv.position.dot(relative_sv.velocity))
+    }
+
+    #[inline]
+    pub fn find_soi_crossing<T>(&self, traj: &T, t0: Epoch, t1: Epoch) -> Option<Event>
     where
         T: EvaluateTrajectory<Vector = DVec3>,
     {
-        let d0 = self.soi_distance_squared_at(t0, p0)?;
-        let d1 = self.soi_distance_squared_at(t1, p1)?;
+        find_zero_crossing(t0, t1, |t| {
+            self.soi_distance_squared_at(t, traj.position(t)?)
+        })
+    }
 
-        if d0.signum() == d1.signum() {
-            return None;
-        }
-
-        let f = |t| self.soi_distance_squared_at(t, trajectory.position(t)?);
-
-        // We unwrap since bisection guarantees that the evaluations remain within the interval.
-        find_root_bisection(|t| f(t).unwrap(), t0, t1, d0, d1, 100, 1e-3).and_then(|time| {
-            let trajectory_sv = trajectory.state_vector(time)?;
-            let relative_sv = trajectory_sv - self.trajectory.state_vector(time)?;
-            let rate = 2.0 * relative_sv.position.dot(relative_sv.velocity);
-            Some((time, trajectory_sv.position, rate))
+    #[inline]
+    pub fn find_apsis<T>(&self, traj: &T, t0: Epoch, t1: Epoch) -> Option<Event>
+    where
+        T: EvaluateTrajectory<Vector = DVec3>,
+    {
+        find_zero_crossing(t0, t1, |t| {
+            self.radial_velocity_at(t, traj.state_vector(t)?)
         })
     }
 }
 
 #[inline]
-fn find_root_bisection<F>(
-    mut f: F,
-    mut x0: Epoch,
-    mut x1: Epoch,
-    mut f0: f64,
-    _f1: f64,
-    max_iterations: usize,
-    precision: f64,
-) -> Option<Epoch>
+pub fn find_zero_crossing<F>(t0: Epoch, t1: Epoch, mut f: F) -> Option<Event>
 where
-    F: FnMut(Epoch) -> f64,
+    F: FnMut(Epoch) -> Option<f64>,
 {
-    for _ in 0..max_iterations {
-        let mid = x0 + (x1 - x0) / 2.0;
-        let f_mid = f(mid);
+    #[inline]
+    fn find_root_bisection<F>(
+        mut f: F,
+        mut x0: Epoch,
+        mut x1: Epoch,
+        mut f0: f64,
+        _f1: f64,
+        max_iterations: usize,
+        precision: f64,
+    ) -> Option<Epoch>
+    where
+        F: FnMut(Epoch) -> f64,
+    {
+        for _ in 0..max_iterations {
+            let mid = x0 + (x1 - x0) / 2.0;
+            let f_mid = f(mid);
 
-        if f0.signum() != f_mid.signum() {
-            x1 = mid;
-        } else {
-            x0 = mid;
-            f0 = f_mid;
+            if f0.signum() != f_mid.signum() {
+                x1 = mid;
+            } else {
+                x0 = mid;
+                f0 = f_mid;
+            }
+
+            if (x1 - x0).abs().as_seconds() < precision {
+                return Some(x0);
+            }
         }
 
-        if (x1 - x0).abs().as_seconds() < precision {
-            return Some(x0);
-        }
+        None
     }
 
-    None
+    let f0 = f(t0)?;
+    let f1 = f(t1)?;
+
+    if f0.signum() == f1.signum() {
+        return None;
+    }
+
+    find_root_bisection(|t| f(t).unwrap(), t0, t1, f0, f1, 100, 1e-3).map(|time| Event {
+        time,
+        direction: match f0.is_sign_negative() {
+            true => CrossingDirection::Ascending,
+            false => CrossingDirection::Descending,
+        },
+    })
 }
 
 #[derive(Clone)]
@@ -146,7 +173,7 @@ impl Bodies {
     }
 
     #[inline]
-    pub fn soi_at(&self, t: Epoch, position: DVec3, except: &[Entity]) -> Option<Entity> {
+    pub fn soi_at_except(&self, t: Epoch, position: DVec3, except: &[Entity]) -> Option<Entity> {
         find_soi(
             self.0
                 .iter()
@@ -156,6 +183,16 @@ impl Bodies {
                 }),
             position,
         )
+    }
+
+    #[inline]
+    pub fn soi_at(&self, t: Epoch, position: DVec3) -> Option<Entity> {
+        self.soi_at_except(t, position, &[])
+    }
+
+    #[inline]
+    pub fn get(&self, entity: Entity) -> Option<&GravitationalBody> {
+        self.0.get(&entity)
     }
 
     #[inline]
@@ -207,11 +244,11 @@ impl TNB {
     pub const IDENTITY: Self = Self(DMat3::IDENTITY);
 
     #[inline]
-    pub fn new(sv: StateVector) -> Self {
-        let x = sv.velocity.normalize_or_zero();
-        let y = sv.position.cross(sv.velocity).normalize_or_zero();
-        let z = x.cross(y).normalize_or_zero();
-        Self(DMat3::from_cols(x, z, y))
+    pub fn try_new(sv: StateVector) -> Option<Self> {
+        let x = sv.velocity.try_normalize()?;
+        let y = sv.position.cross(sv.velocity).try_normalize()?;
+        let z = x.cross(y).normalize();
+        Some(Self(DMat3::from_cols(x, z, y)))
     }
 }
 
@@ -224,7 +261,6 @@ impl Transform<DVec3> for TNB {
 
 #[derive(Clone, Default, Debug, PartialEq)]
 pub enum ReferenceFrame {
-    /// Relative to a reference trajectory.
     Relative(Entity),
     #[default]
     Inertial,
@@ -248,9 +284,9 @@ impl Frame<DVec3, Bodies> for ReferenceFrame {
     #[inline]
     fn transform(&self, t: Epoch, sv: &StateVector, bodies: &Bodies) -> Option<Self::Transform> {
         match &self {
-            ReferenceFrame::Relative(reference) => Some(TNB::new(
-                *sv - bodies.0.get(reference)?.trajectory.state_vector(t)?,
-            )),
+            ReferenceFrame::Relative(reference) => Some(TNB::try_new(
+                *sv - bodies.get(*reference)?.trajectory.state_vector(t)?,
+            )?),
             ReferenceFrame::Inertial => Some(TNB::IDENTITY),
         }
     }
@@ -287,6 +323,14 @@ impl SoiTransitions {
     #[inline]
     pub fn soi_at(&self, time: Epoch) -> Option<Entity> {
         Some(self.0[self.soi_at_idx(time)?].1)
+    }
+
+    #[inline]
+    pub fn after(&self, time: Epoch) -> &[(Epoch, Entity)] {
+        match self.binary_search(time) {
+            Ok(i) => &self.0[i + 1..],
+            Err(i) => &self.0[i..],
+        }
     }
 
     #[inline]
@@ -331,6 +375,75 @@ impl SoiTransitions {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Apsis {
+    Periapsis { time: Epoch, distance: f64 },
+    Apoapsis { time: Epoch, distance: f64 },
+}
+
+impl Apsis {
+    #[inline]
+    pub fn periapsis(time: Epoch, distance: f64) -> Self {
+        Self::Periapsis { time, distance }
+    }
+
+    #[inline]
+    pub fn apoapsis(time: Epoch, distance: f64) -> Self {
+        Self::Apoapsis { time, distance }
+    }
+
+    #[inline]
+    pub fn time(&self) -> Epoch {
+        match self {
+            Apsis::Apoapsis { time, .. } | Apsis::Periapsis { time, .. } => *time,
+        }
+    }
+
+    #[inline]
+    pub fn distance(&self) -> f64 {
+        match self {
+            Apsis::Apoapsis { distance, .. } | Apsis::Periapsis { distance, .. } => *distance,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Component)]
+pub struct Apsides(Vec<(Apsis, Entity)>);
+
+impl Apsides {
+    #[inline]
+    pub fn binary_search(&self, time: Epoch) -> Result<usize, usize> {
+        self.0
+            .binary_search_by(|(apsis, _)| apsis.time().cmp(&time))
+    }
+
+    #[inline]
+    pub fn insert(&mut self, apsis: Apsis, entity: Entity) {
+        match self.binary_search(apsis.time()) {
+            Ok(i) => self.0[i] = (apsis, entity),
+            Err(i) => self.0.insert(i, (apsis, entity)),
+        }
+    }
+
+    #[inline]
+    pub fn extend(&mut self, apsides: Apsides) {
+        self.0.extend(apsides.0);
+    }
+
+    #[inline]
+    pub fn clear_after(&mut self, time: Epoch) {
+        match self.binary_search(time) {
+            Ok(i) => self.0.truncate(i + 1),
+            Err(i) => self.0.truncate(i),
+        }
+    }
+
+    #[inline]
+    pub fn iter(&self) -> std::slice::Iter<'_, (Apsis, Entity)> {
+        self.0.iter()
     }
 }
 
@@ -439,7 +552,7 @@ where
     S: SpacecraftPropagatorState<Vector = DVec3>,
     M: Method<SpacecraftProblem<S>>,
 {
-    type Trajectories = [(CubicHermiteSplineSamples, SoiTransitions); 1];
+    type Trajectories = [(CubicHermiteSplineSamples, SoiTransitions, Apsides); 1];
 }
 
 impl<S, M> IncrementalPropagator for SpacecraftPropagatorSoiDetection<S, M>
@@ -451,22 +564,49 @@ where
     type Error = <BaseSpacecraftPropagator<S, M> as IncrementalPropagator>::Error;
 
     #[inline]
-    fn step(&mut self, [(traj, transitions)]: &mut Self::Trajectories) -> Result<(), Self::Error> {
+    fn step(
+        &mut self,
+        [(traj, transitions, apsides)]: &mut Self::Trajectories,
+    ) -> Result<(), Self::Error> {
         let t0 = self.time();
         let p0 = self.position();
 
         self.0.step(std::array::from_mut(traj))?;
 
         let t1 = self.time();
-        let p1 = self.position();
+
+        // At this point, `traj` will always have at least two points, with `t0` and `t1` forming
+        // the last segment corresponding to this step.
+        let traj_step = &traj.hermite3(traj.segment_count() - 1).unwrap();
+
         for (entity, body) in self.context().iter() {
-            // The trajectory passed here always has at least two points because branching this
-            // propagator creates a trajectory with one point, and we just added a second one.
-            if let Some((time, pos, rate)) = body.soi_transition_with(&*traj, t0, t1, p0, p1) {
-                if rate.is_sign_negative() {
-                    transitions.insert(time, *entity);
-                } else if let Some(entered) = self.context().soi_at(time, pos, &[*entity]) {
-                    transitions.insert(time, entered);
+            if let Some(event) = body.find_soi_crossing(traj_step, t0, t1) {
+                if matches!(event.direction, CrossingDirection::Descending) {
+                    transitions.insert(event.time, *entity);
+                } else if let Some(pos) = traj_step.position(event.time)
+                    && let Some(entered) = self.context().soi_at_except(event.time, pos, &[*entity])
+                {
+                    transitions.insert(event.time, entered);
+                }
+            }
+        }
+
+        let soi_before = self.context().soi_at(t0, p0).map(|soi| (t0, soi));
+        let crossed_sois_in_step = transitions.after(t0);
+        for (i, &(t0, soi)) in soi_before.iter().chain(crossed_sois_in_step).enumerate() {
+            // The index is already offset by 1 to get the next transition.
+            let t1 = crossed_sois_in_step.get(i).map(|(t, _)| *t).unwrap_or(t1);
+            if let Some(body) = self.context().get(soi)
+                && let Some(event) = body.find_apsis(traj_step, t0, t1)
+                && let Some(distance) = body.trajectory.distance_at(traj_step, event.time)
+            {
+                match event.direction {
+                    CrossingDirection::Ascending => {
+                        apsides.insert(Apsis::periapsis(event.time, distance), soi)
+                    }
+                    CrossingDirection::Descending => {
+                        apsides.insert(Apsis::apoapsis(event.time, distance), soi)
+                    }
                 }
             }
         }
@@ -491,7 +631,7 @@ where
     }
 
     #[inline]
-    fn boundaries([(trajectory, _)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
+    fn boundaries([(trajectory, ..)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> {
         BaseSpacecraftPropagator::<S, M>::boundaries(std::array::from_ref(trajectory))
     }
 }
@@ -506,6 +646,7 @@ where
         [(
             CubicHermiteSplineSamples::new(self.time(), self.position(), self.velocity()),
             SoiTransitions::default(),
+            Apsides::default(),
         )]
     }
 }
@@ -644,7 +785,7 @@ impl SpacecraftPropagator {
 }
 
 impl Propagator for SpacecraftPropagator {
-    type Trajectories = [(CubicHermiteSplineSamples, SoiTransitions); 1];
+    type Trajectories = [(CubicHermiteSplineSamples, SoiTransitions, Apsides); 1];
 }
 
 impl IncrementalPropagator for SpacecraftPropagator {
@@ -668,7 +809,7 @@ impl DirectionalPropagator for SpacecraftPropagator {
     }
 
     #[inline]
-    fn boundaries([(trajectory, _)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
+    fn boundaries([(trajectory, ..)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> {
         [trajectory.end()].into_iter()
     }
 }
@@ -685,6 +826,7 @@ impl BranchingPropagator for SpacecraftPropagator {
 pub struct SpacecraftTrajectory {
     pub trajectory: &'static mut Trajectory,
     pub transitions: &'static mut SoiTransitions,
+    pub apsides: &'static mut Apsides,
 }
 
 impl PredictionTarget for SpacecraftTrajectory {
@@ -693,12 +835,14 @@ impl PredictionTarget for SpacecraftTrajectory {
     #[inline]
     fn merge(
         item: &mut Self::Item<'_, '_>,
-        (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
+        (trajectory, transitions, apsides): (CubicHermiteSplineSamples, SoiTransitions, Apsides),
     ) {
         let PredictionTrajectory::CubicHermiteSpline(world_traj) = &mut *item.trajectory.write()
         else {
             unreachable!()
         };
+        item.apsides.clear_after(trajectory.start());
+        item.apsides.extend(apsides);
         item.transitions.clear_after(trajectory.start());
         item.transitions.extend(transitions);
         Self::Propagator::join(world_traj, trajectory)
@@ -707,12 +851,13 @@ impl PredictionTarget for SpacecraftTrajectory {
     #[inline]
     fn overwrite(
         item: &mut Self::Item<'_, '_>,
-        (trajectory, transitions): (CubicHermiteSplineSamples, SoiTransitions),
+        (trajectory, transitions, apsides): (CubicHermiteSplineSamples, SoiTransitions, Apsides),
     ) {
         let PredictionTrajectory::CubicHermiteSpline(world_traj) = &mut *item.trajectory.write()
         else {
             unreachable!()
         };
+        *item.apsides = apsides;
         *item.transitions = transitions;
         *world_traj = trajectory;
     }

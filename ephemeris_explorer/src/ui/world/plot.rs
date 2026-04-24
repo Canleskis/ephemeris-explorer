@@ -1,7 +1,8 @@
 use crate::{
     MainState,
     dynamics::{PredictionTrajectory, StateVector, Trajectory},
-    floating_origin::{BigSpace, Grid, GridExt},
+    floating_origin::{Grid, GridExt},
+    load::SystemRoot,
     simulation::SimulationTime,
     ui::WorldUiSet,
 };
@@ -33,10 +34,12 @@ impl PlotSource {
     pub fn get_relative_trajectory<'w>(
         &self,
         query_trajectory: &'w Query<&Trajectory>,
-    ) -> Option<RelativeTrajectory<&'w Trajectory>> {
-        Some(RelativeTrajectory::new(
-            query_trajectory.get(self.entity).ok()?,
-            self.reference.and_then(|e| query_trajectory.get(e).ok()),
+    ) -> Result<RelativeTrajectory<&'w Trajectory>, bevy::ecs::query::QueryEntityError> {
+        Ok(RelativeTrajectory::new(
+            query_trajectory.get(self.entity)?,
+            self.reference
+                .map(|e| query_trajectory.get(e))
+                .transpose()?,
         ))
     }
 }
@@ -78,7 +81,7 @@ pub struct PlotConfig {
     pub dashed: bool,
 }
 
-/// Global space position of the points for a plotted trajectory.
+/// Global space position of the points for a plotted trajectory segment.
 #[derive(Default, Debug, Component, Deref, DerefMut)]
 pub struct PlotPoints(pub Vec<(Epoch, Vec3)>);
 
@@ -147,6 +150,10 @@ impl PlotPoints {
 
     #[inline]
     pub fn evaluate(&self, at: Epoch) -> Option<Vec3> {
+        if !self.contains(at) {
+            return None;
+        }
+
         match self.binary_search_by(|(t, _)| t.cmp(&at)) {
             Ok(i) => Some(self[i].1),
             Err(i) => {
@@ -157,6 +164,12 @@ impl PlotPoints {
                 Some(p1.lerp(p2, t))
             }
         }
+    }
+
+    #[inline]
+    pub fn contains(&self, at: Epoch) -> bool {
+        self.first().is_some_and(|(start, _)| start <= &at)
+            && self.last().is_some_and(|(end, _)| end >= &at)
     }
 
     #[inline]
@@ -262,7 +275,7 @@ pub fn compute_plot_points_parallel(
     sim_time: Res<SimulationTime>,
     mut query_plot: Query<(Entity, &PlotConfig, &PlotSource)>,
     query_traj: Query<&Trajectory>,
-    root: Single<&Grid, With<BigSpace>>,
+    root: Single<&Grid, With<SystemRoot>>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
     let (camera_transform, Projection::Perspective(perspective)) = *camera else {
@@ -400,7 +413,8 @@ fn plot_knots(
 
         match &*trajectory.read() {
             PredictionTrajectory::UniformSpline(traj) => {
-                let knots = (0..traj.len()).map(|i| traj.start() + traj.interval() * i as f64);
+                let knots =
+                    (0..traj.segment_count()).map(|i| traj.start() + traj.interval() * i as f64);
                 plot_knots(&mut gizmos, *camera, knots, points);
             }
             PredictionTrajectory::CubicHermiteSpline(traj) => {

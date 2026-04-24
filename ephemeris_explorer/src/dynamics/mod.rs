@@ -55,10 +55,10 @@ impl BoundedTrajectory for PredictionTrajectory {
     }
 
     #[inline]
-    fn len(&self) -> usize {
+    fn segment_count(&self) -> usize {
         match self {
-            Self::UniformSpline(traj) => traj.len(),
-            Self::CubicHermiteSpline(traj) => traj.len(),
+            Self::UniformSpline(traj) => traj.segment_count(),
+            Self::CubicHermiteSpline(traj) => traj.segment_count(),
         }
     }
 }
@@ -110,7 +110,6 @@ impl From<CubicHermiteSpline> for Trajectory {
     }
 }
 
-// Inside Bevy systems, `read` will never block and `write`` might if another thread is reading.
 impl Trajectory {
     #[inline]
     pub fn new(trajectory: PredictionTrajectory) -> Self {
@@ -133,8 +132,19 @@ impl Trajectory {
     }
 
     #[inline]
-    pub fn distance_squared_at(&self, other: &Trajectory, at: Epoch) -> Option<f64> {
+    pub fn distance_squared_at<T>(&self, other: &T, at: Epoch) -> Option<f64>
+    where
+        T: EvaluateTrajectory<Vector = DVec3>,
+    {
         Some(self.position(at)?.distance_squared(other.position(at)?))
+    }
+
+    #[inline]
+    pub fn distance_at<T>(&self, other: &T, at: Epoch) -> Option<f64>
+    where
+        T: EvaluateTrajectory<Vector = DVec3>,
+    {
+        Some(self.position(at)?.distance(other.position(at)?))
     }
 }
 
@@ -155,8 +165,8 @@ impl BoundedTrajectory for Trajectory {
     }
 
     #[inline]
-    fn len(&self) -> usize {
-        self.read().len()
+    fn segment_count(&self) -> usize {
+        self.read().segment_count()
     }
 }
 

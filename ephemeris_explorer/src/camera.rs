@@ -1,7 +1,7 @@
 use crate::{
     MainState,
     floating_origin::{BigSpace, CellCoord, Grid, Grids},
-    ui::WindowsUiSet,
+    ui::{WindowsUiSet, WorldUiSet},
 };
 
 use bevy::{
@@ -180,7 +180,7 @@ impl CameraInput {
     }
 }
 
-#[derive(Clone, Copy, Debug, Component)]
+#[derive(Clone, Copy, Debug, Default, Component)]
 pub struct CameraProximityIgnore;
 
 #[derive(States, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -190,8 +190,12 @@ pub enum CameraState {
     Follow,
 }
 
+#[derive(Component, Reflect, Clone, Copy, Default)]
+pub struct CanFollow;
+
 #[derive(Component, Reflect, Clone, Copy)]
-pub struct CanFollow {
+#[require(CanFollow)]
+pub struct FollowParameters {
     pub min_distance: f64,
     pub max_distance: f64,
 }
@@ -205,7 +209,7 @@ impl Command for SetFollowed {
     fn apply(self, world: &mut World) {
         let Some(followed) = self.0 else { return };
 
-        let can_follow = *world.entity(followed).get::<CanFollow>().unwrap();
+        let can_follow = *world.entity(followed).get::<FollowParameters>().unwrap();
         let (camera_entity, mut orbit) = world
             .query::<(Entity, &mut OrbitCamera)>()
             .single_mut(world)
@@ -292,6 +296,7 @@ impl Plugin for CameraPlugin {
                     reset_controls,
                 )
                     .chain()
+                    .before(WorldUiSet)
                     .before(TransformSystems::Propagate)
                     .run_if(in_state(MainState::Running)),
             );

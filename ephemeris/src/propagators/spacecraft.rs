@@ -594,7 +594,7 @@ where
     }
 
     #[inline]
-    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_ {
+    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> {
         trajectory.iter().map(|traj| traj.end())
     }
 }

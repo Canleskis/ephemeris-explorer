@@ -110,7 +110,7 @@ impl EphemeridesDebugWindow {
                                 (
                                     name.as_str(),
                                     data.heap_size(),
-                                    data.len(),
+                                    data.segment_count(),
                                     data.start(),
                                     data.end(),
                                     errors.as_ref().and_then(|errors| errors.get(&entity)),

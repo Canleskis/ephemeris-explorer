@@ -1,17 +1,18 @@
 use crate::{
     MainState,
-    analysis::{BurnPlotSegment, OverlappingPlotSegment, Periapsis, PlotSegment},
+    analysis::{BurnPlotSegment, OverlappingPlotSegment, PlotSegment},
     camera::CameraProximityIgnore,
-    dynamics::{SoiTransitions, Trajectory},
+    dynamics::{Apsides, Apsis, SoiTransitions, Trajectory},
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged},
-    floating_origin::{BigSpace, Grid, GridExt},
+    floating_origin::{Grid, GridExt},
     load::SystemRoot,
     prediction::InPrediction,
     simulation::SimulationTime,
     ui::{
-        GizmosTriangleExt, HitData, Length, MANOEUVRE_SIZE, MarkerGizmoConfigGroup, PERIAPSIS_SIZE,
-        PICK_THRESHOLD, PickingSet, PlotConfig, PlotPoints, PlotSource, PlotSourceOf, PointerHit,
-        PointerHover, WorldInteraction, WorldUiSet,
+        ApsisHit, BoundHit, END_SIZE, GizmosTriangleExt, HitData, Length, MANOEUVRE_SIZE,
+        MarkerGizmoConfigGroup, PERIAPSIS_SIZE, PickingSet, PlotConfig, PlotPoints, PlotSource,
+        PlotSourceOf, PointerHit, PointerHover, START_SIZE, TRAJECTORY_LINE_SIZE, WorldInteraction,
+        WorldUiSet,
     },
     warp::StartWarp,
 };
@@ -19,7 +20,7 @@ use crate::{
 use bevy::picking::backend::ray::RayMap;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
-use ephemeris::{EvaluateTrajectory, Frame};
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory, Frame};
 use ftime::{Duration, Epoch};
 
 #[derive(Clone, Copy, Debug, Default, Resource)]
@@ -41,7 +42,8 @@ impl Plugin for TooltipPlugin {
                     (
                         plot_manoeuvre_markers,
                         plot_transition_markers,
-                        plot_periapsis_marker,
+                        plot_apsides_markers,
+                        plot_bounds_markers,
                     ),
                     (
                         (
@@ -69,6 +71,7 @@ impl Plugin for TooltipPlugin {
                     trajectory_tooltips_window,
                     manoeuvre_tooltip_window,
                     periapsis_tooltip_window,
+                    bound_tooltip_window,
                     separation_tooltip_window,
                 )
                     .in_set(WorldUiSet)
@@ -80,8 +83,9 @@ impl Plugin for TooltipPlugin {
 fn plot_manoeuvre_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&Trajectory, &FlightPlan, &PlotSourceOf)>,
-    query_plot: Query<&PlotPoints, With<BurnPlotSegment>>,
-    root: Single<&Grid, With<BigSpace>>,
+    query_plot: Query<(&PlotSource, &PlotPoints), With<BurnPlotSegment>>,
+    query_trajectory: Query<&Trajectory>,
+    root: Single<&Grid, With<SystemRoot>>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
     let (camera_transform, Projection::Perspective(perspective)) = *camera else {
@@ -93,15 +97,15 @@ fn plot_manoeuvre_markers(
             if !burn.is_active() {
                 continue;
             }
-            for points in query_plot.iter_many(source_of.iter()) {
-                let Some(world_pos) = points.evaluate(burn.start) else {
-                    continue;
-                };
-
-                if let Some(transform) = trajectory.state_vector(burn.start).and_then(|sv| {
-                    burn.reference_frame()
-                        .transform(burn.start, &sv, &flight_plan.context)
-                }) {
+            for (source, points) in query_plot.iter_many(source_of.iter()) {
+                if let Some(world_pos) = points.evaluate(burn.start)
+                    && let Ok(relative) = source.get_relative_trajectory(&query_trajectory)
+                    && let Some(distance) = relative.position(burn.start).map(|p| p.length())
+                    && let Some(transform) = trajectory.state_vector(burn.start).and_then(|sv| {
+                        burn.reference_frame()
+                            .transform(burn.start, &sv, &flight_plan.context)
+                    })
+                {
                     let prograde = root.to_global_vector(transform.0.x_axis).as_vec3();
                     let radial = root.to_global_vector(transform.0.y_axis).as_vec3();
                     let normal = root.to_global_vector(transform.0.z_axis).as_vec3();
@@ -109,6 +113,7 @@ fn plot_manoeuvre_markers(
                     let size = camera_transform.translation().distance(world_pos)
                         * perspective.fov
                         * MANOEUVRE_SIZE;
+                    let size = size.min(distance as f32);
 
                     gizmos.arrow(world_pos, world_pos + prograde * size, LinearRgba::GREEN);
                     gizmos.arrow(world_pos, world_pos + normal * size, LinearRgba::BLUE);
@@ -122,7 +127,8 @@ fn plot_manoeuvre_markers(
 fn plot_transition_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&SoiTransitions, &PlotSourceOf)>,
-    query_plot: Query<(&PlotPoints, &PlotConfig), Without<OverlappingPlotSegment>>,
+    query_plot: Query<(&PlotPoints, &PlotSource, &PlotConfig), Without<OverlappingPlotSegment>>,
+    query_trajectory: Query<&Trajectory>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
     let (camera_transform, Projection::Perspective(perspective)) = *camera else {
@@ -131,50 +137,109 @@ fn plot_transition_markers(
 
     for (transitions, source_of) in query.iter() {
         for &(time, _entity) in transitions.iter() {
-            for (points, plot) in query_plot.iter_many(source_of.iter()) {
-                let Some(world_pos) = points.evaluate(time) else {
-                    continue;
-                };
+            for (points, source, plot) in query_plot.iter_many(source_of.iter()) {
+                if let Some(world_pos) = points.evaluate(time)
+                    && let Ok(relative) = source.get_relative_trajectory(&query_trajectory)
+                    && let Some(distance) = relative.position(time).map(|p| p.length())
+                {
+                    let direction = camera_transform.translation() - world_pos;
+                    let size = direction.length() * perspective.fov * 0.004;
+                    let size = size.min(distance as f32);
 
-                let direction = camera_transform.translation() - world_pos;
-                let size = direction.length() * perspective.fov * 0.004;
-
-                gizmos.circle(
-                    Transform::from_translation(world_pos)
-                        .looking_to(direction, camera_transform.up())
-                        .to_isometry(),
-                    size,
-                    plot.color,
-                );
+                    gizmos.circle(
+                        Transform::from_translation(world_pos)
+                            .looking_to(direction, camera_transform.up())
+                            .to_isometry(),
+                        size,
+                        plot.color,
+                    );
+                }
             }
         }
     }
 }
 
-fn plot_periapsis_marker(
+fn plot_apsides_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
-    query_segment: Query<(&Periapsis, &PlotPoints, &PlotConfig)>,
+    query: Query<(&Apsides, &PlotSourceOf)>,
+    query_plot: Query<(&PlotPoints, &PlotSource, &PlotConfig)>,
+    query_trajectory: Query<&Trajectory>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
     let (camera_transform, Projection::Perspective(perspective)) = *camera else {
         unreachable!("Camera is not perspective");
     };
 
-    for (periapsis, points, plot) in query_segment.iter() {
-        let Some(world_pos) = points.evaluate(periapsis.time) else {
-            continue;
-        };
+    for (apsides, source_of) in query.iter() {
+        for (apsis, _) in apsides.iter() {
+            for (points, source, plot) in query_plot.iter_many(source_of.iter()) {
+                if let Some(world_pos) = points.evaluate(apsis.time())
+                    && let Ok(relative) = source.get_relative_trajectory(&query_trajectory)
+                    && let Some(distance) = relative.position(apsis.time()).map(|p| p.length())
+                {
+                    let direction = camera_transform.translation() - world_pos;
+                    let size = direction.length() * perspective.fov * PERIAPSIS_SIZE;
+                    let size = size.min(distance as f32);
 
-        let direction = camera_transform.translation() - world_pos;
-        let size = direction.length() * perspective.fov * PERIAPSIS_SIZE;
+                    let down = match apsis {
+                        Apsis::Periapsis { .. } => camera_transform.down(),
+                        Apsis::Apoapsis { .. } => camera_transform.up(),
+                    };
 
-        gizmos.triangle_3d(
-            Transform::from_translation(world_pos - camera_transform.down() * (size / 2.0))
-                .looking_to(direction, camera_transform.down())
-                .to_isometry(),
-            Vec2::splat(size),
-            plot.color,
-        );
+                    gizmos.triangle_3d(
+                        Transform::from_translation(world_pos - down * (size / 2.0))
+                            .looking_to(direction, down)
+                            .to_isometry(),
+                        Vec2::splat(size),
+                        plot.color,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn plot_bounds_markers(
+    mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
+    query: Query<(&Trajectory, &PlotSourceOf)>,
+    query_plot: Query<(&PlotPoints, &PlotSource, &PlotConfig)>,
+    query_trajectory: Query<&Trajectory>,
+    camera: Single<(&GlobalTransform, &Projection)>,
+) {
+    let (camera_transform, Projection::Perspective(perspective)) = *camera else {
+        unreachable!("Camera is not perspective");
+    };
+
+    for (trajectory, source_of) in query.iter() {
+        let start = trajectory.start();
+        let end = trajectory.end();
+        for (points, source, plot) in query_plot.iter_many(source_of.iter()) {
+            if let Ok(relative) = source.get_relative_trajectory(&query_trajectory) {
+                if let Some(world_pos) = points.evaluate(start)
+                    && let Some(distance) = relative.position(start).map(|p| p.length())
+                {
+                    let direction = camera_transform.translation() - world_pos;
+                    let size = direction.length() * perspective.fov * START_SIZE;
+                    let size = size.min(distance as f32);
+
+                    let mut transform = Transform::from_translation(world_pos)
+                        .looking_to(direction, camera_transform.up());
+                    transform.rotate_local_z(std::f32::consts::FRAC_PI_4);
+                    gizmos.rect(transform.to_isometry(), Vec2::splat(size), plot.color);
+                }
+                if let Some(world_pos) = points.evaluate(end)
+                    && let Some(distance) = relative.position(end).map(|p| p.length())
+                {
+                    let direction = camera_transform.translation() - world_pos;
+                    let size = direction.length() * perspective.fov * END_SIZE;
+                    let size = size.min(distance as f32);
+                    let mut transform = Transform::from_translation(world_pos)
+                        .looking_to(direction, camera_transform.up());
+                    transform.rotate_local_z(std::f32::consts::FRAC_PI_4);
+                    gizmos.cross(transform.to_isometry(), size, plot.color);
+                }
+            }
+        }
     }
 }
 
@@ -288,7 +353,8 @@ fn manoeuvre_tooltip_window(
 
 fn periapsis_tooltip_window(
     hover: Res<PointerHover>,
-    query_plot: Query<(&Name, &Periapsis, &PlotPoints)>,
+    query_plot: Query<(&Name, &PlotSource, &PlotPoints)>,
+    query_name: Query<&Name>,
     camera: Single<(&GlobalTransform, &Camera)>,
     mut contexts: EguiContexts,
 ) {
@@ -296,47 +362,98 @@ fn periapsis_tooltip_window(
 
     let (camera_transform, camera) = *camera;
 
-    if let Some(PointerHit(entity, HitData::Periapsis(_))) = &hover.0
-        && let Ok((name, periapsis, points)) = query_plot.get(*entity)
+    if let Some(PointerHit(entity, HitData::Apsis(ApsisHit { apsis, .. }))) = &hover.0
+        && let Ok((segment_name, source, points)) = query_plot.get(*entity)
+        && let Ok(name) = query_name.get(source.entity)
+        && let Some(world_pos) = points.evaluate(apsis.time())
+        && let Ok(vp_position) = camera.world_to_viewport(camera_transform, world_pos)
     {
-        let Some(position) = points.evaluate(periapsis.time) else {
-            return;
+        let y_offset = 20.0;
+        let (pivot, y_offset) = match apsis {
+            Apsis::Periapsis { .. } => (egui::Align2::CENTER_BOTTOM, -y_offset),
+            Apsis::Apoapsis { .. } => (egui::Align2::CENTER_TOP, y_offset),
         };
-        let Ok(vp_position) = camera.world_to_viewport(camera_transform, position) else {
-            return;
-        };
-        let window_position = vp_position + Vec2::new(-110.0, -100.0);
-        egui::Window::new("Periapsis")
+        let window_position = vp_position + Vec2::new(0.0, y_offset);
+        egui::Window::new("Apsis")
+            .pivot(pivot)
             .collapsible(false)
             .resizable(false)
             .fade_in(false)
             .fade_out(false)
             .title_bar(false)
             .constrain(false)
-            .fixed_size([220.0, 0.0])
+            .fixed_size([300.0, 0.0])
             .fixed_pos(window_position.to_array())
             .show(ctx, |ui| {
-                ui.style_mut().interaction.selectable_labels = false;
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
 
-                ui.centered_and_justified(|ui| {
-                    ui.strong(format!("{} Periapsis", name));
-                });
+                let apsis_name = match apsis {
+                    Apsis::Periapsis { .. } => "Periapsis",
+                    Apsis::Apoapsis { .. } => "Apoapsis",
+                };
+                ui.strong(format!("{name} — {segment_name} {apsis_name}"));
 
                 ui.separator();
 
-                egui::Grid::new("periapsis_grid")
-                    .num_columns(2)
-                    .spacing([12.0, 4.0])
-                    .show(ui, |ui| {
-                        ui.label("Time:");
-                        ui.label(periapsis.time.to_string());
-                        ui.end_row();
+                ui.horizontal(|ui| {
+                    ui.label(apsis.time().to_string());
 
-                        ui.label("Distance:");
-                        ui.label(format!("{:.2}", Length::km(periapsis.distance)));
-                        ui.end_row();
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!("{:.2}", Length::km(apsis.distance())));
                     });
+                });
             });
+    }
+}
+
+fn bound_tooltip_window(
+    hover: Res<PointerHover>,
+    query_plot: Query<(&PlotSource, &PlotPoints)>,
+    query: Query<(&Trajectory, &Name)>,
+    camera: Single<(&GlobalTransform, &Camera)>,
+    mut contexts: EguiContexts,
+) {
+    let Ok(ctx) = contexts.ctx_mut() else { return };
+
+    let (camera_transform, camera) = *camera;
+
+    if let Some(PointerHit(entity, HitData::Bound(hit))) = &hover.0
+        && let Ok((source, points)) = query_plot.get(*entity)
+        && let Ok((trajectory, name)) = query.get(source.entity)
+    {
+        let time = match hit {
+            BoundHit::Start { .. } => trajectory.start(),
+            BoundHit::End { .. } => trajectory.end(),
+        };
+        if let Some(world_pos) = points.evaluate(time)
+            && let Ok(vp_position) = camera.world_to_viewport(camera_transform, world_pos)
+        {
+            let window_position = vp_position + Vec2::new(20.0, -20.0);
+            egui::Window::new("Apsis")
+                .collapsible(false)
+                .resizable(false)
+                .fade_in(false)
+                .fade_out(false)
+                .title_bar(false)
+                .constrain(false)
+                .fixed_size([300.0, 0.0])
+                .fixed_pos(window_position.to_array())
+                .show(ctx, |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+
+                    let bound_name = match hit {
+                        BoundHit::Start { .. } => "start",
+                        BoundHit::End { .. } => "end",
+                    };
+                    ui.strong(format!("{name} Trajectory {bound_name}"));
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label(time.to_string());
+                    });
+                });
+        }
     }
 }
 
@@ -588,7 +705,7 @@ fn trajectory_tooltips_world(
 
             let direction = camera_transform.translation() - world_position;
             let radius = if data.selected { 1.3 } else { 1.0 };
-            let size = direction.length() * perspective.fov * PICK_THRESHOLD * radius;
+            let size = direction.length() * perspective.fov * TRAJECTORY_LINE_SIZE * radius;
             let transform = GlobalTransform::from(
                 Transform::from_translation(world_position).with_scale(Vec3::splat(size)),
             );
@@ -656,7 +773,7 @@ fn trajectory_tooltips_window(
             continue;
         };
 
-        let Some(relative) = source.get_relative_trajectory(&query_trajectory) else {
+        let Ok(relative) = source.get_relative_trajectory(&query_trajectory) else {
             continue;
         };
         let Ok(name) = query_name.get(source.entity) else {
@@ -674,28 +791,24 @@ fn trajectory_tooltips_window(
             .fixed_pos(window_position.to_array())
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.style_mut().interaction.selectable_labels = false;
-                        let suffix = if tooltip_data.len() == 1 { "" } else { "s" };
-                        ui.strong(format!(
-                            "{} — {} crossing{} ({})",
-                            name.as_str(),
-                            tooltip_data.len(),
-                            suffix,
-                            segment
-                        ));
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
 
-                        if is_pinned {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if close_button(ui).clicked() {
-                                        ui.close_kind(egui::UiKind::Window);
-                                    }
-                                },
-                            );
-                        }
-                    });
+                    let suffix = if tooltip_data.len() == 1 { "" } else { "s" };
+                    ui.strong(format!(
+                        "{} — {} crossing{} ({})",
+                        name.as_str(),
+                        tooltip_data.len(),
+                        suffix,
+                        segment
+                    ));
+
+                    if is_pinned {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if close_button(ui).clicked() {
+                                ui.close_kind(egui::UiKind::Window);
+                            }
+                        });
+                    }
                 });
                 ui.separator();
 
@@ -709,49 +822,61 @@ fn trajectory_tooltips_window(
                             for (j, data) in tooltip_data.iter_mut().enumerate() {
                                 data.selected = if range.contains(&j) {
                                     ui.scope(|ui| {
-                                        let time = data.time;
-                                        let is_current = time == sim_time.current();
-                                        let mut text = egui::RichText::new(time.to_string());
-                                        if is_current {
-                                            text = text.italics();
-                                        }
-                                        egui::CollapsingHeader::new(text)
-                                            .id_salt(format!("{name}#{time}#{j}"))
-                                            .show(ui, |ui| {
-                                                if let Some(position) = relative.position(time) {
-                                                    ui.label(format!(
-                                                        "Distance: {:.2}",
-                                                        Length::km(position.length())
-                                                    ));
-                                                }
-                                                ui.horizontal(|ui| {
-                                                    if ui.button("Go to").clicked() {
-                                                        commands.trigger(StartWarp::new(time));
-                                                    }
+                                        ui.horizontal(|ui| {
+                                            let time = data.time;
+                                            let is_current = time == sim_time.current();
+                                            if ui
+                                                .add_enabled(
+                                                    !is_current,
+                                                    egui::Button::new("▶").small(),
+                                                )
+                                                .on_hover_text("Go to")
+                                                .clicked()
+                                            {
+                                                commands.trigger(StartWarp::new(time));
+                                            }
+                                            if let Ok(mut flight_plan) =
+                                                query_flight_plan.get_mut(source.entity)
+                                                && ui
+                                                    .add(egui::Button::new("➕").small())
+                                                    .on_hover_text("Add manoeuvre")
+                                                    .clicked()
+                                            {
+                                                flight_plan.burns.insert(
+                                                    uuid::Uuid::new_v4(),
+                                                    Burn::new(
+                                                        time,
+                                                        match source.reference {
+                                                            Some(e) if e != *root => {
+                                                                BurnFrame::Relative
+                                                            }
+                                                            _ => BurnFrame::Inertial,
+                                                        },
+                                                        source.reference.unwrap_or(*root),
+                                                    ),
+                                                );
+                                                commands.trigger(FlightPlanChanged(source.entity));
+                                            }
 
-                                                    if let Ok(mut flight_plan) =
-                                                        query_flight_plan.get_mut(source.entity)
-                                                        && ui.button("Add manoeuvre").clicked()
+                                            let mut text = egui::RichText::new(time.to_string());
+                                            if is_current {
+                                                text = text.italics();
+                                            }
+                                            ui.label(text);
+
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if let Some(position) = relative.position(time)
                                                     {
-                                                        flight_plan.burns.insert(
-                                                            uuid::Uuid::new_v4(),
-                                                            Burn::new(
-                                                                time,
-                                                                match source.reference {
-                                                                    Some(e) if e != *root => {
-                                                                        BurnFrame::Relative
-                                                                    }
-                                                                    _ => BurnFrame::Inertial,
-                                                                },
-                                                                source.reference.unwrap_or(*root),
-                                                            ),
-                                                        );
-                                                        commands.trigger(FlightPlanChanged(
-                                                            source.entity,
+                                                        ui.label(format!(
+                                                            "{:.2}",
+                                                            Length::km(position.length())
                                                         ));
                                                     }
-                                                })
-                                            });
+                                                },
+                                            );
+                                        });
                                     })
                                     .response
                                     .contains_pointer()

@@ -20,7 +20,7 @@ pub trait DirectionalPropagator: Propagator {
     fn distance(from: Epoch, to: Epoch) -> Duration;
 
     /// Returns the time boundary of the trajectories.
-    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> + '_;
+    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch>;
 
     /// Returns the ordering of two epochs according to the propagator's direction.
     #[inline]

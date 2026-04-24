@@ -67,8 +67,7 @@ impl Plugin for OrbitalAnalysisPlugin {
                     (spawn_drawn_soi, despawn_drawn_soi).chain(),
                 )
                     .run_if(in_state(MainState::Running)),
-            )
-            .add_observer(compute_flyby_periapsis);
+            );
     }
 }
 
@@ -260,11 +259,11 @@ fn setup_segment_plotting(
 
                     if is_from_parent && is_to_parent {
                         // Flyby: Entered from parent, leaving to parent
-                        // In that case, we also plot the segment relative to the parent.
                         plot_segment.insert((
                             Name::new(format!("{parent_name} Flyby{burn_name}")),
                             PlotSegment::Flyby,
                         ));
+                        // In that case, we also plot the segment relative to the parent.
                         if reference.is_none() {
                             cmds.spawn((
                                 PlotSource::new(e, Some(b_parent)),
@@ -306,59 +305,6 @@ fn setup_segment_plotting(
                 }
             }
         });
-    }
-}
-
-#[derive(Clone, Copy, Debug, Component)]
-pub struct Periapsis {
-    pub time: Epoch,
-    pub distance: f64,
-}
-
-fn compute_flyby_periapsis(
-    trigger: On<Add, PlotSegment>,
-    query_segment: Query<(Entity, &PlotSegment, &PlotConfig, &PlotSource)>,
-    query_sources: Query<&Trajectory>,
-    query_transitions: Query<&SoiTransitions>,
-    mut commands: Commands,
-) {
-    // When a Flyby is added, it means it is complete so we can compute this immediately even if the
-    // prediction is not complete.
-    if let Ok((entity, segment, plot, source)) = query_segment.get(trigger.event_target()) {
-        if !matches!(segment, PlotSegment::Flyby) {
-            return;
-        }
-
-        let Ok(trajectory) = query_sources.get(source.entity) else {
-            return;
-        };
-        let Ok(transitions) = query_transitions.get(source.entity) else {
-            return;
-        };
-        let Some(i) = transitions.soi_at_idx(plot.start) else {
-            return;
-        };
-        let (start, reference_entity) = transitions.get(i).unwrap();
-        // Never panics because `setup_segment_plotting` checks for this when adding the segment.
-        let (end, _) = transitions.get(i + 1).unwrap();
-
-        let Ok(reference) = query_sources.get(*reference_entity) else {
-            return;
-        };
-
-        let relative = RelativeTrajectory::new(trajectory, Some(reference));
-
-        let Some(time) = relative
-            .closest_separation_between(*start, *end, 0.001, 1000, |t1, t2, at| {
-                t1.distance_squared_at(t2, at).unwrap()
-            })
-            .filter(|t| &plot.start <= t && &plot.end >= t)
-        else {
-            return;
-        };
-        let distance = relative.position(time).unwrap().length();
-
-        commands.entity(entity).insert(Periapsis { time, distance });
     }
 }
 

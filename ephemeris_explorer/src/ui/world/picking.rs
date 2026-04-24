@@ -2,11 +2,15 @@
 // struct is missing some data we need to send. We also don't need the complexity of bevy_picking so
 // we can reimplement what we need.
 
+// TODO: There is a bunch of duplicated code between marker picking and marker plotting; figure out
+// a way to reduce it.
+
 use crate::{
-    analysis::{BurnPlotSegment, Periapsis},
+    analysis::BurnPlotSegment,
+    dynamics::{Apsides, Apsis, Trajectory},
     flight_plan::FlightPlan,
     selection::Selectable,
-    ui::{PlotPoints, PlotSourceOf},
+    ui::{PlotPoints, PlotSource, PlotSourceOf},
 };
 
 use bevy::{
@@ -16,6 +20,7 @@ use bevy::{
     prelude::*,
 };
 use bevy_egui::{EguiContext, EguiContextSettings, input::WindowToEguiContextMap};
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
 use ftime::Epoch;
 
 #[derive(Clone, Copy, Debug)]
@@ -35,7 +40,7 @@ impl TrajectoryHits {
         self.hits.is_empty()
     }
 
-    pub fn min_distance(&self) -> Option<f32> {
+    pub fn min_depth(&self) -> Option<f32> {
         self.hits
             .iter()
             .map(|hit| hit.depth)
@@ -50,7 +55,8 @@ pub struct ManoeuvreHit {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PeriapsisHit {
+pub struct ApsisHit {
+    pub apsis: Apsis,
     pub depth: f32,
 }
 
@@ -59,21 +65,39 @@ pub struct BodyHit {
     pub depth: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum BoundHit {
+    Start { depth: f32 },
+    End { depth: f32 },
+}
+
+impl BoundHit {
+    #[inline]
+    pub fn depth(&self) -> f32 {
+        match self {
+            BoundHit::Start { depth } | BoundHit::End { depth } => *depth,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum HitData {
     Trajectory(TrajectoryHits),
     Manoeuvre(ManoeuvreHit),
-    Periapsis(PeriapsisHit),
+    Apsis(ApsisHit),
+    Bound(BoundHit),
     Body(BodyHit),
     Ui,
 }
 
 impl HitData {
+    #[inline]
     pub fn depth(&self) -> f32 {
         match self {
-            HitData::Trajectory(hits) => hits.min_distance().unwrap_or(f32::MAX),
+            HitData::Trajectory(hits) => hits.min_depth().unwrap_or(f32::MAX),
             HitData::Manoeuvre(hit) => hit.depth,
-            HitData::Periapsis(hit) => hit.depth,
+            HitData::Apsis(hit) => hit.depth,
+            HitData::Bound(hit) => hit.depth(),
             HitData::Body(hit) => hit.depth,
             HitData::Ui => -1_000_000.0,
         }
@@ -115,7 +139,12 @@ impl Plugin for CustomPickingPlugin {
                 (
                     (
                         body_picking,
-                        (manoeuvre_picking, periapsis_picking, trajectory_picking),
+                        (
+                            manoeuvre_marker_picking,
+                            apsis_marker_picking,
+                            bound_marker_picking,
+                            trajectory_picking,
+                        ),
                         // Some inputs are not always properly updated yet when this runs since it's
                         // not guaranteed to run after egui's end pass, but this is better than
                         // forcing all systems that need to run after picking to run after egui's
@@ -164,7 +193,7 @@ fn body_picking(
     }
 }
 
-pub const PICK_THRESHOLD: f32 = 6e-3;
+pub const TRAJECTORY_LINE_SIZE: f32 = 6e-3;
 
 pub fn trajectory_picking(
     ray_map: Res<RayMap>,
@@ -181,7 +210,7 @@ pub fn trajectory_picking(
     };
     let ray = RayCast3d::from_ray(*ray, f32::MAX);
 
-    if let Some((min_distance, (entity, mut picks))) = query_plot
+    if let Some((min_depth, (entity, mut picks))) = query_plot
         .iter()
         .map(|(entity, points)| {
             (
@@ -189,20 +218,22 @@ pub fn trajectory_picking(
                 TrajectoryHits {
                     hits: points
                         .ray_distances(&ray)
-                        .map(|(time, separation, distance)| TrajectoryHit {
+                        .map(|(time, separation, depth)| TrajectoryHit {
                             time,
                             separation,
-                            depth: distance,
+                            depth,
                         })
-                        .filter(|hit| hit.separation < hit.depth * perspective.fov * PICK_THRESHOLD)
+                        .filter(|hit| {
+                            hit.separation < hit.depth * perspective.fov * TRAJECTORY_LINE_SIZE
+                        })
                         .collect::<Vec<_>>(),
                 },
             )
         })
-        .filter_map(|(entity, hits)| Some((hits.min_distance()?, (entity, hits))))
+        .filter_map(|(entity, hits)| Some((hits.min_depth()?, (entity, hits))))
         .min_by(|(a, _), (b, _)| a.total_cmp(b))
     {
-        let max = min_distance * (1.0 + 0.01);
+        let max = min_depth * (1.0 + 0.01);
         picks.hits.retain(|hit| hit.depth <= max);
 
         events.write(PointerHit(entity, HitData::Trajectory(picks)));
@@ -213,10 +244,11 @@ pub const MANOEUVRE_SIZE: f32 = 2e-2;
 
 // We don't have a component for world positions like we have for trajectories with `PlotPoints`, so
 // we recompute the manoeuvre positions here.
-pub fn manoeuvre_picking(
+pub fn manoeuvre_marker_picking(
     ray_map: Res<RayMap>,
     query: Query<(&FlightPlan, &PlotSourceOf)>,
-    query_plot: Query<(Entity, &PlotPoints), With<BurnPlotSegment>>,
+    query_plot: Query<(Entity, &PlotSource, &PlotPoints), With<BurnPlotSegment>>,
+    query_trajectory: Query<&Trajectory>,
     perspective: Single<&Projection, With<Camera>>,
     mut events: MessageWriter<PointerHit>,
 ) {
@@ -234,19 +266,22 @@ pub fn manoeuvre_picking(
         .flat_map(|(flight_plan, source_of)| {
             query_plot
                 .iter_many(source_of.iter())
-                .flat_map(|(plot_entity, points)| {
+                .flat_map(|(plot_entity, source, points)| {
                     flight_plan.burns.iter().filter_map(move |(&id, burn)| {
                         if !burn.is_active() {
                             return None;
                         }
 
                         let world_pos = points.evaluate(burn.start)?;
-                        let r = world_pos.distance(Vec3::from(ray.origin));
-                        ray.sphere_intersection_at(&BoundingSphere::new(
-                            world_pos,
-                            r * perspective.fov * MANOEUVRE_SIZE / 2.0,
-                        ))
-                        .map(|depth| (plot_entity, ManoeuvreHit { id, depth }))
+                        let relative = source.get_relative_trajectory(&query_trajectory).ok()?;
+                        let distance = relative.position(burn.start)?.length();
+                        let size = world_pos.distance(Vec3::from(ray.origin))
+                            * perspective.fov
+                            * MANOEUVRE_SIZE
+                            / 2.0;
+                        let size = size.min(distance as f32);
+                        ray.sphere_intersection_at(&BoundingSphere::new(world_pos, size))
+                            .map(|depth| (plot_entity, ManoeuvreHit { id, depth }))
                     })
                 })
         })
@@ -258,9 +293,11 @@ pub fn manoeuvre_picking(
 
 pub const PERIAPSIS_SIZE: f32 = 1e-2;
 
-pub fn periapsis_picking(
+pub fn apsis_marker_picking(
     ray_map: Res<RayMap>,
-    query_plot: Query<(Entity, &Periapsis, &PlotPoints)>,
+    query: Query<(&Apsides, &PlotSourceOf)>,
+    query_plot: Query<(Entity, &PlotSource, &PlotPoints)>,
+    query_trajectory: Query<&Trajectory>,
     perspective: Single<&Projection, With<Camera>>,
     mut events: MessageWriter<PointerHit>,
 ) {
@@ -273,20 +310,85 @@ pub fn periapsis_picking(
     };
     let ray = &bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
 
-    if let Some((entity, data)) = query_plot
+    if let Some((entity, data)) = query
         .iter()
-        .flat_map(|(entity, periapsis, points)| {
-            let world_pos = points.evaluate(periapsis.time)?;
-            let r = world_pos.distance(Vec3::from(ray.origin));
-            ray.sphere_intersection_at(&BoundingSphere::new(
-                world_pos,
-                r * perspective.fov * PERIAPSIS_SIZE * 2.0,
-            ))
-            .map(|depth| (entity, PeriapsisHit { depth }))
+        .flat_map(|(apsides, source_of)| {
+            query_plot
+                .iter_many(source_of.iter())
+                .flat_map(|(plot_entity, source, points)| {
+                    apsides.iter().flat_map(move |&(apsis, _)| {
+                        let world_pos = points.evaluate(apsis.time())?;
+                        let relative = source.get_relative_trajectory(&query_trajectory).ok()?;
+                        let distance = relative.position(apsis.time())?.length();
+                        let size = world_pos.distance(Vec3::from(ray.origin))
+                            * perspective.fov
+                            * PERIAPSIS_SIZE;
+                        let size = size.min(distance as f32);
+                        ray.sphere_intersection_at(&BoundingSphere::new(world_pos, size))
+                            .map(|depth| (plot_entity, ApsisHit { apsis, depth }))
+                    })
+                })
         })
         .min_by(|(_, a), (_, b)| a.depth.total_cmp(&b.depth))
     {
-        events.write(PointerHit(entity, HitData::Periapsis(data)));
+        events.write(PointerHit(entity, HitData::Apsis(data)));
+    }
+}
+
+pub const START_SIZE: f32 = 6e-3;
+pub const END_SIZE: f32 = 4e-3;
+
+pub fn bound_marker_picking(
+    ray_map: Res<RayMap>,
+    query: Query<(&Trajectory, &PlotSourceOf)>,
+    query_plot: Query<(Entity, &PlotSource, &PlotPoints)>,
+    query_trajectory: Query<&Trajectory>,
+    perspective: Single<&Projection, With<Camera>>,
+    mut events: MessageWriter<PointerHit>,
+) {
+    let Projection::Perspective(perspective) = *perspective else {
+        unreachable!("Camera is not perspective");
+    };
+
+    let Some((_, ray)) = ray_map.iter().next() else {
+        return;
+    };
+    let ray = &bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+
+    if let Some((entity, data)) = query
+        .iter()
+        .flat_map(|(traj, source_of)| {
+            query_plot
+                .iter_many(source_of.iter())
+                .flat_map(|(plot_entity, source, points)| {
+                    [
+                        (traj.start(), BoundHit::Start { depth: 0.0 }, START_SIZE),
+                        (traj.end(), BoundHit::End { depth: 0.0 }, END_SIZE),
+                    ]
+                    .into_iter()
+                    .filter_map(move |(time, mut hit, size)| {
+                        let world_pos = points.evaluate(time)?;
+                        let relative = source.get_relative_trajectory(&query_trajectory).ok()?;
+                        let distance = relative.position(time)?.length();
+                        let size =
+                            world_pos.distance(Vec3::from(ray.origin)) * perspective.fov * size;
+                        let size = size.min(distance as f32);
+
+                        match &mut hit {
+                            BoundHit::Start { depth: d } | BoundHit::End { depth: d } => {
+                                *d = ray.sphere_intersection_at(&BoundingSphere::new(
+                                    world_pos, size,
+                                ))?;
+                            }
+                        }
+
+                        Some((plot_entity, hit))
+                    })
+                })
+        })
+        .min_by(|(_, a), (_, b)| a.depth().total_cmp(&b.depth()))
+    {
+        events.write(PointerHit(entity, HitData::Bound(data)));
     }
 }
 
@@ -328,16 +430,16 @@ pub fn egui_picking(
 
 fn _show_body_picking_zone(
     mut gizmos: Gizmos,
-    query_camera: Query<&GlobalTransform, With<Camera>>,
+    perspective: Single<(&GlobalTransform, &Projection), With<Camera>>,
     query_can_select: Query<(&GlobalTransform, &Selectable)>,
 ) {
-    let Ok(camera_transform) = query_camera.single() else {
-        return;
+    let (camera_transform, Projection::Perspective(perspective)) = *perspective else {
+        unreachable!("Camera is not perspective");
     };
 
-    for (transform, can_select) in &query_can_select {
+    for (transform, clickable) in &query_can_select {
         let direction = transform.translation() - camera_transform.translation();
-        let radius = can_select.radius + direction.length_squared() / 100.0;
+        let radius = clickable.radius + direction.length() * perspective.fov * BODY_RADIUS;
         gizmos.circle(
             transform
                 .compute_transform()

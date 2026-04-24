@@ -3,8 +3,7 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
-        Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftTrajectory, SphereOfInfluence,
-        Timeline, Trajectory,
+        Apsides, Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftTrajectory, SphereOfInfluence, Timeline, Trajectory
     },
     flight_plan::IntegrationMethod,
     floating_origin::BigGridBundle,
@@ -147,6 +146,11 @@ impl ShipSpawnerWindow {
                     offset: Vec2::new(0.0, radius) * 1.1,
                     index: 99,
                 },
+                Trajectory::from(CubicHermiteSpline::new(
+                    data.start,
+                    sv.position,
+                    sv.velocity,
+                )),
                 PredictionPropagator::<SpacecraftTrajectory>(
                     <SpacecraftTrajectory as PredictionTarget>::Propagator::new(
                         data.start,
@@ -158,12 +162,8 @@ impl ShipSpawnerWindow {
                 ),
                 PredictionController::<SpacecraftTrajectory>::new(entity),
                 PredictionControllerOf::<SpacecraftTrajectory>::new(vec![entity]),
-                Trajectory::from(CubicHermiteSpline::new(
-                    data.start,
-                    sv.position,
-                    sv.velocity,
-                )),
                 SoiTransitionsAnalysis::Dynamic,
+                Apsides::default(),
                 OrbitPlotConfig {
                     enabled: true,
                     color: bevy::color::palettes::css::FUCHSIA.into(),

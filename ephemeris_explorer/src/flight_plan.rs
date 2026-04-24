@@ -207,6 +207,8 @@ impl FlightPlan {
             method,
             parameters,
             synchronisation: Synchronisation::hertz(1000),
+            // synchronisation: Synchronisation::steps(1),
+            // synchronisation: Synchronisation::completed(),
             end,
             burns: burns
                 .into_iter()

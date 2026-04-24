@@ -131,11 +131,11 @@ pub trait BoundedTrajectory {
         time >= self.start() && time <= self.end()
     }
 
-    fn len(&self) -> usize;
+    fn segment_count(&self) -> usize;
 
     #[inline]
     fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.segment_count() == 0
     }
 }
 
@@ -162,8 +162,8 @@ where
     }
 
     #[inline]
-    fn len(&self) -> usize {
-        (**self).len()
+    fn segment_count(&self) -> usize {
+        (**self).segment_count()
     }
 }
 
@@ -296,10 +296,13 @@ where
     }
 
     #[inline]
-    fn len(&self) -> usize {
+    fn segment_count(&self) -> usize {
         match self.reference.as_ref() {
-            Some(reference) => self.trajectory.len().min(reference.len()),
-            None => self.trajectory.len(),
+            Some(reference) => self
+                .trajectory
+                .segment_count()
+                .min(reference.segment_count()),
+            None => self.trajectory.segment_count(),
         }
     }
 }
@@ -438,7 +441,7 @@ impl<V> BoundedTrajectory for UniformSpline<V> {
     }
 
     #[inline]
-    fn len(&self) -> usize {
+    fn segment_count(&self) -> usize {
         self.polynomials.len()
     }
 }
@@ -702,10 +705,31 @@ impl<V> CubicHermite<V> {
     }
 }
 
+impl<V> EvaluateTrajectory for CubicHermite<V>
+where
+    V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+{
+    type Vector = V;
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<Self::Vector> {
+        Some(self.eval(at.as_offset_seconds()))
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<Self::Vector>> {
+        Some(StateVector::new(
+            self.eval(at.as_offset_seconds()),
+            self.eval_derivative(at.as_offset_seconds()),
+        ))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CubicHermiteSpline<V>(Vec<(Epoch, StateVector<V>)>);
 
 impl<V> DeepSizeOf for CubicHermiteSpline<V> {
+    #[inline]
     fn deep_size_of_children(&self, _: &mut deepsize::Context) -> usize {
         self.0.capacity() * size_of::<(Epoch, StateVector<V>)>()
     }
@@ -714,16 +738,16 @@ impl<V> DeepSizeOf for CubicHermiteSpline<V> {
 impl<V> BoundedTrajectory for CubicHermiteSpline<V> {
     #[inline]
     fn start(&self) -> Epoch {
-        self.0.first().unwrap().0
+        self.0.first().map(|i| i.0).unwrap_or(Epoch::MIN)
     }
 
     #[inline]
     fn end(&self) -> Epoch {
-        self.0.last().unwrap().0
+        self.0.last().map(|i| i.0).unwrap_or(Epoch::MAX)
     }
 
     #[inline]
-    fn len(&self) -> usize {
+    fn segment_count(&self) -> usize {
         self.0.len().saturating_sub(1)
     }
 }
@@ -743,10 +767,7 @@ where
     fn position(&self, at: Epoch) -> Option<V> {
         match self.binary_search(at) {
             Ok(i) => Some(self.0[i].1.position),
-            Err(i) => Some(
-                self.hermite3(i.checked_sub(1)?)?
-                    .eval(at.as_offset_seconds()),
-            ),
+            Err(i) => self.hermite3(i.checked_sub(1)?)?.position(at),
         }
     }
 
@@ -754,14 +775,7 @@ where
     fn state_vector(&self, at: Epoch) -> Option<StateVector<V>> {
         match self.binary_search(at) {
             Ok(i) => Some(self.0[i].1),
-            Err(i) => {
-                let hermite = self.hermite3(i.checked_sub(1)?)?;
-
-                Some(StateVector {
-                    position: hermite.eval(at.as_offset_seconds()),
-                    velocity: hermite.eval_derivative(at.as_offset_seconds()),
-                })
-            }
+            Err(i) => self.hermite3(i.checked_sub(1)?)?.state_vector(at),
         }
     }
 }

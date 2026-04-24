@@ -8,9 +8,9 @@ pub use ui::*;
 use crate::{
     MainState,
     analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, SoiTransitionsAnalysis},
-    camera::{CameraController, CanFollow, Followed, OrbitCamera},
+    camera::{CameraController, FollowParameters, Followed, OrbitCamera},
     dynamics::{
-        AbsTol, Backward, Bodies, CelestialTrajectory, CubicHermiteSpline, Forward,
+        AbsTol, Apsides, Backward, Bodies, CelestialTrajectory, CubicHermiteSpline, Forward,
         GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator, SpacecraftTrajectory,
         SphereOfInfluence, StateVector, Trajectory, UniformSpline,
     },
@@ -243,6 +243,14 @@ fn agregate_asset_errors(
     );
 }
 
+#[derive(Clone, Component)]
+#[relationship_target(relationship = BodyMeshOf)]
+pub struct BodyMesh(Entity);
+
+#[derive(Clone, Copy, Component)]
+#[relationship(relationship_target = BodyMesh)]
+pub struct BodyMeshOf(pub Entity);
+
 fn spawn_loaded_bodies(
     mut commands: Commands,
     solar_system: UniqueAsset<SolarSystemState>,
@@ -261,7 +269,7 @@ fn spawn_loaded_bodies(
             Name::new(system.name.clone()),
             BigSpaceRootBundle::default(),
             SystemRoot,
-            CanFollow {
+            FollowParameters {
                 min_distance: 1e3,
                 max_distance: 1e10,
             },
@@ -329,7 +337,7 @@ fn spawn_loaded_bodies(
                 radius,
                 index: depth + 1,
             },
-            CanFollow {
+            FollowParameters {
                 min_distance: radius as f64 * 1.05,
                 max_distance: 5e10,
             },
@@ -373,6 +381,7 @@ fn spawn_loaded_bodies(
                     reference_rotation: visual.rotation_reference,
                     rotation_rate: visual.rotation_rate,
                 },
+                BodyMeshOf(cmds.target_entity()),
             ));
 
             if let Some(color) = visual.light {
@@ -398,6 +407,8 @@ fn spawn_loaded_bodies(
 
         let entity = entity.id();
         commands.entity(root).add_child(entity);
+
+        info!("Spawned {name} {}", entity);
     }
 
     let dt = ephemerides.dt;
@@ -573,7 +584,7 @@ fn spawn_ship(
             ..default()
         },
         Selectable { radius, index: 99 },
-        CanFollow {
+        FollowParameters {
             min_distance: radius as f64 * 1.05,
             max_distance: 5e10,
         },
@@ -596,6 +607,7 @@ fn spawn_ship(
         PredictionControllerOf::<SpacecraftTrajectory>::new(vec![id]),
         flight_plan,
         SoiTransitionsAnalysis::Dynamic,
+        Apsides::default(),
         OrbitPlotConfig {
             enabled: true,
             start: Epoch::MIN,
@@ -610,6 +622,8 @@ fn spawn_ship(
     ));
 
     commands.entity(*root).add_child(id);
+
+    info!("Spawned {} {}", ship.name, id);
 
     commands.trigger(FlightPlanChanged(id));
 }

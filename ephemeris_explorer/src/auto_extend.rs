@@ -18,10 +18,10 @@ pub struct ExtendSettings {
 
 /// Request for the simulation bounds to be extended to the given epoch by extending the prediction
 /// for the given [`PredictionTarget`]s. If `forced` is false, requests will be ignored when one is
-/// already being fulfilled. If true, a new request will result in any ongoing extension to be
-/// cancelled, even if the new one is already fullfilled.
-/// The `buffer` corresponds the additonal duration that will be computed whenever an extension is
-/// requested.
+/// already being fulfilled. If true, requests will result in any ongoing extension to be cancelled,
+/// even if the new one is already fullfilled.
+/// The `buffer` corresponds the additonal duration that will be requested whenever an extension is
+/// computed.
 #[derive(Debug, Clone, Copy, EntityEvent)]
 pub struct ExtendRequest {
     pub entity: Entity,
@@ -56,10 +56,10 @@ impl ExtendRequest {
 
 /// Request for the simulation bounds to be extended to the given epoch by extending the prediction
 /// for all registered [`PredictionTarget`]s. If `forced` is false, requests will be ignored when
-/// one is already being fulfilled. If true, a new request will result in any ongoing extension to
-/// be cancelled, even if the new one is already fullfilled.
-/// The `buffer` corresponds the additonal duration that will be computed whenever an extension is
-/// requested.
+/// one is already being fulfilled. If true, requests will result in any ongoing extension to be
+/// cancelled, even if the new one is already fullfilled.
+/// The `buffer` corresponds the additonal duration that will be requested whenever an extension is
+/// computed.
 #[derive(Debug, Clone, Copy, Event)]
 pub struct ExtendAllRequest {
     pub target: Epoch,
