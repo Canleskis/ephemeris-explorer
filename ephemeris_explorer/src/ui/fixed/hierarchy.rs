@@ -100,10 +100,18 @@ pub fn solar_system_hierarchy(
                         |&(e, name)| (e, name),
                         |_, _| true,
                         |ui, state, (entity, name), i| {
-                            state.show_toggle_button(
-                                ui,
-                                egui::collapsing_header::paint_default_icon,
-                            );
+                            let has_children = inactive.is_some();
+
+                            let mut ui_builder = egui::UiBuilder::new();
+                            if !has_children {
+                                ui_builder = ui_builder.invisible();
+                            }
+                            ui.scope_builder(ui_builder, |ui| {
+                                state.show_toggle_button(
+                                    ui,
+                                    egui::collapsing_header::paint_default_icon,
+                                );
+                            });
 
                             if i > 0 {
                                 // Camera follow toggle
