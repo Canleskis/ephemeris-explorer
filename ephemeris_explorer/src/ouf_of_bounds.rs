@@ -46,7 +46,7 @@ fn on_add_out_of_bounds(add: On<Add, OutOfBounds>, mut query: Query<&mut Visibil
     }
 }
 
-fn on_remove_out_of_bounds(remove: On<Remove, OutOfBounds>, mut query: Query<&mut Visibility>,) {
+fn on_remove_out_of_bounds(remove: On<Remove, OutOfBounds>, mut query: Query<&mut Visibility>) {
     if let Ok(mut visiblity) = query.get_mut(remove.entity) {
         visiblity.set_if_neq(Visibility::Inherited);
     }

@@ -326,11 +326,8 @@ impl SoiTransitions {
     }
 
     #[inline]
-    pub fn after(&self, time: Epoch) -> &[(Epoch, Entity)] {
-        match self.binary_search(time) {
-            Ok(i) => &self.0[i + 1..],
-            Err(i) => &self.0[i..],
-        }
+    pub fn starting_at(&self, time: Epoch) -> &[(Epoch, Entity)] {
+        &self.0[self.soi_at_idx(time).unwrap_or(0)..]
     }
 
     #[inline]
@@ -359,7 +356,10 @@ impl SoiTransitions {
 
     #[inline]
     pub fn extend(&mut self, other: SoiTransitions) {
-        self.0.extend(other.0);
+        self.0.reserve(other.0.len());
+        for (time, entity) in other.0 {
+            self.insert(time, entity);
+        }
     }
 
     #[inline]
@@ -545,6 +545,18 @@ where
     pub fn join(lhs: &mut CubicHermiteSplineSamples, rhs: CubicHermiteSplineSamples) {
         BaseSpacecraftPropagator::<S, M>::join(lhs, rhs)
     }
+
+    #[inline]
+    pub fn current_soi(&self) -> Option<Entity> {
+        self.context().soi_at(self.time(), self.position())
+    }
+
+    #[inline]
+    pub fn current_soi_transitions(&self) -> SoiTransitions {
+        self.current_soi()
+            .map(|entity| SoiTransitions(vec![(self.time(), entity)]))
+            .unwrap_or_default()
+    }
 }
 
 impl<S, M> Propagator for SpacecraftPropagatorSoiDetection<S, M>
@@ -569,10 +581,7 @@ where
         [(traj, transitions, apsides)]: &mut Self::Trajectories,
     ) -> Result<(), Self::Error> {
         let t0 = self.time();
-        let p0 = self.position();
-
         self.0.step(std::array::from_mut(traj))?;
-
         let t1 = self.time();
 
         // At this point, `traj` will always have at least two points, with `t0` and `t1` forming
@@ -591,11 +600,11 @@ where
             }
         }
 
-        let soi_before = self.context().soi_at(t0, p0).map(|soi| (t0, soi));
-        let crossed_sois_in_step = transitions.after(t0);
-        for (i, &(t0, soi)) in soi_before.iter().chain(crossed_sois_in_step).enumerate() {
-            // The index is already offset by 1 to get the next transition.
-            let t1 = crossed_sois_in_step.get(i).map(|(t, _)| *t).unwrap_or(t1);
+        // `transitions` always contains the initial soi since the last `branch`.
+        let crossed_in_step = transitions.starting_at(t0);
+        for (i, &(t, soi)) in crossed_in_step.iter().enumerate() {
+            let t0 = t.max(t0);
+            let t1 = crossed_in_step.get(i + 1).map(|(t, _)| *t).unwrap_or(t1);
             if let Some(body) = self.context().get(soi)
                 && let Some(event) = body.find_apsis(traj_step, t0, t1)
                 && let Some(distance) = body.trajectory.distance_at(traj_step, event.time)
@@ -645,7 +654,7 @@ where
     fn branch(&self) -> Self::Trajectories {
         [(
             CubicHermiteSplineSamples::new(self.time(), self.position(), self.velocity()),
-            SoiTransitions::default(),
+            self.current_soi_transitions(),
             Apsides::default(),
         )]
     }

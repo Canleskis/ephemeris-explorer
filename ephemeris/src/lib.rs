@@ -19,8 +19,8 @@ pub trait DirectionalPropagator: Propagator {
     /// Returns the temporal distance from one epoch to another along the propagator's direction.
     fn distance(from: Epoch, to: Epoch) -> Duration;
 
-    /// Returns the time boundary of the trajectories.
-    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch>;
+    /// Returns the time boundaries of the trajectories.
+    fn boundaries(trajectories: &Self::Trajectories) -> impl Iterator<Item = Epoch>;
 
     /// Returns the ordering of two epochs according to the propagator's direction.
     #[inline]
@@ -30,8 +30,8 @@ pub trait DirectionalPropagator: Propagator {
 
     /// Returns true if the trajectories have reached the specified epoch.
     #[inline]
-    fn has_reached(trajectory: &Self::Trajectories, time: Epoch) -> bool {
-        Self::boundaries(trajectory).all(|boundary| Self::cmp(&boundary, &time).is_ge())
+    fn has_reached(trajectories: &Self::Trajectories, time: Epoch) -> bool {
+        Self::boundaries(trajectories).all(|boundary| Self::cmp(&boundary, &time).is_ge())
     }
 }
 

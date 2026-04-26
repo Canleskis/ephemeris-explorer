@@ -3,7 +3,8 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
-        Apsides, Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftTrajectory, SphereOfInfluence, Timeline, Trajectory
+        Apsides, Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftTrajectory,
+        SphereOfInfluence, Timeline, Trajectory,
     },
     flight_plan::IntegrationMethod,
     floating_origin::BigGridBundle,

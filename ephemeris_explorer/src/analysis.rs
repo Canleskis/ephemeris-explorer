@@ -57,13 +57,13 @@ impl Plugin for OrbitalAnalysisPlugin {
                 PreUpdate,
                 (
                     (
-                        setup_initial_soi_transition.run_if(is_system_initialized),
+                        setup_static_soi_transition.run_if(is_system_initialized),
                         setup_segment_plotting,
                         setup_target_plotting,
                     )
                         .chain()
                         .after(PredictionSystems),
-                    sphere_of_influence_to_hierarchy.after(setup_initial_soi_transition),
+                    sphere_of_influence_to_hierarchy.after(setup_static_soi_transition),
                     (spawn_drawn_soi, despawn_drawn_soi).chain(),
                 )
                     .run_if(in_state(MainState::Running)),
@@ -98,11 +98,10 @@ fn is_system_initialized(query: Query<&Trajectory, With<SphereOfInfluence>>) -> 
         .all(|trajectory| trajectory.start() < trajectory.end())
 }
 
-// Not the ideal way to do this, but handles all edge cases nicely and performance is fine.
-fn setup_initial_soi_transition(
+fn setup_static_soi_transition(
     mut query: Query<(
         Entity,
-        Ref<Trajectory>,
+        &Trajectory,
         &SoiTransitionsAnalysis,
         &mut SoiTransitions,
     )>,
@@ -113,26 +112,14 @@ fn setup_initial_soi_transition(
         return;
     };
     for (entity, trajectory, analysis, mut transitions) in query.iter_mut() {
-        if !trajectory.is_changed() {
-            continue;
+        if matches!(analysis, SoiTransitionsAnalysis::Static)
+            && transitions.is_empty()
+            && let Some(position) = trajectory.position(start)
+        {
+            let soi = find_soi_query(query_bodies, entity, start, position);
+            // If an SOI for an entity can't be found we use the root.
+            transitions.insert(Epoch::MIN, soi.unwrap_or(*root));
         }
-
-        if matches!(analysis, SoiTransitionsAnalysis::Static) && !transitions.is_empty() {
-            continue;
-        }
-
-        let search_time = match analysis {
-            SoiTransitionsAnalysis::Static => start,
-            SoiTransitionsAnalysis::Dynamic => trajectory.start(),
-        };
-
-        let Some(position) = trajectory.position(search_time) else {
-            continue;
-        };
-
-        let soi = find_soi_query(query_bodies, entity, search_time, position);
-        // If an SOI for an entity can't be found we use the root.
-        transitions.insert(Epoch::MIN, soi.unwrap_or(*root));
     }
 }
 
