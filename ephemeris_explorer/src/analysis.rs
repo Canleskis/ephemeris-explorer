@@ -242,12 +242,12 @@ fn setup_segment_plotting(
                         cmds.spawn((PlotSource::new(e, Some(reference.unwrap_or(b))), plot));
                     plot_segment.insert_if(BurnPlotSegment, || is_burn);
 
-                    let burn_name = if is_burn { " Burn" } else { "" };
+                    let burn_suf = if is_burn { " Burn" } else { "" };
 
                     if is_from_parent && is_to_parent {
                         // Flyby: Entered from parent, leaving to parent
                         plot_segment.insert((
-                            Name::new(format!("{parent_name} Flyby{burn_name}")),
+                            Name::new(format!("{parent_name} Flyby{burn_suf}")),
                             PlotSegment::Flyby,
                         ));
                         // In that case, we also plot the segment relative to the parent.
@@ -258,7 +258,7 @@ fn setup_segment_plotting(
                                     color: config.color.with_alpha(plot.color.alpha() * 0.2),
                                     ..plot
                                 },
-                                Name::new(format!("{parent_name} Flyby{burn_name}")),
+                                Name::new(format!("{parent_name} Flyby{burn_suf}")),
                                 PlotSegment::Flyby,
                                 OverlappingPlotSegment,
                             ))
@@ -267,25 +267,25 @@ fn setup_segment_plotting(
                     } else if is_from_parent && !is_to_parent {
                         // Capture: Entered from parent, not leaving to parent
                         plot_segment.insert((
-                            Name::new(format!("{parent_name} Capture{burn_name}")),
+                            Name::new(format!("{parent_name} Capture{burn_suf}")),
                             PlotSegment::Capture,
                         ));
                     } else if !is_from_parent && is_to_parent {
                         // Escape: Not entered from parent, leaving to parent
                         plot_segment.insert((
-                            Name::new(format!("{parent_name} Escape{burn_name}")),
+                            Name::new(format!("{parent_name} Escape{burn_suf}")),
                             PlotSegment::Escape,
                         ));
                     } else if previous.is_some() || next.is_some() {
                         // Transit: Not entered from parent, not leaving to parent
                         plot_segment.insert((
-                            Name::new(format!("{parent_name} Transit{burn_name}")),
+                            Name::new(format!("{parent_name} Transit{burn_suf}")),
                             PlotSegment::Transit,
                         ));
                     } else {
                         // Orbit: No transitions
                         plot_segment.insert((
-                            Name::new(format!("{parent_name} Orbit{burn_name}")),
+                            Name::new(format!("{parent_name} Orbit{burn_suf}")),
                             PlotSegment::Orbit,
                         ));
                     }

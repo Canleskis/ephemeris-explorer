@@ -11,8 +11,8 @@ use crate::{
     ui::{
         ApsisHit, BoundHit, END_SIZE, GizmosTriangleExt, HitData, Length, MANOEUVRE_SIZE,
         MarkerGizmoConfigGroup, PERIAPSIS_SIZE, PickingSet, PlotConfig, PlotPoints, PlotSource,
-        PlotSourceOf, PointerHit, PointerHover, START_SIZE, TRAJECTORY_LINE_SIZE, WorldInteraction,
-        WorldUiSet,
+        PlotSourceOf, PointerHit, PointerHover, START_SIZE, TRAJECTORY_LINE_SIZE, TRANSITION_SIZE,
+        TransitionHit, WorldInteraction, WorldUiSet,
     },
     warp::StartWarp,
 };
@@ -42,7 +42,7 @@ impl Plugin for TooltipPlugin {
                     (
                         plot_manoeuvre_markers,
                         plot_transition_markers,
-                        plot_apsides_markers,
+                        plot_apsis_markers,
                         plot_bounds_markers,
                     ),
                     (
@@ -70,7 +70,8 @@ impl Plugin for TooltipPlugin {
                 (
                     trajectory_tooltips_window,
                     manoeuvre_tooltip_window,
-                    periapsis_tooltip_window,
+                    transition_tooltip_window,
+                    apsis_tooltip_window,
                     bound_tooltip_window,
                     separation_tooltip_window,
                 )
@@ -143,7 +144,7 @@ fn plot_transition_markers(
                     && let Some(distance) = relative.position(time).map(|p| p.length())
                 {
                     let direction = camera_transform.translation() - world_pos;
-                    let size = direction.length() * perspective.fov * 0.004;
+                    let size = direction.length() * perspective.fov * TRANSITION_SIZE;
                     let size = size.min(distance as f32);
 
                     gizmos.circle(
@@ -159,7 +160,7 @@ fn plot_transition_markers(
     }
 }
 
-fn plot_apsides_markers(
+fn plot_apsis_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
     query: Query<(&Apsides, &PlotSourceOf)>,
     query_plot: Query<(&PlotPoints, &PlotSource, &PlotConfig)>,
@@ -343,7 +344,7 @@ fn manoeuvre_tooltip_window(
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.style_mut().interaction.selectable_labels = false;
-                    ui.strong(format!("{} — Burn #{}", name.as_str(), burn_idx + 1));
+                    ui.strong(format!("Burn #{} — {}", burn_idx + 1, name.as_str()));
                 });
             });
             ui.separator();
@@ -351,7 +352,64 @@ fn manoeuvre_tooltip_window(
         });
 }
 
-fn periapsis_tooltip_window(
+fn transition_tooltip_window(
+    hover: Res<PointerHover>,
+    query_plot: Query<(&PlotSource, &PlotPoints)>,
+    query_name: Query<&Name>,
+    query_trajectory: Query<&Trajectory>,
+    query_transitions: Query<&SoiTransitions>,
+    camera: Single<(&GlobalTransform, &Camera)>,
+    mut contexts: EguiContexts,
+) {
+    let Ok(ctx) = contexts.ctx_mut() else { return };
+
+    let (camera_transform, camera) = *camera;
+
+    if let Some(PointerHit(entity, HitData::Transition(TransitionHit { time, .. }))) = &hover.0
+        && let Ok((source, points)) = query_plot.get(*entity)
+        && let Ok(name) = query_name.get(source.entity)
+        && let Some(world_pos) = points.evaluate(*time)
+        && let Ok(vp_position) = camera.world_to_viewport(camera_transform, world_pos)
+        && let Ok(relative) = source.get_relative_trajectory(&query_trajectory)
+        && let Some(position) = relative.position(*time)
+        && let Ok(transitions) = query_transitions.get(source.entity)
+        && let Ok(i) = transitions.binary_search(*time)
+        && let Some((_, previous)) = i.checked_sub(1).and_then(|i| transitions.get(i))
+        && let Some((_, current)) = transitions.get(i)
+        && let Ok(previous_name) = query_name.get(*previous)
+        && let Ok(current_name) = query_name.get(*current)
+    {
+        let window_position = vp_position + Vec2::new(20.0, -20.0);
+        egui::Window::new("Apsis")
+            .collapsible(false)
+            .resizable(false)
+            .fade_in(false)
+            .fade_out(false)
+            .title_bar(false)
+            .constrain(false)
+            .fixed_size([300.0, 0.0])
+            .fixed_pos(window_position.to_array())
+            .show(ctx, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+
+                ui.strong(format!(
+                    "Transition from {previous_name} to {current_name} — {name}"
+                ));
+
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    ui.label(time.to_string());
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!("{:.2}", Length::km(position.length())));
+                    });
+                });
+            });
+    }
+}
+
+fn apsis_tooltip_window(
     hover: Res<PointerHover>,
     query_plot: Query<(&Name, &PlotSource, &PlotPoints)>,
     query_name: Query<&Name>,
@@ -391,7 +449,7 @@ fn periapsis_tooltip_window(
                     Apsis::Periapsis { .. } => "Periapsis",
                     Apsis::Apoapsis { .. } => "Apoapsis",
                 };
-                ui.strong(format!("{name} — {segment_name} {apsis_name}"));
+                ui.strong(format!("{segment_name} {apsis_name} — {name}"));
 
                 ui.separator();
 
@@ -795,11 +853,11 @@ fn trajectory_tooltips_window(
 
                     let suffix = if tooltip_data.len() == 1 { "" } else { "s" };
                     ui.strong(format!(
-                        "{} — {} crossing{} ({})",
-                        name.as_str(),
+                        "{}: {} crossing{} — {}",
+                        segment,
                         tooltip_data.len(),
                         suffix,
-                        segment
+                        name.as_str(),
                     ));
 
                     if is_pinned {

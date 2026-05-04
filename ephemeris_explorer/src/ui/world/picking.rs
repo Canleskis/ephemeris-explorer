@@ -6,8 +6,8 @@
 // a way to reduce it.
 
 use crate::{
-    analysis::BurnPlotSegment,
-    dynamics::{Apsides, Apsis, Trajectory},
+    analysis::{BurnPlotSegment, OverlappingPlotSegment},
+    dynamics::{Apsides, Apsis, SoiTransitions, Trajectory},
     flight_plan::FlightPlan,
     selection::Selectable,
     ui::{PlotPoints, PlotSource, PlotSourceOf},
@@ -61,6 +61,12 @@ pub struct ApsisHit {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct TransitionHit {
+    pub time: Epoch,
+    pub depth: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct BodyHit {
     pub depth: f32,
 }
@@ -84,6 +90,7 @@ impl BoundHit {
 pub enum HitData {
     Trajectory(TrajectoryHits),
     Manoeuvre(ManoeuvreHit),
+    Transition(TransitionHit),
     Apsis(ApsisHit),
     Bound(BoundHit),
     Body(BodyHit),
@@ -96,6 +103,7 @@ impl HitData {
         match self {
             HitData::Trajectory(hits) => hits.min_depth().unwrap_or(f32::MAX),
             HitData::Manoeuvre(hit) => hit.depth,
+            HitData::Transition(hit) => hit.depth,
             HitData::Apsis(hit) => hit.depth,
             HitData::Bound(hit) => hit.depth(),
             HitData::Body(hit) => hit.depth,
@@ -141,6 +149,7 @@ impl Plugin for CustomPickingPlugin {
                         body_picking,
                         (
                             manoeuvre_marker_picking,
+                            transition_marker_picking,
                             apsis_marker_picking,
                             bound_marker_picking,
                             trajectory_picking,
@@ -195,7 +204,7 @@ fn body_picking(
 
 pub const TRAJECTORY_LINE_SIZE: f32 = 6e-3;
 
-pub fn trajectory_picking(
+fn trajectory_picking(
     ray_map: Res<RayMap>,
     perspective: Single<&Projection, With<Camera>>,
     query_plot: Query<(Entity, &PlotPoints)>,
@@ -244,7 +253,7 @@ pub const MANOEUVRE_SIZE: f32 = 2e-2;
 
 // We don't have a component for world positions like we have for trajectories with `PlotPoints`, so
 // we recompute the manoeuvre positions here.
-pub fn manoeuvre_marker_picking(
+fn manoeuvre_marker_picking(
     ray_map: Res<RayMap>,
     query: Query<(&FlightPlan, &PlotSourceOf)>,
     query_plot: Query<(Entity, &PlotSource, &PlotPoints), With<BurnPlotSegment>>,
@@ -291,9 +300,53 @@ pub fn manoeuvre_marker_picking(
     }
 }
 
+pub const TRANSITION_SIZE: f32 = 4e-3;
+
+fn transition_marker_picking(
+    ray_map: Res<RayMap>,
+    query: Query<(&SoiTransitions, &PlotSourceOf)>,
+    query_plot: Query<(Entity, &PlotSource, &PlotPoints), Without<OverlappingPlotSegment>>,
+    query_trajectory: Query<&Trajectory>,
+    perspective: Single<&Projection, With<Camera>>,
+    mut events: MessageWriter<PointerHit>,
+) {
+    let Projection::Perspective(perspective) = *perspective else {
+        unreachable!("Camera is not perspective");
+    };
+
+    let Some((_, ray)) = ray_map.iter().next() else {
+        return;
+    };
+    let ray = &bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
+
+    if let Some((entity, data)) = query
+        .iter()
+        .flat_map(|(transitions, source_of)| {
+            query_plot
+                .iter_many(source_of.iter())
+                .flat_map(|(plot_entity, source, points)| {
+                    transitions.iter().flat_map(move |&(time, _)| {
+                        let world_pos = points.evaluate(time)?;
+                        let relative = source.get_relative_trajectory(&query_trajectory).ok()?;
+                        let distance = relative.position(time)?.length();
+                        let size = world_pos.distance(Vec3::from(ray.origin))
+                            * perspective.fov
+                            * TRANSITION_SIZE * 2.0;
+                        let size = size.min(distance as f32);
+                        ray.sphere_intersection_at(&BoundingSphere::new(world_pos, size))
+                            .map(|depth| (plot_entity, TransitionHit { time, depth }))
+                    })
+                })
+        })
+        .min_by(|(_, a), (_, b)| a.depth.total_cmp(&b.depth))
+    {
+        events.write(PointerHit(entity, HitData::Transition(data)));
+    }
+}
+
 pub const PERIAPSIS_SIZE: f32 = 1e-2;
 
-pub fn apsis_marker_picking(
+fn apsis_marker_picking(
     ray_map: Res<RayMap>,
     query: Query<(&Apsides, &PlotSourceOf)>,
     query_plot: Query<(Entity, &PlotSource, &PlotPoints)>,
@@ -338,7 +391,7 @@ pub fn apsis_marker_picking(
 pub const START_SIZE: f32 = 6e-3;
 pub const END_SIZE: f32 = 4e-3;
 
-pub fn bound_marker_picking(
+fn bound_marker_picking(
     ray_map: Res<RayMap>,
     query: Query<(&Trajectory, &PlotSourceOf)>,
     query_plot: Query<(Entity, &PlotSource, &PlotPoints)>,
@@ -392,7 +445,7 @@ pub fn bound_marker_picking(
     }
 }
 
-pub fn egui_picking(
+fn egui_picking(
     window_to_egui_context_map: Res<WindowToEguiContextMap>,
     pointers: Query<&PointerLocation>,
     mut egui_context: Query<(Entity, &mut EguiContext, &EguiContextSettings, &Camera)>,
