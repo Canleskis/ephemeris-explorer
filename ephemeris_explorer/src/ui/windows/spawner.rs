@@ -3,15 +3,15 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
-        Apsides, Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftTrajectory,
-        SphereOfInfluence, Timeline, Trajectory,
+        Apsides, Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftPropagator,
+        SpacecraftTrajectory, SphereOfInfluence, Timeline, Trajectory,
     },
     flight_plan::IntegrationMethod,
     floating_origin::BigGridBundle,
     load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
     prediction::{
-        ComputePrediction, PredictionController, PredictionControllerOf, PredictionPropagator,
-        PredictionTarget, Synchronisation,
+        PredictionController, PredictionControllerOf, PredictionPropagator, PredictionTarget,
+        Synchronisation,
     },
     simulation::SimulationTime,
     ui::{
@@ -152,14 +152,12 @@ impl ShipSpawnerWindow {
                     sv.position,
                     sv.velocity,
                 )),
-                PredictionPropagator::<SpacecraftTrajectory>(
-                    <SpacecraftTrajectory as PredictionTarget>::Propagator::new(
-                        data.start,
-                        sv,
-                        INITIAL_ADAPTIVE_PARAMS,
-                        Bodies(new_context()),
-                        Timeline::default(),
-                    ),
+                SpacecraftTrajectory::new_propagator(
+                    data.start,
+                    sv,
+                    INITIAL_ADAPTIVE_PARAMS,
+                    Bodies(new_context()),
+                    Timeline::default(),
                 ),
                 PredictionController::<SpacecraftTrajectory>::new(entity),
                 PredictionControllerOf::<SpacecraftTrajectory>::new(vec![entity]),
@@ -409,9 +407,9 @@ impl ShipSpawnerWindow {
         if !window.valid_preview {
             let sv = data.global_state_vector(data.start, &query_trajectory);
 
-            commands.trigger(ComputePrediction::<SpacecraftTrajectory>::new(
+            commands.trigger(SpacecraftTrajectory::new(
                 preview,
-                <SpacecraftTrajectory as PredictionTarget>::Propagator::new(
+                SpacecraftPropagator::new(
                     data.start,
                     sv,
                     INITIAL_ADAPTIVE_PARAMS,

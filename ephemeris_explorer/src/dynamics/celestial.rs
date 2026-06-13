@@ -1,12 +1,16 @@
 use crate::{
-    dynamics::{PredictionTrajectory, Trajectory},
-    prediction::PredictionTarget,
+    dynamics::{PredictionTrajectory, StateVector, Trajectory},
+    prediction::{PredictionControllerOf, PredictionPropagator, PredictionTarget},
 };
 
 use bevy::ecs::query::QueryData;
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use ephemeris::{InterpolationAlgorithm, Polynomial, eval_slice_horner};
+use ephemeris::{
+    BoundedTrajectory, InterpolationAlgorithm, Polynomial, PolyonmialInterpolator,
+    PropagationDirection, SplineBound, SplineInterpolator, eval_slice_horner,
+};
+use ftime::{Duration, Epoch};
 use integration::prelude::*;
 
 pub use ephemeris::{Backward, Forward};
@@ -131,14 +135,60 @@ impl InterpolationAlgorithm<DVec3> for LeastSquaresFit {
     }
 }
 
+pub type SplineInterpolators<D> = ephemeris::SplineInterpolators<D, DVec3, LeastSquaresFit>;
 pub type NBodyPropagator<D> =
-    ephemeris::NBodyPropagator<D, DVec3, QuinlanTremaine12<f64>, LeastSquaresFit>;
+    ephemeris::NBodyPropagator<D, DVec3, QuinlanTremaine12<f64>, SplineInterpolators<D>>;
 
 #[derive(QueryData)]
 #[query_data(mutable)]
 pub struct CelestialTrajectory<D> {
     pub trajectory: &'static mut Trajectory,
     marker: std::marker::PhantomData<D>,
+}
+
+impl<D> CelestialTrajectory<D>
+where
+    CelestialTrajectory<D>: PredictionTarget<Propagator = NBodyPropagator<D>>,
+    D: From<Duration> + PropagationDirection,
+    UniformSpline: SplineBound<D, DVec3>,
+{
+    #[inline]
+    pub fn new_propagator(
+        delta: Duration,
+        initial_time: Epoch,
+        initial_state: Vec<(StateVector, f64, Duration, LeastSquaresFit)>,
+    ) -> PredictionPropagator<Self> {
+        let (positions, velocities, gravitational_parameters, interpolators) = initial_state
+            .into_iter()
+            .map(|(sv, m, sample_period, algorithm)| {
+                (
+                    sv.position,
+                    sv.velocity,
+                    m,
+                    SplineInterpolator {
+                        last_sample_time: Duration::ZERO,
+                        sample_period,
+                        interpolator: PolyonmialInterpolator::new(&sv.position),
+                        algorithm,
+                    },
+                )
+            })
+            .collect();
+
+        PredictionPropagator(NBodyPropagator::new(
+            D::from(delta),
+            initial_time,
+            positions,
+            velocities,
+            gravitational_parameters,
+            SplineInterpolators::new(delta, interpolators),
+        ))
+    }
+
+    #[inline]
+    pub fn new_controller_of(entities: Vec<Entity>) -> PredictionControllerOf<Self> {
+        PredictionControllerOf::new(entities)
+    }
 }
 
 impl PredictionTarget for CelestialTrajectory<Forward> {
@@ -149,7 +199,8 @@ impl PredictionTarget for CelestialTrajectory<Forward> {
         let PredictionTrajectory::UniformSpline(world_traj) = &mut *item.trajectory.write() else {
             unreachable!()
         };
-        Self::Propagator::join(world_traj, propagated)
+        world_traj.clear_after(propagated.start());
+        world_traj.append(propagated);
     }
 
     #[inline]
@@ -170,7 +221,8 @@ impl PredictionTarget for CelestialTrajectory<Backward> {
         let PredictionTrajectory::UniformSpline(world_traj) = &mut *item.trajectory.write() else {
             unreachable!()
         };
-        Self::Propagator::join(world_traj, propagated)
+        world_traj.clear_before(propagated.end());
+        world_traj.prepend(propagated);
     }
 
     #[inline]

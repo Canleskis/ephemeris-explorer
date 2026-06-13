@@ -237,14 +237,18 @@ where
     {
         let mut h = h.as_seconds();
         let n = problem.state.y.len();
-        let mut integrator = M::new(FixedMethodParams::new(h / 2.0)).integrate(problem.clone());
-        let truth = integrator.solve()?.1;
+        let integration = M::new(FixedMethodParams::new(h / 2.0))
+            .integrate(problem.clone())
+            .with_solout(EveryStepSolout);
+        let (_, truth) = integration.solve()?;
 
         let mut errors = vec![];
 
         loop {
-            let mut integrator = M::new(FixedMethodParams::new(h)).integrate(problem.clone());
-            let (_, state) = integrator.solve()?;
+            let integration = M::new(FixedMethodParams::new(h))
+                .integrate(problem.clone())
+                .with_solout(EveryStepSolout);
+            let (end, state) = integration.solve()?;
 
             let mut max_error = SecondOrderState::new(0.0, 0.0);
             for i in 0..n {
@@ -255,7 +259,7 @@ where
                 max_error.dy = velocity_error.max(max_error.dy);
             }
 
-            if (integrator.problem.bound - integrator.problem.time).abs() != 0.0 {
+            if (problem.bound - end).abs() != 0.0 {
                 return Err(ConvergenceError::Overstep);
             }
 

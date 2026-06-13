@@ -7,7 +7,9 @@ pub use trajectory::*;
 use ftime::{Duration, Epoch};
 
 pub trait Propagator {
-    type Trajectories;
+    type Solution;
+
+    fn take_solution(&mut self) -> Self::Solution;
 }
 
 /// Trait for propagators that have a defined direction. Useful for tracking the progress of the
@@ -19,53 +21,47 @@ pub trait DirectionalPropagator: Propagator {
     /// Returns the temporal distance from one epoch to another along the propagator's direction.
     fn distance(from: Epoch, to: Epoch) -> Duration;
 
-    /// Returns the time boundaries of the trajectories.
-    fn boundaries(trajectories: &Self::Trajectories) -> impl Iterator<Item = Epoch>;
-
     /// Returns the ordering of two epochs according to the propagator's direction.
     #[inline]
     fn cmp(lhs: &Epoch, rhs: &Epoch) -> std::cmp::Ordering {
         Duration::ZERO.cmp(&Self::distance(*lhs, *rhs))
     }
 
-    /// Returns true if the trajectories have reached the specified epoch.
-    #[inline]
-    fn has_reached(trajectories: &Self::Trajectories, time: Epoch) -> bool {
-        Self::boundaries(trajectories).all(|boundary| Self::cmp(&boundary, &time).is_ge())
-    }
-}
+    /// Returns the time of the propagator.
+    fn time(&self) -> Epoch;
 
-/// A trait for propagators that support creating independent trajectory branches.
-pub trait BranchingPropagator: Propagator {
-    /// Returns a new collection of trajectory that form an independent branch starting at the
-    /// propagator's current boundary.
-    fn branch(&self) -> Self::Trajectories;
+    /// Returns true if the propagator has reached the specified epoch.
+    #[inline]
+    fn has_reached(&self, time: Epoch) -> bool {
+        Self::cmp(&self.time(), &time).is_ge()
+    }
 }
 
 pub trait IncrementalPropagator: Propagator {
     type Error;
 
-    /// Advances all trajectories by a single step using the propagator.
-    fn step(&mut self, trajs: &mut Self::Trajectories) -> Result<(), Self::Error>;
+    /// Advances the propagator once.
+    fn step(&mut self) -> Result<(), Self::Error>;
 
-    /// Advances all trajectories until the specified time bound is reached.
+    /// Advances the propagator until the given time has been reached.
     #[inline]
-    fn step_to(&mut self, trajs: &mut Self::Trajectories, bound: Epoch) -> Result<(), Self::Error>
+    fn step_to(&mut self, time: Epoch) -> Result<(), Self::Error>
     where
         Self: DirectionalPropagator,
     {
-        while !Self::has_reached(trajs, bound) {
-            self.step(trajs)?;
+        loop {
+            if self.has_reached(time) {
+                return Ok(());
+            }
+            self.step()?;
         }
-        Ok(())
     }
 }
 
 pub trait BoundedPropagator: Propagator {
     type Error;
 
-    /// Advances all trajectories to the specified time.
-    fn propagate(&mut self, trajs: &mut Self::Trajectories, to: Epoch) -> Result<(), Self::Error>;
+    fn propagate(&mut self, to: Epoch) -> Result<Self::Solution, Self::Error>;
 }
 
 impl<P> BoundedPropagator for P
@@ -75,104 +71,9 @@ where
     type Error = P::Error;
 
     #[inline]
-    fn propagate(&mut self, trajs: &mut Self::Trajectories, to: Epoch) -> Result<(), Self::Error> {
-        self.step_to(trajs, to)
-    }
-}
+    fn propagate(&mut self, to: Epoch) -> Result<Self::Solution, Self::Error> {
+        self.step_to(to)?;
 
-#[derive(Debug)]
-pub struct Propagation<P: Propagator> {
-    propagator: P,
-    trajectories: P::Trajectories,
-}
-
-impl<P: Propagator> Propagation<P> {
-    #[inline]
-    pub fn new(propagator: P) -> Self
-    where
-        P: BranchingPropagator,
-    {
-        Self {
-            trajectories: propagator.branch(),
-            propagator,
-        }
-    }
-
-    #[inline]
-    pub fn with_trajectories(propagator: P, trajectories: P::Trajectories) -> Self {
-        Self {
-            propagator,
-            trajectories,
-        }
-    }
-
-    /// Returns the inner propagator and trajectories.
-    #[inline]
-    pub fn into_inner(self) -> (P, P::Trajectories) {
-        (self.propagator, self.trajectories)
-    }
-
-    #[inline]
-    pub fn propagator(&self) -> &P {
-        &self.propagator
-    }
-
-    #[inline]
-    pub fn trajectories(&self) -> &P::Trajectories {
-        &self.trajectories
-    }
-
-    #[inline]
-    pub fn boundaries(&self) -> impl Iterator<Item = Epoch> + '_
-    where
-        P: DirectionalPropagator,
-    {
-        P::boundaries(&self.trajectories)
-    }
-
-    #[inline]
-    pub fn has_reached(&self, time: Epoch) -> bool
-    where
-        P: DirectionalPropagator,
-    {
-        P::has_reached(&self.trajectories, time)
-    }
-
-    /// Returns the current time of the propagation.
-    #[inline]
-    pub fn time(&self) -> Epoch
-    where
-        P: DirectionalPropagator,
-    {
-        self.boundaries()
-            .min_by(P::cmp)
-            .unwrap_or_else(|| P::offset(Epoch::default(), -Duration::MAX))
-    }
-
-    #[inline]
-    pub fn branch(&self) -> Self
-    where
-        P: BranchingPropagator + Clone,
-    {
-        Self {
-            propagator: self.propagator.clone(),
-            trajectories: self.propagator.branch(),
-        }
-    }
-
-    #[inline]
-    pub fn step(&mut self) -> Result<(), P::Error>
-    where
-        P: IncrementalPropagator,
-    {
-        self.propagator.step(&mut self.trajectories)
-    }
-
-    #[inline]
-    pub fn propagate(&mut self, to: Epoch) -> Result<(), P::Error>
-    where
-        P: BoundedPropagator,
-    {
-        self.propagator.propagate(&mut self.trajectories, to)
+        Ok(self.take_solution())
     }
 }

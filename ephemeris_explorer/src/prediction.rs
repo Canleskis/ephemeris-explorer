@@ -23,29 +23,54 @@
 
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
-use ephemeris::{
-    BranchingPropagator, DirectionalPropagator, IncrementalPropagator, Propagation, Propagator,
-};
+use ephemeris::{DirectionalPropagator, IncrementalPropagator, Propagator};
 use ftime::{Duration, Epoch};
 
+pub type PredictionSolution<T> = <<T as PredictionTarget>::Propagator as Propagator>::Solution;
+
 pub trait PredictionTarget: QueryData + 'static {
-    type Propagator: Propagator<Trajectories: IntoIterator + Send + Sync>
+    type Propagator: Propagator<Solution: IntoIterator + Send + Sync>
         + IncrementalPropagator<Error: std::error::Error>
         + DirectionalPropagator
-        + BranchingPropagator
         + Clone
         + Send
         + Sync;
 
     fn merge(
         item: &mut Self::Item<'_, '_>,
-        propagated: <<Self::Propagator as Propagator>::Trajectories as IntoIterator>::Item,
+        propagated: <<Self::Propagator as Propagator>::Solution as IntoIterator>::Item,
     );
 
     fn overwrite(
         item: &mut Self::Item<'_, '_>,
-        propagated: <<Self::Propagator as Propagator>::Trajectories as IntoIterator>::Item,
+        propagated: <<Self::Propagator as Propagator>::Solution as IntoIterator>::Item,
     );
+
+    #[inline]
+    fn new(
+        entity: Entity,
+        propagator: Self::Propagator,
+        duration: Duration,
+        synchronisation: Synchronisation,
+        overwrite: bool,
+    ) -> ComputePrediction<Self>
+    where
+        Self: Sized,
+    {
+        ComputePrediction::new(entity, propagator, duration, synchronisation, overwrite)
+    }
+
+    #[inline]
+    fn extend(
+        entity: Entity,
+        duration: Duration,
+        synchronisation: Synchronisation,
+    ) -> ComputePrediction<Self>
+    where
+        Self: Sized,
+    {
+        ComputePrediction::extend(entity, duration, synchronisation)
+    }
 }
 
 #[derive(Clone, Component, Deref, DerefMut)]
@@ -185,11 +210,30 @@ where
 #[derive(Debug, Clone, Copy, Component, Deref, DerefMut)]
 pub struct Predicting(pub usize);
 
+struct PredictionResult<T: PredictionTarget> {
+    propagator: T::Propagator,
+    solution: <T::Propagator as Propagator>::Solution,
+}
+
+impl<T: PredictionTarget> PredictionResult<T>
+where
+    T: PredictionTarget,
+    T::Propagator: Propagator + Clone,
+{
+    #[inline]
+    fn new(propagator: &mut T::Propagator) -> Self {
+        Self {
+            solution: propagator.take_solution(),
+            propagator: propagator.clone(),
+        }
+    }
+}
+
 /// Tracks an asynchronous prediction for a specific propagation target of type `T`.
 #[derive(Component)]
 pub struct PredictionTracker<T: PredictionTarget> {
     thread: bevy::tasks::Task<()>,
-    recver: async_channel::Receiver<Propagation<T::Propagator>>,
+    recver: async_channel::Receiver<PredictionResult<T>>,
     paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
     overwrite: bool,
     current: Epoch,
@@ -332,15 +376,14 @@ fn dispatch_predictions<T>(
     }
 
     let propagator = input_propagator.as_ref().unwrap_or(world_propagator);
-    let propagation = Propagation::new(propagator.clone());
-    let current = propagation.time();
+    let current = propagator.time();
     let end = T::Propagator::offset(current, *duration);
 
     let (sender, recver) = async_channel::bounded(1);
     let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let thread = bevy::tasks::AsyncComputeTaskPool::get().spawn(prediction_task::<T>(
-        propagation,
+        propagator.clone(),
         end,
         *synchronisation,
         sender,
@@ -363,10 +406,10 @@ fn dispatch_predictions<T>(
 /// Steps the propagator and batches these steps before sending snapshots (based on `min_steps`).
 #[inline]
 async fn prediction_task<T>(
-    mut propagation: Propagation<T::Propagator>,
+    mut propagator: T::Propagator,
     mut end: Epoch,
     mut sync: Synchronisation,
-    sender: async_channel::Sender<Propagation<T::Propagator>>,
+    sender: async_channel::Sender<PredictionResult<T>>,
     paused: std::sync::Weak<std::sync::atomic::AtomicBool>,
 ) where
     T: PredictionTarget,
@@ -375,7 +418,7 @@ async fn prediction_task<T>(
     info!("Computing {name} prediction until {end}");
     let t0 = std::time::Instant::now();
 
-    let propagation = &mut propagation;
+    let propagator = &mut propagator;
     loop {
         if let Some(paused) = paused.upgrade() {
             while paused.load(std::sync::atomic::Ordering::Relaxed) {
@@ -383,16 +426,16 @@ async fn prediction_task<T>(
             }
         }
 
-        if let Err(err) = propagation.step() {
+        if let Err(err) = propagator.step() {
             warn!("{name}: {err}");
-            end = propagation.time();
+            end = propagator.time();
         }
         sync.increment();
 
-        let reached_end = propagation.has_reached(end);
+        let reached_end = propagator.has_reached(end);
         if (sync.is_ready() && sender.is_empty()) || reached_end || sender.is_closed() {
-            let completed = std::mem::replace(propagation, propagation.branch());
-            if sender.send(completed).await.is_err() || reached_end {
+            let result = PredictionResult::new(propagator);
+            if sender.send(result).await.is_err() || reached_end {
                 break;
             }
             sync.reset();
@@ -422,16 +465,15 @@ pub fn process_prediction_data<T>(
         }
 
         if let Ok(recv) = tracker.recver.try_recv() {
-            tracker.current = recv.time();
-            let (recv_propagator, recv_trajectories) = recv.into_inner();
+            tracker.current = recv.propagator.time();
 
-            **propagator = recv_propagator;
-            for (entity, recv_trajectory) in controller_of.iter().zip(recv_trajectories) {
+            **propagator = recv.propagator;
+            for (entity, recv_solution) in controller_of.iter().zip(recv.solution) {
                 if let Ok(mut target) = query_target.get_mut(entity) {
                     if tracker.overwrite {
-                        T::overwrite(&mut target, recv_trajectory);
+                        T::overwrite(&mut target, recv_solution);
                     } else {
-                        T::merge(&mut target, recv_trajectory);
+                        T::merge(&mut target, recv_solution);
                     }
                 }
             }

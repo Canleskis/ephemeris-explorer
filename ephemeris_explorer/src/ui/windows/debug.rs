@@ -54,7 +54,7 @@ impl EphemeridesDebugWindow {
                 let Some(system) = system.get() else { return };
 
                 let start = system.epoch;
-                let duration = Duration::from_days(365.0 * 2.0).min(sim_time.end() - start);
+                let duration = Duration::from_days(365.0 * 5.0).min(sim_time.end() - start);
 
                 let available_height = ui.available_height();
                 egui_extras::TableBuilder::new(ui)
@@ -207,7 +207,7 @@ fn compute_interpolation_errors(
         })
         .collect();
 
-    let nbody = NBodyProblem {
+    let mut nbody = NBodyProblem {
         time: trigger.event().start.as_offset_seconds(),
         bound: trigger.event().start.as_offset_seconds() + trigger.event().duration.as_seconds(),
         state: SecondOrderState::new(positions, velocities),
@@ -218,12 +218,12 @@ fn compute_interpolation_errors(
 
     let method: QuinlanTremaine12<f64> =
         QuinlanTremaine12::new(FixedMethodParams::new(dt.as_seconds()));
-    let mut integrator = method.integrate(nbody);
+    let mut integrator = method.init(&nbody);
 
     let mut errors = bevy::ecs::entity::EntityHashMap::<f64>::default();
-    while let Ok((t, state)) = integrator.step() {
-        let epoch = Epoch::from_offset_seconds(*t);
-        for ((entity, _, traj), position) in query.iter().zip(&state.y) {
+    while integrator.advance(&mut nbody).is_ok() {
+        let epoch = Epoch::from_offset_seconds(nbody.time);
+        for ((entity, _, traj), position) in query.iter().zip(&nbody.state.y) {
             let traj_position = traj.position(epoch).unwrap();
 
             let error = position.distance(traj_position) * 1e3;

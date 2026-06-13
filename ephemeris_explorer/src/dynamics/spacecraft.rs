@@ -1,21 +1,21 @@
 use crate::{
     dynamics::{PredictionTrajectory, StateVector, Trajectory},
-    prediction::PredictionTarget,
+    prediction::{PredictionPropagator, PredictionTarget},
 };
 
 use bevy::ecs::query::QueryData;
 use bevy::math::{DMat3, DVec3};
 use bevy::prelude::*;
 use ephemeris::{
-    AccelerationModel, BoundedTrajectory, BranchingPropagator, DirectionalPropagator,
-    EvaluateTrajectory, Frame, IncrementalPropagator, PropagationContext, Propagator,
-    SpacecraftPropagatorError, SpacecraftPropagatorState, Transform,
+    AccelerationModel, BoundedTrajectory, DirectionalPropagator, DirectionalSolout,
+    EvaluateTrajectory, Forward, Frame, IncrementalPropagator, PropagationContext,
+    PropagationDirection, Propagator, SpacecraftPropagatorError, SpacecraftState, Transform,
 };
 use ftime::{Duration, Epoch};
 use integration::prelude::*;
 use particular::gravity::newtonian::AccelerationAt;
 
-pub type CubicHermiteSplineSamples = ephemeris::CubicHermiteSpline<DVec3>;
+pub type CubicHermiteSpline = ephemeris::CubicHermiteSpline<DVec3>;
 
 #[derive(Clone, Copy, Debug, Component, Deref, DerefMut)]
 pub struct Mu(pub f64);
@@ -296,10 +296,8 @@ pub type ConstantThrust = ephemeris::ConstantThrust<DVec3, ReferenceFrame>;
 pub type Segment = ephemeris::Segment<DVec3, ReferenceFrame>;
 pub type Timeline = ephemeris::Timeline<DVec3, ReferenceFrame>;
 
-pub type SpacecraftProblem<S, V = DVec3> =
-    ephemeris::SpacecraftProblem<S, ReferenceFrame, Bodies, V>;
-pub type BaseSpacecraftPropagator<S, M> =
-    ephemeris::SpacecraftPropagator<S, ReferenceFrame, Bodies, M>;
+pub type SpacecraftProblem<T, V = DVec3> =
+    ephemeris::SpacecraftProblem<T, ReferenceFrame, Bodies, V>;
 
 /// A list of sphere of influence transitions, sorted by time.
 #[derive(Clone, Debug, Default, Component)]
@@ -447,218 +445,166 @@ impl Apsides {
     }
 }
 
-pub struct SpacecraftPropagatorSoiDetection<S, M>(pub BaseSpacecraftPropagator<S, M>)
-where
-    S: SpacecraftPropagatorState<Vector = DVec3>,
-    M: Method<SpacecraftProblem<S>>;
-
-impl<S, M> Clone for SpacecraftPropagatorSoiDetection<S, M>
-where
-    S: SpacecraftPropagatorState<Vector = DVec3> + Clone,
-    S::Vector: Clone,
-    M: Method<SpacecraftProblem<S>> + Clone,
-    M::Integrator: Clone,
-{
-    #[inline]
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
+#[derive(Clone)]
+pub struct SpacecraftSolution {
+    pub trajectory: CubicHermiteSpline,
+    pub transitions: SoiTransitions,
+    pub apsides: Apsides,
 }
 
-impl<S, M> SpacecraftPropagatorSoiDetection<S, M>
-where
-    S: SpacecraftPropagatorState<Vector = DVec3>,
-    M: Method<SpacecraftProblem<S>>,
-{
+impl SpacecraftSolution {
     #[inline]
-    pub fn new<Params>(
-        initial_time: Epoch,
-        initial_state: StateVector,
-        params: Params,
-        context: Bodies,
-        timeline: Timeline,
-    ) -> Self
+    pub fn last_trajectory_segment(&self) -> ephemeris::CubicHermite<DVec3> {
+        self.trajectory
+            .hermite3(self.trajectory.segment_count() - 1)
+            .unwrap()
+    }
+
+    #[inline]
+    pub fn add_state<T>(&mut self, problem: &SpacecraftProblem<T>) -> bool
     where
-        Params: Clone,
-        M: NewMethod<Params>,
-        M::Integrator: Integrator<SpacecraftProblem<S>>,
+        T: SpacecraftState<Vector = DVec3>,
     {
-        Self(BaseSpacecraftPropagator::new(
-            initial_time,
-            initial_state,
-            params,
-            timeline,
-            context,
-        ))
-    }
+        let t = Epoch::from_offset_seconds(problem.time);
+        let position = problem.state.position();
+        let velocity = problem.state.velocity();
+        self.trajectory.push(t, *position, *velocity);
 
-    #[inline]
-    pub fn max_iterations(&self) -> usize
-    where
-        M::Integrator: AdaptiveRKState,
-    {
-        self.0.max_iterations()
-    }
+        let step_traj = self.last_trajectory_segment();
+        let t0 = step_traj.start();
+        let t1 = step_traj.end();
 
-    #[inline]
-    pub fn tolerance(&self) -> &<M::Integrator as AdaptiveRKState>::Tolerance
-    where
-        M::Integrator: AdaptiveRKState,
-    {
-        self.0.tolerance()
-    }
+        let context = problem.ode.context();
 
-    #[inline]
-    pub fn time(&self) -> Epoch {
-        self.0.time()
-    }
-
-    #[inline]
-    pub fn delta(&self) -> Duration
-    where
-        M::Integrator: IntegratorState<Time = f64>,
-    {
-        self.0.delta()
-    }
-
-    #[inline]
-    pub fn position(&self) -> DVec3 {
-        self.0.position()
-    }
-
-    #[inline]
-    pub fn velocity(&self) -> DVec3 {
-        self.0.velocity()
-    }
-
-    #[inline]
-    pub fn context(&self) -> &Bodies {
-        self.0.context()
-    }
-
-    #[inline]
-    pub fn timeline(&self) -> &Timeline {
-        self.0.timeline()
-    }
-
-    #[inline]
-    pub fn join(lhs: &mut CubicHermiteSplineSamples, rhs: CubicHermiteSplineSamples) {
-        BaseSpacecraftPropagator::<S, M>::join(lhs, rhs)
-    }
-
-    #[inline]
-    pub fn current_soi(&self) -> Option<Entity> {
-        self.context().soi_at(self.time(), self.position())
-    }
-
-    #[inline]
-    pub fn current_soi_transitions(&self) -> SoiTransitions {
-        self.current_soi()
-            .map(|entity| SoiTransitions(vec![(self.time(), entity)]))
-            .unwrap_or_default()
-    }
-}
-
-impl<S, M> Propagator for SpacecraftPropagatorSoiDetection<S, M>
-where
-    S: SpacecraftPropagatorState<Vector = DVec3>,
-    M: Method<SpacecraftProblem<S>>,
-{
-    type Trajectories = [(CubicHermiteSplineSamples, SoiTransitions, Apsides); 1];
-}
-
-impl<S, M> IncrementalPropagator for SpacecraftPropagatorSoiDetection<S, M>
-where
-    S: SpacecraftPropagatorState<Vector = DVec3>,
-    M: Method<SpacecraftProblem<S>> + Clone,
-    M::Integrator: Integrator<SpacecraftProblem<S>> + IntegratorState,
-{
-    type Error = <BaseSpacecraftPropagator<S, M> as IncrementalPropagator>::Error;
-
-    #[inline]
-    fn step(
-        &mut self,
-        [(traj, transitions, apsides)]: &mut Self::Trajectories,
-    ) -> Result<(), Self::Error> {
-        let t0 = self.time();
-        self.0.step(std::array::from_mut(traj))?;
-        let t1 = self.time();
-
-        // At this point, `traj` will always have at least two points, with `t0` and `t1` forming
-        // the last segment corresponding to this step.
-        let traj_step = &traj.hermite3(traj.segment_count() - 1).unwrap();
-
-        for (entity, body) in self.context().iter() {
-            if let Some(event) = body.find_soi_crossing(traj_step, t0, t1) {
+        for (entity, body) in context.iter() {
+            if let Some(event) = body.find_soi_crossing(&step_traj, t0, t1) {
                 if matches!(event.direction, CrossingDirection::Descending) {
-                    transitions.insert(event.time, *entity);
-                } else if let Some(pos) = traj_step.position(event.time)
-                    && let Some(entered) = self.context().soi_at_except(event.time, pos, &[*entity])
+                    self.transitions.insert(event.time, *entity);
+                } else if let Some(pos) = step_traj.position(event.time)
+                    && let Some(entered) = context.soi_at_except(event.time, pos, &[*entity])
                 {
-                    transitions.insert(event.time, entered);
+                    self.transitions.insert(event.time, entered);
                 }
             }
         }
 
-        // `transitions` always contains the initial soi since the last `branch`.
-        let crossed_in_step = transitions.starting_at(t0);
+        let crossed_in_step = self.transitions.starting_at(t0);
         for (i, &(t, soi)) in crossed_in_step.iter().enumerate() {
             let t0 = t.max(t0);
             let t1 = crossed_in_step.get(i + 1).map(|(t, _)| *t).unwrap_or(t1);
-            if let Some(body) = self.context().get(soi)
-                && let Some(event) = body.find_apsis(traj_step, t0, t1)
-                && let Some(distance) = body.trajectory.distance_at(traj_step, event.time)
+            if let Some(body) = context.get(soi)
+                && let Some(event) = body.find_apsis(&step_traj, t0, t1)
+                && let Some(distance) = body.trajectory.distance_at(&step_traj, event.time)
             {
                 match event.direction {
-                    CrossingDirection::Ascending => {
-                        apsides.insert(Apsis::periapsis(event.time, distance), soi)
-                    }
-                    CrossingDirection::Descending => {
-                        apsides.insert(Apsis::apoapsis(event.time, distance), soi)
-                    }
+                    CrossingDirection::Ascending => self
+                        .apsides
+                        .insert(Apsis::periapsis(event.time, distance), soi),
+                    CrossingDirection::Descending => self
+                        .apsides
+                        .insert(Apsis::apoapsis(event.time, distance), soi),
                 }
             }
         }
 
-        Ok(())
+        true
     }
 }
 
-impl<S, M> DirectionalPropagator for SpacecraftPropagatorSoiDetection<S, M>
+#[derive(Clone)]
+pub struct SpacecraftSolout;
+
+impl<T> Solout<SpacecraftProblem<T>> for SpacecraftSolout
 where
-    S: SpacecraftPropagatorState<Vector = DVec3>,
-    M: Method<SpacecraftProblem<S>>,
+    T: SpacecraftState<Vector = DVec3>,
 {
+    type Solution = SpacecraftSolution;
+
     #[inline]
-    fn offset(time: Epoch, duration: Duration) -> Epoch {
-        BaseSpacecraftPropagator::<S, M>::offset(time, duration)
+    fn new_solution(&self, problem: &SpacecraftProblem<T>) -> Self::Solution {
+        let time = Epoch::from_offset_seconds(problem.time);
+        let position = problem.state.position();
+        let velocity = problem.state.velocity();
+        let current_soi = problem.ode.context().soi_at(time, *position);
+
+        SpacecraftSolution {
+            trajectory: CubicHermiteSpline::new(time, *position, *velocity),
+            transitions: current_soi
+                .map(|entity| SoiTransitions(vec![(time, entity)]))
+                .unwrap_or_default(),
+            apsides: Apsides::default(),
+        }
     }
 
     #[inline]
-    fn distance(from: Epoch, to: Epoch) -> Duration {
-        BaseSpacecraftPropagator::<S, M>::distance(from, to)
-    }
+    fn solout(&mut self, problem: &SpacecraftProblem<T>, solution: &mut Self::Solution) -> bool {
+        let t1 = Epoch::from_offset_seconds(problem.time);
+        let position = problem.state.position();
+        let velocity = problem.state.velocity();
+        solution.trajectory.push(t1, *position, *velocity);
 
-    #[inline]
-    fn boundaries([(trajectory, ..)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> {
-        BaseSpacecraftPropagator::<S, M>::boundaries(std::array::from_ref(trajectory))
+        let context = problem.ode.context();
+
+        let step_traj = &solution
+            .trajectory
+            .hermite3(solution.trajectory.segment_count() - 1)
+            .unwrap();
+        let t0 = step_traj.start();
+
+        for (entity, body) in context.iter() {
+            if let Some(event) = body.find_soi_crossing(step_traj, t0, t1) {
+                if matches!(event.direction, CrossingDirection::Descending) {
+                    solution.transitions.insert(event.time, *entity);
+                } else if let Some(pos) = step_traj.position(event.time)
+                    && let Some(entered) = context.soi_at_except(event.time, pos, &[*entity])
+                {
+                    solution.transitions.insert(event.time, entered);
+                }
+            }
+        }
+
+        let crossed_in_step = solution.transitions.starting_at(t0);
+        for (i, &(t, soi)) in crossed_in_step.iter().enumerate() {
+            let t0 = t.max(t0);
+            let t1 = crossed_in_step.get(i + 1).map(|(t, _)| *t).unwrap_or(t1);
+            if let Some(body) = context.get(soi)
+                && let Some(event) = body.find_apsis(step_traj, t0, t1)
+                && let Some(distance) = body.trajectory.distance_at(step_traj, event.time)
+            {
+                match event.direction {
+                    CrossingDirection::Ascending => solution
+                        .apsides
+                        .insert(Apsis::periapsis(event.time, distance), soi),
+                    CrossingDirection::Descending => solution
+                        .apsides
+                        .insert(Apsis::apoapsis(event.time, distance), soi),
+                }
+            }
+        }
+
+        true
     }
 }
 
-impl<S, M> BranchingPropagator for SpacecraftPropagatorSoiDetection<S, M>
+impl<T> DirectionalSolout<SpacecraftProblem<T>> for SpacecraftSolout
 where
-    S: SpacecraftPropagatorState<Vector = DVec3>,
-    M: Method<SpacecraftProblem<S>>,
+    T: SpacecraftState<Vector = DVec3>,
 {
+    type Direction = Forward;
+
     #[inline]
-    fn branch(&self) -> Self::Trajectories {
-        [(
-            CubicHermiteSplineSamples::new(self.time(), self.position(), self.velocity()),
-            self.current_soi_transitions(),
-            Apsides::default(),
-        )]
+    fn solution_time(solution: &Self::Solution) -> Epoch {
+        solution.trajectory.end()
+    }
+
+    #[inline]
+    fn has_reached(solution: &Self::Solution, time: Epoch) -> bool {
+        Forward::cmp(&solution.trajectory.end(), &time).is_ge()
     }
 }
+
+pub type BaseSpacecraftPropagator<T, M> =
+    ephemeris::SpacecraftPropagator<T, ReferenceFrame, Bodies, M, SpacecraftSolout>;
 
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd)]
 pub struct AbsTol {
@@ -694,140 +640,161 @@ impl Tolerance<SecondOrderState<[DVec3; 1]>> for AbsTol {
     }
 }
 
-#[derive(Clone)]
-#[expect(clippy::large_enum_variant)]
-pub enum SpacecraftPropagator {
-    CashKarp45(SpacecraftPropagatorSoiDetection<[StateVector; 1], CashKarp45<f64, AbsTol, f64>>),
-    DormandPrince54(
-        SpacecraftPropagatorSoiDetection<[StateVector; 1], DormandPrince54<f64, AbsTol, f64>>,
-    ),
-    DormandPrince87(
-        SpacecraftPropagatorSoiDetection<[StateVector; 1], DormandPrince87<f64, AbsTol, f64>>,
-    ),
-    Fehlberg45(SpacecraftPropagatorSoiDetection<[StateVector; 1], Fehlberg45<f64, AbsTol, f64>>),
-    Tsitouras75(SpacecraftPropagatorSoiDetection<[StateVector; 1], Tsitouras75<f64, AbsTol, f64>>),
-    Verner87(SpacecraftPropagatorSoiDetection<[StateVector; 1], Verner87<f64, AbsTol, f64>>),
-    Verner98(SpacecraftPropagatorSoiDetection<[StateVector; 1], Verner98<f64, AbsTol, f64>>),
-    Fine45(
-        SpacecraftPropagatorSoiDetection<SecondOrderState<[DVec3; 1]>, Fine45<f64, AbsTol, f64>>,
-    ),
-}
+macro_rules! spacecraft_propagator {
+    (
+        $( $variant:ident($state:ty) ),* $(,)?
+    ) => {
+        #[derive(Clone)]
+        #[expect(clippy::large_enum_variant)]
+        pub enum SpacecraftPropagator {
+            $(
+                $variant(BaseSpacecraftPropagator<$state, $variant<f64, AbsTol, f64>>),
+            )*
+        }
 
-macro_rules! delegate {
-    ($self:expr, $method:ident $(, $args:expr)*) => {
-        match $self {
-            SpacecraftPropagator::CashKarp45(p) => p.$method($($args),*),
-            SpacecraftPropagator::DormandPrince54(p) => p.$method($($args),*),
-            SpacecraftPropagator::DormandPrince87(p) => p.$method($($args),*),
-            SpacecraftPropagator::Fehlberg45(p) => p.$method($($args),*),
-            SpacecraftPropagator::Tsitouras75(p) => p.$method($($args),*),
-            SpacecraftPropagator::Verner87(p) => p.$method($($args),*),
-            SpacecraftPropagator::Verner98(p) => p.$method($($args),*),
-            SpacecraftPropagator::Fine45(p) => p.$method($($args),*),
+        $(
+            impl From<BaseSpacecraftPropagator<$state, $variant<f64, AbsTol, f64>>> for SpacecraftPropagator {
+                #[inline]
+                fn from(propagator: BaseSpacecraftPropagator<$state, $variant<f64, AbsTol, f64>>) -> Self {
+                    Self::$variant(propagator)
+                }
+            }
+        )*
+
+        impl SpacecraftPropagator {
+            #[inline]
+            pub fn new(
+                initial_time: Epoch,
+                initial_state: StateVector,
+                params: AdaptiveMethodParams<f64, AbsTol, f64>,
+                context: Bodies,
+                timeline: Timeline,
+            ) -> Self {
+                Self::Verner87(BaseSpacecraftPropagator::new(
+                    initial_time,
+                    initial_state,
+                    params,
+                    timeline,
+                    context,
+                    SpacecraftSolout,
+                ))
+            }
+
+            #[inline]
+            pub fn max_iterations(&self) -> usize {
+                match self {
+                    $( Self::$variant(p) => p.max_iterations(), )*
+                }
+            }
+
+            #[inline]
+            pub fn tolerance(&self) -> &AbsTol {
+                match self {
+                    $( Self::$variant(p) => p.tolerance(), )*
+                }
+            }
+
+            #[inline]
+            pub fn time(&self) -> Epoch {
+                match self {
+                    $( Self::$variant(p) => p.time(), )*
+                }
+            }
+
+            #[inline]
+            pub fn delta(&self) -> Duration {
+                match self {
+                    $( Self::$variant(p) => p.delta(), )*
+                }
+            }
+
+            #[inline]
+            pub fn position(&self) -> DVec3 {
+                match self {
+                    $( Self::$variant(p) => p.position(), )*
+                }
+            }
+
+            #[inline]
+            pub fn velocity(&self) -> DVec3 {
+                match self {
+                    $( Self::$variant(p) => p.velocity(), )*
+                }
+            }
+
+            #[inline]
+            pub fn context(&self) -> &Bodies {
+                match self {
+                    $( Self::$variant(p) => p.context(), )*
+                }
+            }
+
+            #[inline]
+            pub fn timeline(&self) -> &Timeline {
+                match self {
+                    $( Self::$variant(p) => p.timeline(), )*
+                }
+            }
+
+            #[inline]
+            pub fn join(lhs: &mut CubicHermiteSpline, rhs: CubicHermiteSpline) {
+                lhs.clear_after(rhs.start());
+                lhs.extend(rhs);
+            }
+        }
+
+        impl Propagator for SpacecraftPropagator {
+            type Solution = [SpacecraftSolution; 1];
+
+            #[inline]
+            fn take_solution(&mut self) -> Self::Solution {
+                match self {
+                    $( Self::$variant(p) => [p.take_solution()], )*
+                }
+            }
+        }
+
+        impl IncrementalPropagator for SpacecraftPropagator {
+            type Error = SpacecraftPropagatorError;
+
+            #[inline]
+            fn step(&mut self) -> Result<(), Self::Error> {
+                match self {
+                    $( Self::$variant(p) => p.step(), )*
+                }
+            }
+        }
+
+        impl DirectionalPropagator for SpacecraftPropagator {
+            #[inline]
+            fn offset(to: Epoch, duration: Duration) -> Epoch {
+                Forward::offset(to, duration)
+            }
+
+            #[inline]
+            fn distance(from: Epoch, to: Epoch) -> Duration {
+                Forward::distance(from, to)
+            }
+
+            #[inline]
+            fn time(&self) -> Epoch {
+                match self {
+                    $( Self::$variant(p) => p.solution().trajectory.end(), )*
+                }
+            }
         }
     };
 }
 
-impl SpacecraftPropagator {
-    #[inline]
-    pub fn new(
-        initial_time: Epoch,
-        initial_state: StateVector,
-        params: AdaptiveMethodParams<f64, AbsTol, f64>,
-        context: Bodies,
-        timeline: Timeline,
-    ) -> Self {
-        Self::Verner87(SpacecraftPropagatorSoiDetection::new(
-            initial_time,
-            initial_state,
-            params,
-            context,
-            timeline,
-        ))
-    }
-
-    #[inline]
-    pub fn max_iterations(&self) -> usize {
-        delegate!(self, max_iterations)
-    }
-
-    #[inline]
-    pub fn tolerance(&self) -> &AbsTol {
-        delegate!(self, tolerance)
-    }
-
-    #[inline]
-    pub fn time(&self) -> Epoch {
-        delegate!(self, time)
-    }
-
-    #[inline]
-    pub fn delta(&self) -> Duration {
-        delegate!(self, delta)
-    }
-
-    #[inline]
-    pub fn position(&self) -> DVec3 {
-        delegate!(self, position)
-    }
-
-    #[inline]
-    pub fn velocity(&self) -> DVec3 {
-        delegate!(self, velocity)
-    }
-
-    #[inline]
-    pub fn context(&self) -> &Bodies {
-        delegate!(self, context)
-    }
-
-    #[inline]
-    pub fn timeline(&self) -> &Timeline {
-        delegate!(self, timeline)
-    }
-
-    #[inline]
-    pub fn join(lhs: &mut CubicHermiteSplineSamples, rhs: CubicHermiteSplineSamples) {
-        lhs.clear_after(rhs.start());
-        lhs.extend(rhs);
-    }
-}
-
-impl Propagator for SpacecraftPropagator {
-    type Trajectories = [(CubicHermiteSplineSamples, SoiTransitions, Apsides); 1];
-}
-
-impl IncrementalPropagator for SpacecraftPropagator {
-    type Error = SpacecraftPropagatorError;
-
-    #[inline]
-    fn step(&mut self, trajectories: &mut Self::Trajectories) -> Result<(), Self::Error> {
-        delegate!(self, step, trajectories)
-    }
-}
-
-impl DirectionalPropagator for SpacecraftPropagator {
-    #[inline]
-    fn offset(to: Epoch, duration: Duration) -> Epoch {
-        to + duration
-    }
-
-    #[inline]
-    fn distance(from: Epoch, to: Epoch) -> Duration {
-        to - from
-    }
-
-    #[inline]
-    fn boundaries([(trajectory, ..)]: &Self::Trajectories) -> impl Iterator<Item = Epoch> {
-        [trajectory.end()].into_iter()
-    }
-}
-
-impl BranchingPropagator for SpacecraftPropagator {
-    #[inline]
-    fn branch(&self) -> Self::Trajectories {
-        delegate!(self, branch)
-    }
+spacecraft_propagator! {
+    CashKarp45([StateVector; 1]),
+    DormandPrince54([StateVector; 1]),
+    DormandPrince87([StateVector; 1]),
+    Fehlberg45([StateVector; 1]),
+    Tsitouras75([StateVector; 1]),
+    Verner87([StateVector; 1]),
+    Verner98([StateVector; 1]),
+    Fine45(SecondOrderState<[DVec3; 1]>),
 }
 
 #[derive(QueryData)]
@@ -838,36 +805,49 @@ pub struct SpacecraftTrajectory {
     pub apsides: &'static mut Apsides,
 }
 
+impl SpacecraftTrajectory {
+    #[inline]
+    pub fn new_propagator(
+        initial_time: Epoch,
+        initial_state: StateVector,
+        params: AdaptiveMethodParams<f64, AbsTol, f64>,
+        context: Bodies,
+        timeline: Timeline,
+    ) -> PredictionPropagator<Self> {
+        PredictionPropagator(SpacecraftPropagator::new(
+            initial_time,
+            initial_state,
+            params,
+            context,
+            timeline,
+        ))
+    }
+}
+
 impl PredictionTarget for SpacecraftTrajectory {
     type Propagator = SpacecraftPropagator;
 
     #[inline]
-    fn merge(
-        item: &mut Self::Item<'_, '_>,
-        (trajectory, transitions, apsides): (CubicHermiteSplineSamples, SoiTransitions, Apsides),
-    ) {
+    fn merge(item: &mut Self::Item<'_, '_>, solution: SpacecraftSolution) {
         let PredictionTrajectory::CubicHermiteSpline(world_traj) = &mut *item.trajectory.write()
         else {
             unreachable!()
         };
-        item.apsides.clear_after(trajectory.start());
-        item.apsides.extend(apsides);
-        item.transitions.clear_after(trajectory.start());
-        item.transitions.extend(transitions);
-        Self::Propagator::join(world_traj, trajectory)
+        item.apsides.clear_after(solution.trajectory.start());
+        item.apsides.extend(solution.apsides);
+        item.transitions.clear_after(solution.trajectory.start());
+        item.transitions.extend(solution.transitions);
+        Self::Propagator::join(world_traj, solution.trajectory)
     }
 
     #[inline]
-    fn overwrite(
-        item: &mut Self::Item<'_, '_>,
-        (trajectory, transitions, apsides): (CubicHermiteSplineSamples, SoiTransitions, Apsides),
-    ) {
+    fn overwrite(item: &mut Self::Item<'_, '_>, solution: SpacecraftSolution) {
         let PredictionTrajectory::CubicHermiteSpline(world_traj) = &mut *item.trajectory.write()
         else {
             unreachable!()
         };
-        *item.apsides = apsides;
-        *item.transitions = transitions;
-        *world_traj = trajectory;
+        *item.apsides = solution.apsides;
+        *item.transitions = solution.transitions;
+        *world_traj = solution.trajectory;
     }
 }

@@ -1,11 +1,11 @@
 use crate::{
     dynamics::{
-        AbsTol, Bodies, ConstantThrust, CubicHermiteSpline, PredictionTrajectory, ReferenceFrame,
-        SpacecraftPropagator, SpacecraftPropagatorSoiDetection, SpacecraftTrajectory, StateVector,
-        Timeline, Trajectory,
+        AbsTol, BaseSpacecraftPropagator, Bodies, ConstantThrust, CubicHermiteSpline,
+        PredictionTrajectory, ReferenceFrame, SpacecraftPropagator, SpacecraftSolout,
+        SpacecraftTrajectory, StateVector, Timeline, Trajectory,
     },
     prediction::{
-        ComputePrediction, InPredictionWith, PredictionPropagator, PredictionSystems,
+        InPredictionWith, PredictionPropagator, PredictionSystems, PredictionTarget,
         Synchronisation,
     },
 };
@@ -145,7 +145,7 @@ macro_rules! integration_methods {
             ) -> SpacecraftPropagator {
                 match self {
                     $(IntegrationMethod::$variant => SpacecraftPropagator::$variant(
-                        SpacecraftPropagatorSoiDetection::new(time, sv, parameters, context, timeline)
+                        BaseSpacecraftPropagator::new(time, sv, parameters, timeline, context, SpacecraftSolout)
                     )),+
                 }
             }
@@ -351,7 +351,7 @@ fn apply_flight_plan(
     let restart_epoch = propagator.time();
 
     commands.trigger(
-        ComputePrediction::<SpacecraftTrajectory>::extend(
+        SpacecraftTrajectory::extend(
             entity,
             flight_plan.end - restart_epoch,
             flight_plan.synchronisation,

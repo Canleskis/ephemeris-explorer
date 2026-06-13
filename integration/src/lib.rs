@@ -147,10 +147,7 @@ pub trait Method<P> {
         Self: Sized,
         Self::Integrator: Integrator<P>,
     {
-        Integration {
-            integrator: self.init(&problem),
-            problem,
-        }
+        Integration::new(problem, self)
     }
 }
 
@@ -339,6 +336,26 @@ impl From<problem::EvalFailed> for StepError {
     }
 }
 
+pub trait Solout<P> {
+    type Solution;
+
+    fn new_solution(&self, problem: &P) -> Self::Solution;
+
+    fn solout(&mut self, problem: &P, solution: &mut Self::Solution) -> bool;
+}
+
+impl<P> Solout<P> for () {
+    type Solution = ();
+
+    #[inline]
+    fn new_solution(&self, _: &P) -> Self::Solution {}
+
+    #[inline]
+    fn solout(&mut self, _: &P, _: &mut Self::Solution) -> bool {
+        true
+    }
+}
+
 pub trait Integrator<P> {
     fn advance(&mut self, problem: &mut P) -> Result<(), StepError>;
 
@@ -348,8 +365,8 @@ pub trait Integrator<P> {
         P: Problem,
         P::Time: PartialOrd,
     {
-        // If the bound is already reached, `step` should return an error and so we don't need to
-        // check it here.
+        // If the bound is already reached, `advance` would return an error and so we don't need to
+        // check it beforehand.
         loop {
             self.advance(problem)?;
             if problem.as_ref().time >= problem.as_ref().bound {
@@ -359,48 +376,48 @@ pub trait Integrator<P> {
     }
 
     #[inline]
-    fn step<'a>(&mut self, problem: &'a mut P) -> Result<(&'a P::Time, &'a P::State), StepError>
+    fn advance_solution<O>(
+        &mut self,
+        problem: &mut P,
+        solout: &mut O,
+        solution: &mut O::Solution,
+    ) -> Result<bool, StepError>
     where
-        P: Problem,
+        O: Solout<P>,
     {
         self.advance(problem)?;
 
-        Ok((&(*problem).as_ref().time, &(*problem).as_ref().state))
-    }
-
-    #[inline]
-    fn solve<'a>(&mut self, problem: &'a mut P) -> Result<(&'a P::Time, &'a P::State), StepError>
-    where
-        P: Problem,
-        P::Time: PartialOrd,
-    {
-        self.advance_to_bound(problem)?;
-
-        Ok((&(*problem).as_ref().time, &(*problem).as_ref().state))
+        Ok(solout.solout(problem, solution))
     }
 }
 
 #[derive(Debug)]
-pub struct Integration<P, M: Method<P>> {
+pub struct Integration<P, M: Method<P>, O: Solout<P> = ()> {
     pub problem: P,
     pub integrator: M::Integrator,
+    pub solout: O,
+    pub solution: O::Solution,
 }
 
-impl<P, M> Clone for Integration<P, M>
+impl<P, M, O> Clone for Integration<P, M, O>
 where
     P: Clone,
     M: Method<P>,
     M::Integrator: Clone,
+    O: Solout<P> + Clone,
+    O::Solution: Clone,
 {
     fn clone(&self) -> Self {
         Self {
             problem: self.problem.clone(),
             integrator: self.integrator.clone(),
+            solout: self.solout.clone(),
+            solution: self.solution.clone(),
         }
     }
 }
 
-impl<P, M> Integration<P, M>
+impl<P, M> Integration<P, M, ()>
 where
     M: Method<P>,
 {
@@ -409,14 +426,30 @@ where
         Self {
             integrator: method.init(&problem),
             problem,
+            solout: (),
+            solution: (),
+        }
+    }
+
+    #[inline]
+    pub fn with_solout<O>(self, solout: O) -> Integration<P, M, O>
+    where
+        O: Solout<P>,
+    {
+        Integration {
+            solution: solout.new_solution(&self.problem),
+            problem: self.problem,
+            integrator: self.integrator,
+            solout,
         }
     }
 }
 
-impl<P, M> Integration<P, M>
+impl<P, M, O> Integration<P, M, O>
 where
     M: Method<P>,
     M::Integrator: IntegratorState,
+    O: Solout<P>,
 {
     #[inline]
     pub fn step_size(&self) -> <M::Integrator as IntegratorState>::Time {
@@ -429,76 +462,102 @@ where
     }
 }
 
-impl<P, M> Integration<P, M>
+impl<P, M, O> Integration<P, M, O>
 where
     P: Problem,
     P::Time: Sub<Output = P::Time> + Copy,
     M: Method<P>,
     M::Integrator: IntegratorState<Time = P::Time>,
+    O: Solout<P>,
 {
     #[inline]
     pub fn step_count_until_bound_hint(&self) -> (usize, Option<usize>) {
         self.integrator
             .step_count_until_bound_hint(self.problem.as_ref().time - self.problem.as_ref().bound)
     }
-}
 
-impl<P, M> Integration<P, M>
-where
-    P: Problem,
-    P::Time: Sub<Output = P::Time> + DivCeil + Copy,
-    M: Method<P>,
-    M::Integrator: FixedIntegrator<Time = P::Time>,
-{
     #[inline]
-    pub fn step_count_until_bound(&self) -> usize {
+    pub fn step_count_until_bound(&self) -> usize
+    where
+        P::Time: DivCeil,
+        M::Integrator: FixedIntegrator<Time = P::Time>,
+    {
         self.integrator
             .step_count_until_bound(self.problem.as_ref().time - self.problem.as_ref().bound)
     }
 }
 
-impl<P, M> Integration<P, M>
+impl<P, M, O> Integration<P, M, O>
 where
     M: Method<P>,
     M::Integrator: Integrator<P>,
+    O: Solout<P>,
 {
     #[inline]
-    pub fn advance(&mut self) -> Result<(), StepError> {
-        self.integrator.advance(&mut self.problem)
+    pub fn advance(&mut self) -> Result<bool, StepError>
+    where
+        O: Solout<P>,
+    {
+        self.integrator
+            .advance_solution(&mut self.problem, &mut self.solout, &mut self.solution)
+    }
+
+    #[inline]
+    pub fn advance_to_bound(&mut self) -> Result<(), StepError>
+    where
+        P: Problem,
+        P::Time: PartialOrd,
+        O: Solout<P>,
+    {
+        loop {
+            if !self.advance()? || self.problem.as_ref().time >= self.problem.as_ref().bound {
+                return Ok(());
+            }
+        }
+    }
+
+    #[inline]
+    pub fn solve(mut self) -> Result<O::Solution, StepError>
+    where
+        P: Problem,
+        P::Time: PartialOrd,
+        O: Solout<P>,
+    {
+        self.advance_to_bound()?;
+
+        Ok(self.solution)
     }
 }
 
-impl<P, M> Integration<P, M>
+#[derive(Clone, Copy, Debug)]
+pub struct EveryStepSolout;
+
+impl<P> Solout<P> for EveryStepSolout
 where
     P: Problem,
-    M: Method<P>,
-    M::Integrator: Integrator<P>,
+    P::Time: Clone,
+    P::State: Clone,
 {
+    type Solution = (P::Time, P::State);
+
     #[inline]
-    pub fn step(&mut self) -> Result<(&P::Time, &P::State), StepError> {
-        self.integrator.step(&mut self.problem)
+    fn new_solution(&self, problem: &P) -> Self::Solution {
+        (
+            problem.as_ref().time.clone(),
+            problem.as_ref().state.clone(),
+        )
+    }
+
+    #[inline]
+    fn solout(&mut self, problem: &P, (time, state): &mut Self::Solution) -> bool {
+        time.clone_from(&problem.as_ref().time);
+        state.clone_from(&problem.as_ref().state);
+
+        true
     }
 }
 
-impl<P, M> Integration<P, M>
-where
-    P: Problem,
-    P::Time: PartialOrd,
-    M: Method<P>,
-    M::Integrator: Integrator<P>,
-{
-    #[inline]
-    pub fn advance_to_bound(&mut self) -> Result<(), StepError> {
-        self.integrator.advance_to_bound(&mut self.problem)
-    }
-
-    #[inline]
-    pub fn solve(&mut self) -> Result<(&P::Time, &P::State), StepError> {
-        self.integrator.solve(&mut self.problem)
-    }
-}
-
-impl<P, M> Iterator for Integration<P, M>
+impl<P, M> Iterator for Integration<P, M, EveryStepSolout>
 where
     P: Problem,
     P::Time: Sub<Output = P::Time> + PartialOrd + Copy,
@@ -506,16 +565,16 @@ where
     M: Method<P>,
     M::Integrator: IntegratorState<Time = P::Time> + Integrator<P>,
 {
-    type Item = (P::Time, P::State);
+    type Item = <EveryStepSolout as Solout<P>>::Solution;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.step().ok().map(|(t, state)| (*t, state.clone()))
+        self.advance().ok().map(|_| self.solution.clone())
     }
 
     #[inline]
-    fn last(mut self) -> Option<Self::Item> {
-        self.solve().ok().map(|(t, state)| (*t, state.clone()))
+    fn last(self) -> Option<Self::Item> {
+        self.solve().ok()
     }
 
     #[inline]
@@ -524,13 +583,14 @@ where
     }
 }
 
-impl<P, M> ExactSizeIterator for Integration<P, M>
+impl<P, M, O> ExactSizeIterator for Integration<P, M, O>
 where
     P: Problem,
     P::Time: Sub<Output = P::Time> + DivCeil + Copy,
     M: Method<P>,
     M::Integrator: FixedIntegrator<Time = P::Time>,
-    Integration<P, M>: Iterator,
+    O: Solout<P>,
+    Integration<P, M, O>: Iterator,
 {
     #[inline]
     fn len(&self) -> usize {
@@ -540,8 +600,8 @@ where
 
 pub mod prelude {
     pub use crate::{
-        AdaptiveMethodParams, DivCeil, FixedIntegrator, FixedMethodParams, Integration, Integrator,
-        IntegratorState, Method, NewMethod, StepError,
+        AdaptiveMethodParams, DivCeil, EveryStepSolout, FixedIntegrator, FixedMethodParams,
+        Integration, Integrator, IntegratorState, Method, NewMethod, Solout, StepError,
         methods::*,
         multistep::{LinearMultistep, LinearMultistepIntegrator, Substepper},
         problem::{

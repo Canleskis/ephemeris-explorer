@@ -3,7 +3,7 @@ use crate::{
     auto_extend::AutoExtendSettings,
     dynamics::{Backward, CelestialTrajectory, Forward},
     load::SystemRoot,
-    prediction::{ComputePrediction, PredictionTarget, PredictionTracker, Synchronisation},
+    prediction::{PredictionTarget, PredictionTracker, Synchronisation},
     simulation::SimulationTime,
     ui::WindowsUiSet,
 };
@@ -44,7 +44,7 @@ impl PredictionPlannerWindow {
     ) where
         T: PredictionTarget,
     {
-        let (backward_duration, backward_label) = match parser(buffer) {
+        let (duration, label) = match parser(buffer) {
             Some(start) if tracker.is_none() => {
                 let duration = (start - default).abs();
                 let label = format!("Planned prediction length: {}", duration);
@@ -65,7 +65,7 @@ impl PredictionPlannerWindow {
             }
         };
 
-        if backward_duration.is_some() || tracker.as_ref().is_some_and(Ref::is_added) {
+        if duration.is_some() || tracker.as_ref().is_some_and(Ref::is_added) {
             *time_taken = None;
         }
 
@@ -77,7 +77,7 @@ impl PredictionPlannerWindow {
         }
 
         ui.horizontal(|ui| {
-            ui.label(backward_label);
+            ui.label(label);
             if let Some(time_taken) = &*time_taken {
                 ui.separator();
                 ui.label(format!("Time taken: {time_taken:?}"));
@@ -86,15 +86,11 @@ impl PredictionPlannerWindow {
 
         ui.horizontal(|ui| match tracker {
             None => {
-                ui.add_enabled_ui(backward_duration.is_some(), |ui| {
+                ui.add_enabled_ui(duration.is_some(), |ui| {
                     if ui.button("Start prediction").clicked()
-                        && let Some(duration) = backward_duration
+                        && let Some(duration) = duration
                     {
-                        commands.trigger(ComputePrediction::<T>::extend(
-                            root,
-                            duration,
-                            Synchronisation::hertz(100),
-                        ));
+                        commands.trigger(T::extend(root, duration, Synchronisation::hertz(100)));
                     }
                 });
             }

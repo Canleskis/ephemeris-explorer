@@ -1,9 +1,6 @@
 use crate::{
     MainState,
-    prediction::{
-        ComputePrediction, PredictionControllerOf, PredictionTarget, PredictionTracker,
-        Synchronisation,
-    },
+    prediction::{PredictionControllerOf, PredictionTarget, PredictionTracker, Synchronisation},
     simulation::{SimulationTime, SimulationTimeSystems},
 };
 
@@ -123,7 +120,7 @@ fn handle_extend_request<T>(
     let is_predicting = query.contains(request.entity);
 
     if (!is_predicting && should_extend) || (is_predicting && request.forced) {
-        commands.trigger(ComputePrediction::<T>::extend(
+        commands.trigger(T::extend(
             trigger.event().entity,
             (duration + request.buffer).max(Duration::ZERO),
             Synchronisation::hertz(1000),

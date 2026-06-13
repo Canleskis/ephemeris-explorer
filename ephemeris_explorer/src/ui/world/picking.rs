@@ -331,7 +331,8 @@ fn transition_marker_picking(
                         let distance = relative.position(time)?.length();
                         let size = world_pos.distance(Vec3::from(ray.origin))
                             * perspective.fov
-                            * TRANSITION_SIZE * 2.0;
+                            * TRANSITION_SIZE
+                            * 2.0;
                         let size = size.min(distance as f32);
                         ray.sphere_intersection_at(&BoundingSphere::new(world_pos, size))
                             .map(|depth| (plot_entity, TransitionHit { time, depth }))

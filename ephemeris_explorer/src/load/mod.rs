@@ -11,13 +11,13 @@ use crate::{
     camera::{CameraController, FollowParameters, Followed, OrbitCamera},
     dynamics::{
         AbsTol, Apsides, Backward, Bodies, CelestialTrajectory, CubicHermiteSpline, Forward,
-        GravitationalBody, LeastSquaresFit, Mu, NBodyPropagator, SpacecraftTrajectory,
-        SphereOfInfluence, StateVector, Trajectory, UniformSpline,
+        GravitationalBody, LeastSquaresFit, Mu, SpacecraftTrajectory, SphereOfInfluence,
+        StateVector, Trajectory, UniformSpline,
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, CellCoord, FloatingOrigin},
     prediction::{
-        ComputePrediction, PredictionController, PredictionControllerOf, PredictionPropagator,
+        PredictionController, PredictionControllerOf, PredictionPropagator, PredictionTarget,
         PredictionTracker, Synchronisation,
     },
     rotation::Rotating,
@@ -413,18 +413,10 @@ fn spawn_loaded_bodies(
 
     let dt = ephemerides.dt;
     commands.entity(root).insert((
-        PredictionPropagator::<CelestialTrajectory<Forward>>(NBodyPropagator::with(
-            Forward::new(dt),
-            system.epoch,
-            states.clone(),
-        )),
-        PredictionControllerOf::<CelestialTrajectory<Forward>>::new(entities.clone()),
-        PredictionPropagator::<CelestialTrajectory<Backward>>(NBodyPropagator::with(
-            Backward::new(dt),
-            system.epoch,
-            states,
-        )),
-        PredictionControllerOf::<CelestialTrajectory<Backward>>::new(entities),
+        CelestialTrajectory::<Forward>::new_propagator(dt, system.epoch, states.clone()),
+        CelestialTrajectory::<Forward>::new_controller_of(entities.clone()),
+        CelestialTrajectory::<Backward>::new_propagator(dt, system.epoch, states.clone()),
+        CelestialTrajectory::<Backward>::new_controller_of(entities),
     ));
 
     commands.insert_resource(SimulationTime::new(system.epoch));
@@ -682,12 +674,12 @@ fn compute_ephemerides_bodies(mut commands: Commands, root: Single<Entity, With<
     let duration = Duration::from_days(365.0 * 2.0);
     let synchronisation = Synchronisation::hertz(100);
 
-    commands.trigger(ComputePrediction::<CelestialTrajectory<Forward>>::extend(
+    commands.trigger(CelestialTrajectory::<Forward>::extend(
         *root,
         duration,
         synchronisation,
     ));
-    commands.trigger(ComputePrediction::<CelestialTrajectory<Backward>>::extend(
+    commands.trigger(CelestialTrajectory::<Backward>::extend(
         *root,
         duration,
         synchronisation,

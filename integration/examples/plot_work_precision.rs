@@ -484,30 +484,30 @@ where
             .rev()
             .map(|i| {
                 let method = fac(i, n);
-                let mut integrator = method.integrate(self.problem.clone());
+                let mut integration = method.integrate(self.problem.clone());
 
                 let mut error = 0f64;
                 loop {
-                    let step_result = integrator.advance();
+                    let step_result = integration.advance();
 
-                    let time = integrator.problem.as_ref().time;
+                    let time = integration.problem.as_ref().time;
                     let exact = (self.exact)(time);
                     error = error.max(
-                        (self.absolute_error)(&integrator.problem.as_ref().state, &exact) * 1e3,
+                        (self.absolute_error)(&integration.problem.as_ref().state, &exact) * 1e3,
                     );
                     match step_result {
-                        Ok(()) => {}
-                        Err(StepError::BoundReached) => break,
+                        Ok(true) => {}
+                        Ok(false) | Err(StepError::BoundReached) => break,
                         Err(e) => {
                             panic!("Integration failed for {}: {e}", std::any::type_name::<S>())
                         }
                     }
-                    if time >= integrator.problem.as_ref().bound {
+                    if time >= integration.problem.as_ref().bound {
                         break;
                     }
                 }
 
-                (error, integrator.problem.as_ref().ode.evaluations)
+                (error, integration.problem.as_ref().ode.evaluations)
             })
             // Ignore large errors that don't fit in the plot
             .filter(|&(error, evaluations)| error > MIN_ERROR && evaluations < MAX_EVALS)

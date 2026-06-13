@@ -12,8 +12,6 @@ use ftime::Epoch;
 
 pub type StateVector = ephemeris::StateVector<DVec3>;
 
-pub type CubicHermiteSpline = ephemeris::CubicHermiteSpline<DVec3>;
-
 pub enum PredictionTrajectory {
     UniformSpline(UniformSpline),
     CubicHermiteSpline(CubicHermiteSpline),

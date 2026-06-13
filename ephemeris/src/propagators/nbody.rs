@@ -1,10 +1,11 @@
 use crate::{
-    BranchingPropagator, DirectionalPropagator, IncrementalPropagator, Polynomial, Propagator,
-    trajectory::{BoundedTrajectory, DIV, StateVector, UniformSpline},
+    Backward, BoundedTrajectory, DirectionalPropagator, DirectionalSolout, Forward,
+    IncrementalPropagator, PropagationDirection, Propagator, UniformSpline,
+    trajectory::{DIV, Polynomial, StateVector},
 };
 
 use ftime::{Duration, Epoch};
-use integration::prelude::*;
+use integration::{Solout, prelude::*, problem::State};
 use particular::gravity::newtonian::AccelerationPaired;
 
 #[derive(Clone, Debug)]
@@ -19,7 +20,6 @@ where
 {
     #[inline]
     fn eval(&mut self, _: T, y: &Vec<V>, ddy: &mut Vec<V>) -> Result<(), EvalFailed> {
-        ddy.fill(V::default());
         for i in 0..y.len() {
             let mut output_i = V::default();
             let p_i = (y[i], self.gravitational_parameters[i]);
@@ -39,6 +39,200 @@ where
 }
 
 pub type NBodyProblem<V> = ODEProblem<f64, SecondOrderState<Vec<V>>, NewtonianGravity>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NBodyPropagatorError {
+    Integration(StepError),
+    Solout,
+}
+impl std::fmt::Display for NBodyPropagatorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NBodyPropagatorError::Integration(e) => write!(f, "integration failed: {e}"),
+            NBodyPropagatorError::Solout => write!(f, "solout exit"),
+        }
+    }
+}
+impl std::error::Error for NBodyPropagatorError {}
+
+impl From<StepError> for NBodyPropagatorError {
+    #[inline]
+    fn from(err: StepError) -> Self {
+        NBodyPropagatorError::Integration(err)
+    }
+}
+
+pub struct NBodyPropagator<D, V, M: Method<NBodyProblem<V>>, O: Solout<NBodyProblem<V>>> {
+    integration: Integration<NBodyProblem<V>, M, O>,
+    _marker: std::marker::PhantomData<D>,
+}
+
+impl<D, V, M, O> Clone for NBodyPropagator<D, V, M, O>
+where
+    V: Clone,
+    M: Method<NBodyProblem<V>>,
+    M::Integrator: Clone,
+    O: Solout<NBodyProblem<V>> + Clone,
+    O::Solution: Clone,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            integration: self.integration.clone(),
+            ..*self
+        }
+    }
+}
+
+impl<D, V, M, O> NBodyPropagator<D, V, M, O>
+where
+    M: Method<NBodyProblem<V>>,
+    O: Solout<NBodyProblem<V>>,
+{
+    #[inline]
+    pub fn new(
+        direction: D,
+        initial_time: Epoch,
+        positions: Vec<V>,
+        velocities: Vec<V>,
+        gravitational_parameters: Vec<f64>,
+        solout: O,
+    ) -> Self
+    where
+        D: PropagationDirection,
+        M: NewMethod<FixedMethodParams<f64>>,
+        M::Integrator: Integrator<NBodyProblem<V>>,
+    {
+        Self {
+            integration: M::new(FixedMethodParams::new(
+                direction.signed_delta().as_seconds(),
+            ))
+            .integrate(NBodyProblem {
+                time: initial_time.as_offset_seconds(),
+                bound: f64::INFINITY,
+                state: SecondOrderState::new(positions, velocities),
+                ode: NewtonianGravity {
+                    gravitational_parameters,
+                },
+            })
+            .with_solout(solout),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn with(
+        direction: D,
+        initial_time: Epoch,
+        initial_state: Vec<(StateVector<V>, f64)>,
+        solout: O,
+    ) -> Self
+    where
+        D: PropagationDirection,
+        M: NewMethod<FixedMethodParams<f64>>,
+        M::Integrator: Integrator<NBodyProblem<V>>,
+    {
+        let (positions, velocities, gravitational_parameters) = initial_state
+            .into_iter()
+            .map(|(sv, m)| (sv.position, sv.velocity, m))
+            .collect();
+
+        Self::new(
+            direction,
+            initial_time,
+            positions,
+            velocities,
+            gravitational_parameters,
+            solout,
+        )
+    }
+
+    #[inline]
+    pub fn time(&self) -> Epoch {
+        Epoch::from_offset_seconds(self.integration.problem.time)
+    }
+
+    #[inline]
+    pub fn delta(&self) -> Duration
+    where
+        M::Integrator: IntegratorState<Time = f64>,
+    {
+        Duration::from_seconds(self.integration.step_size())
+    }
+
+    #[inline]
+    pub fn solout(&self) -> &O {
+        &self.integration.solout
+    }
+
+    #[inline]
+    pub fn solution(&self) -> &O::Solution {
+        &self.integration.solution
+    }
+}
+
+impl<D, V, M, O> Propagator for NBodyPropagator<D, V, M, O>
+where
+    M: Method<NBodyProblem<V>>,
+    O: DirectionalSolout<NBodyProblem<V>, Direction = D>,
+{
+    type Solution = O::Solution;
+
+    #[inline]
+    fn take_solution(&mut self) -> Self::Solution {
+        std::mem::replace(
+            &mut self.integration.solution,
+            self.integration
+                .solout
+                .new_solution(&self.integration.problem),
+        )
+    }
+}
+
+impl<D, V, M, O> IncrementalPropagator for NBodyPropagator<D, V, M, O>
+where
+    M: Method<NBodyProblem<V>>,
+    M::Integrator: Integrator<NBodyProblem<V>>,
+    O: DirectionalSolout<NBodyProblem<V>, Direction = D>,
+{
+    type Error = NBodyPropagatorError;
+
+    #[inline]
+    fn step(&mut self) -> Result<(), Self::Error> {
+        if !self.integration.advance()? {
+            return Err(NBodyPropagatorError::Solout);
+        }
+
+        Ok(())
+    }
+}
+
+impl<D, V, M, O> DirectionalPropagator for NBodyPropagator<D, V, M, O>
+where
+    D: PropagationDirection,
+    M: Method<NBodyProblem<V>>,
+    O: DirectionalSolout<NBodyProblem<V>, Direction = D>,
+{
+    #[inline]
+    fn offset(to: Epoch, duration: Duration) -> Epoch {
+        D::offset(to, duration)
+    }
+
+    #[inline]
+    fn distance(from: Epoch, to: Epoch) -> Duration {
+        D::distance(from, to)
+    }
+
+    #[inline]
+    fn time(&self) -> Epoch {
+        O::solution_time(&self.integration.solution)
+    }
+
+    #[inline]
+    fn has_reached(&self, time: Epoch) -> bool {
+        O::has_reached(&self.integration.solution, time)
+    }
+}
 
 pub trait InterpolationAlgorithm<V> {
     type Error;
@@ -113,14 +307,14 @@ impl<const LEN: usize, V> PolyonmialInterpolator<LEN, V> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Interpolation<const LEN: usize, V, A> {
-    last_sample_time: Duration,
-    sample_period: Duration,
-    interpolator: PolyonmialInterpolator<LEN, V>,
-    algorithm: A,
+pub struct SplineInterpolator<V, A> {
+    pub last_sample_time: Duration,
+    pub sample_period: Duration,
+    pub interpolator: PolyonmialInterpolator<{ DIV + 1 }, V>,
+    pub algorithm: A,
 }
 
-impl<const LEN: usize, V, A> Interpolation<LEN, V, A> {
+impl<V, A> SplineInterpolator<V, A> {
     #[inline]
     pub fn time(&self) -> Duration {
         self.last_sample_time
@@ -128,393 +322,196 @@ impl<const LEN: usize, V, A> Interpolation<LEN, V, A> {
     }
 }
 
-pub trait PropagationDirection {
-    fn signed_delta(&self) -> Duration;
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Forward {
+#[derive(Clone, Debug)]
+pub struct SplineInterpolators<D, V, A> {
     delta: Duration,
-}
-
-impl Forward {
-    #[inline]
-    pub fn new(delta: Duration) -> Self {
-        Self { delta: delta.abs() }
-    }
-}
-
-impl PropagationDirection for Forward {
-    #[inline]
-    fn signed_delta(&self) -> Duration {
-        self.delta
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Backward {
-    delta: Duration,
-}
-
-impl Backward {
-    #[inline]
-    pub fn new(delta: Duration) -> Self {
-        Self { delta: delta.abs() }
-    }
-}
-
-impl PropagationDirection for Backward {
-    #[inline]
-    fn signed_delta(&self) -> Duration {
-        -self.delta
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NBodyPropagatorError {
-    Integration(StepError),
-    Interpolation,
-}
-impl std::fmt::Display for NBodyPropagatorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NBodyPropagatorError::Integration(e) => write!(f, "integration failed: {e}"),
-            NBodyPropagatorError::Interpolation => {
-                write!(f, "failed to interpolate trajectory")
-            }
-        }
-    }
-}
-impl std::error::Error for NBodyPropagatorError {}
-
-impl From<StepError> for NBodyPropagatorError {
-    #[inline]
-    fn from(err: StepError) -> Self {
-        NBodyPropagatorError::Integration(err)
-    }
-}
-
-pub struct NBodyPropagator<D, V, M: Method<NBodyProblem<V>>, A> {
-    integration: Integration<NBodyProblem<V>, M>,
-    interpolation: Vec<Interpolation<{ DIV + 1 }, V, A>>,
+    interpolators: Vec<SplineInterpolator<V, A>>,
     _marker: std::marker::PhantomData<D>,
 }
 
-impl<D, V, M, A> Clone for NBodyPropagator<D, V, M, A>
-where
-    V: Clone,
-    A: Clone,
-    M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState + Clone,
-{
+impl<D, V, A> SplineInterpolators<D, V, A> {
     #[inline]
-    fn clone(&self) -> Self {
+    pub fn new(delta: Duration, interpolators: Vec<SplineInterpolator<V, A>>) -> Self {
         Self {
-            integration: self.integration.clone(),
-            interpolation: self.interpolation.clone(),
-            ..*self
-        }
-    }
-}
-
-impl<D, V, M, A> NBodyPropagator<D, V, M, A>
-where
-    M: Method<NBodyProblem<V>>,
-{
-    #[inline]
-    pub fn new(
-        direction: D,
-        initial_time: Epoch,
-        positions: Vec<V>,
-        velocities: Vec<V>,
-        gravitational_parameters: Vec<f64>,
-        interpolations: Vec<(Duration, A)>,
-    ) -> Self
-    where
-        V: Copy,
-        D: PropagationDirection,
-        M: NewMethod<FixedMethodParams<f64>>,
-        M::Integrator: Integrator<NBodyProblem<V>>,
-    {
-        let interpolation = positions
-            .iter()
-            .zip(interpolations)
-            .map(|(position, (sample_period, algorithm))| Interpolation {
-                last_sample_time: Duration::ZERO,
-                sample_period,
-                interpolator: PolyonmialInterpolator::new(position),
-                algorithm,
-            })
-            .collect();
-
-        Self {
-            integration: M::new(FixedMethodParams::new(
-                direction.signed_delta().as_seconds(),
-            ))
-            .integrate(NBodyProblem {
-                time: initial_time.as_offset_seconds(),
-                bound: f64::INFINITY,
-                state: SecondOrderState::new(positions, velocities),
-                ode: NewtonianGravity {
-                    gravitational_parameters,
-                },
-            }),
-            interpolation,
+            delta,
+            interpolators,
             _marker: std::marker::PhantomData,
         }
     }
 
     #[inline]
     pub fn with(
-        direction: D,
-        initial_time: Epoch,
-        initial_state: Vec<(StateVector<V>, f64, Duration, A)>,
+        delta: Duration,
+        initial_positions: Vec<V>,
+        sample_periods: Vec<Duration>,
+        algorithms: Vec<A>,
     ) -> Self
     where
         V: Copy,
-        D: PropagationDirection,
-        M: NewMethod<FixedMethodParams<f64>>,
-        M::Integrator: Integrator<NBodyProblem<V>>,
     {
-        let (positions, velocities, gravitational_parameters, interpolation) = initial_state
-            .into_iter()
-            .map(|(sv, m, sample_period, algorithm)| {
-                (
-                    sv.position,
-                    sv.velocity,
-                    m,
-                    Interpolation {
+        Self {
+            delta,
+            interpolators: initial_positions
+                .into_iter()
+                .zip(sample_periods)
+                .zip(algorithms)
+                .map(
+                    |((position, sample_period), algorithm)| SplineInterpolator {
                         last_sample_time: Duration::ZERO,
                         sample_period,
-                        interpolator: PolyonmialInterpolator::new(&sv.position),
+                        interpolator: PolyonmialInterpolator::new(&position),
                         algorithm,
                     },
                 )
-            })
-            .collect();
-
-        Self {
-            integration: M::new(FixedMethodParams::new(
-                direction.signed_delta().as_seconds(),
-            ))
-            .integrate(NBodyProblem {
-                time: initial_time.as_offset_seconds(),
-                bound: f64::INFINITY,
-                state: SecondOrderState::new(positions, velocities),
-                ode: NewtonianGravity {
-                    gravitational_parameters,
-                },
-            }),
-            interpolation,
+                .collect(),
             _marker: std::marker::PhantomData,
         }
     }
 
     #[inline]
-    pub fn time(&self) -> Epoch {
-        Epoch::from_offset_seconds(self.integration.problem.time)
-    }
-
-    #[inline]
-    pub fn delta(&self) -> Duration
-    where
-        M::Integrator: IntegratorState<Time = f64>,
-    {
-        Duration::from_seconds(self.integration.step_size())
-    }
-
-    #[inline]
-    fn step_extend<E, F>(
+    fn solout_with<F>(
         &mut self,
-        trajectories: &mut [UniformSpline<V>],
+        problem: &NBodyProblem<V>,
+        solution: &mut [UniformSpline<V>],
         try_extend: F,
-    ) -> Result<(), NBodyPropagatorError>
+    ) -> bool
     where
         V: Copy,
-        M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
-        F: Fn(&mut UniformSpline<V>, &mut Interpolation<{ DIV + 1 }, V, A>) -> Result<(), E>,
+        F: Fn(&mut UniformSpline<V>, &mut SplineInterpolator<V, A>) -> bool,
     {
-        self.integration.advance()?;
-
-        let delta_abs = self.delta().abs();
-        for ((position, interp), trajectory) in self
-            .integration
-            .problem
+        for ((position, interp), trajectory) in problem
             .state
             .y
             .iter()
-            .zip(self.interpolation.iter_mut())
-            .zip(trajectories.iter_mut())
+            .zip(self.interpolators.iter_mut())
+            .zip(solution.iter_mut())
         {
-            interp.last_sample_time += delta_abs;
+            interp.last_sample_time += self.delta;
             if interp.last_sample_time == interp.sample_period {
                 interp.last_sample_time = Duration::ZERO;
                 interp.interpolator.push(position);
-                try_extend(trajectory, interp).map_err(|_| NBodyPropagatorError::Interpolation)?;
+                if !try_extend(trajectory, interp) {
+                    return false;
+                }
             }
         }
 
-        Ok(())
+        true
     }
 }
 
-impl<V, M, A> NBodyPropagator<Forward, V, M, A>
-where
-    M: Method<NBodyProblem<V>>,
-{
+pub trait SplineBound<D, V> {
+    fn bound(&self) -> Epoch;
+
+    fn push_at_bound(&mut self, polynomial: Polynomial<V>);
+
+    fn samples() -> [f64; 9];
+}
+
+impl<V> SplineBound<Forward, V> for UniformSpline<V> {
     #[inline]
-    pub fn join(lhs: &mut UniformSpline<V>, rhs: UniformSpline<V>) {
-        lhs.clear_after(rhs.start());
-        lhs.append(rhs);
+    fn bound(&self) -> Epoch {
+        self.end()
     }
-}
 
-impl<V, M, A> NBodyPropagator<Backward, V, M, A>
-where
-    M: Method<NBodyProblem<V>>,
-{
     #[inline]
-    pub fn join(lhs: &mut UniformSpline<V>, rhs: UniformSpline<V>) {
-        lhs.clear_before(rhs.end());
-        lhs.prepend(rhs);
+    fn push_at_bound(&mut self, polynomial: Polynomial<V>) {
+        self.push_back(polynomial);
+    }
+
+    #[inline]
+    fn samples() -> [f64; 9] {
+        std::array::from_fn(|i| i as f64 / DIV as f64)
     }
 }
 
-impl<D, V, M, A> Propagator for NBodyPropagator<D, V, M, A>
-where
-    M: Method<NBodyProblem<V>>,
-{
-    type Trajectories = Vec<UniformSpline<V>>;
+impl<V> SplineBound<Backward, V> for UniformSpline<V> {
+    #[inline]
+    fn bound(&self) -> Epoch {
+        self.start()
+    }
+
+    #[inline]
+    fn push_at_bound(&mut self, polynomial: Polynomial<V>) {
+        self.push_front(polynomial);
+    }
+
+    #[inline]
+    fn samples() -> [f64; 9] {
+        std::array::from_fn(|i| 1.0 - i as f64 / DIV as f64)
+    }
 }
 
-impl<V, M, A> IncrementalPropagator for NBodyPropagator<Forward, V, M, A>
+impl<D, V, A> Solout<NBodyProblem<V>> for SplineInterpolators<D, V, A>
 where
+    D: PropagationDirection,
     V: Copy,
     A: InterpolationAlgorithm<V>,
-    M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
+    UniformSpline<V>: SplineBound<D, V>,
 {
-    type Error = NBodyPropagatorError;
+    type Solution = Vec<UniformSpline<V>>;
 
     #[inline]
-    fn step(&mut self, trajectories: &mut Self::Trajectories) -> Result<(), Self::Error> {
-        self.step_extend::<A::Error, _>(trajectories, |trajectory, interp| {
-            let ts = std::array::from_fn(|i| i as f64 / DIV as f64);
-            if let Some(polynomial) = interp.interpolator.try_to_polynomial(ts, &interp.algorithm) {
-                trajectory.push_back(polynomial?);
-                interp.interpolator.finish();
-            }
-            Ok(())
-        })
-    }
-}
-
-impl<V, M, A> DirectionalPropagator for NBodyPropagator<Forward, V, M, A>
-where
-    V: Copy,
-    A: InterpolationAlgorithm<V>,
-    M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
-{
-    #[inline]
-    fn offset(to: Epoch, duration: Duration) -> Epoch {
-        to + duration
-    }
-
-    #[inline]
-    fn distance(from: Epoch, to: Epoch) -> Duration {
-        to - from
-    }
-
-    #[inline]
-    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> {
-        trajectory.iter().map(|traj| traj.end())
-    }
-}
-
-impl<V, M, A> BranchingPropagator for NBodyPropagator<Forward, V, M, A>
-where
-    V: Copy,
-    A: InterpolationAlgorithm<V>,
-    M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
-{
-    #[inline]
-    fn branch(&self) -> Self::Trajectories {
-        self.interpolation
+    fn new_solution(&self, problem: &NBodyProblem<V>) -> Self::Solution {
+        self.interpolators
             .iter()
-            .map(|interpolation| {
+            .map(|interpolator| {
                 UniformSpline::new(
-                    self.time() - interpolation.time(),
-                    interpolation.sample_period * DIV as f64,
+                    D::offset(
+                        Epoch::from_offset_seconds(problem.time),
+                        -interpolator.time(),
+                    ),
+                    interpolator.sample_period * DIV as f64,
                 )
             })
             .collect()
     }
-}
-
-impl<V, M, A> IncrementalPropagator for NBodyPropagator<Backward, V, M, A>
-where
-    V: Copy,
-    A: InterpolationAlgorithm<V>,
-    M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState<Time = f64> + Integrator<NBodyProblem<V>>,
-{
-    type Error = NBodyPropagatorError;
 
     #[inline]
-    fn step(&mut self, trajectories: &mut Self::Trajectories) -> Result<(), Self::Error> {
-        self.step_extend::<A::Error, _>(trajectories, |trajectory, interp| {
-            let ts = std::array::from_fn(|i| 1.0 - i as f64 / DIV as f64);
-            if let Some(polynomial) = interp.interpolator.try_to_polynomial(ts, &interp.algorithm) {
-                trajectory.push_front(polynomial?);
-                interp.interpolator.finish();
+    fn solout(&mut self, problem: &NBodyProblem<V>, solution: &mut Self::Solution) -> bool {
+        self.solout_with(problem, solution, |trajectory, interp| {
+            let ts = UniformSpline::<V>::samples();
+            match interp
+                .interpolator
+                .try_to_polynomial(ts, &interp.algorithm)
+                .transpose()
+            {
+                Ok(polynomial) => {
+                    if let Some(polynomial) = polynomial {
+                        trajectory.push_at_bound(polynomial);
+                        interp.interpolator.finish();
+                    }
+                    true
+                }
+                Err(_) => false,
             }
-            Ok(())
         })
     }
 }
 
-impl<V, M, A> DirectionalPropagator for NBodyPropagator<Backward, V, M, A>
+impl<D, V, A> DirectionalSolout<NBodyProblem<V>> for SplineInterpolators<D, V, A>
 where
+    D: PropagationDirection,
     V: Copy,
     A: InterpolationAlgorithm<V>,
-    M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
+    UniformSpline<V>: SplineBound<D, V>,
 {
-    #[inline]
-    fn offset(to: Epoch, duration: Duration) -> Epoch {
-        to - duration
-    }
+    type Direction = D;
 
     #[inline]
-    fn distance(from: Epoch, to: Epoch) -> Duration {
-        from - to
-    }
-
-    #[inline]
-    fn boundaries(trajectory: &Self::Trajectories) -> impl Iterator<Item = Epoch> {
-        trajectory.iter().map(|traj| traj.start())
-    }
-}
-
-impl<V, M, A> BranchingPropagator for NBodyPropagator<Backward, V, M, A>
-where
-    V: Copy,
-    A: InterpolationAlgorithm<V>,
-    M: Method<NBodyProblem<V>>,
-    M::Integrator: IntegratorState + Integrator<NBodyProblem<V>>,
-{
-    #[inline]
-    fn branch(&self) -> Self::Trajectories {
-        self.interpolation
+    fn solution_time(solution: &Self::Solution) -> Epoch {
+        solution
             .iter()
-            .map(|interpolation| {
-                UniformSpline::new(
-                    self.time() + interpolation.time(),
-                    interpolation.sample_period * DIV as f64,
-                )
-            })
-            .collect()
+            .map(|traj| traj.bound())
+            .min_by(D::cmp)
+            .unwrap_or_else(|| D::offset(Epoch::default(), -Duration::MAX))
+    }
+
+    #[inline]
+    fn has_reached(solution: &Self::Solution, time: Epoch) -> bool {
+        solution
+            .iter()
+            .map(|traj| traj.bound())
+            .all(|bound| D::cmp(&bound, &time).is_ge())
     }
 }

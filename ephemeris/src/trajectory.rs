@@ -725,6 +725,23 @@ where
     }
 }
 
+impl<V> BoundedTrajectory for CubicHermite<V> {
+    #[inline]
+    fn start(&self) -> Epoch {
+        Epoch::from_offset_seconds(self.bounds.0)
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        Epoch::from_offset_seconds(self.bounds.1)
+    }
+
+    #[inline]
+    fn segment_count(&self) -> usize {
+        1
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CubicHermiteSpline<V>(Vec<(Epoch, StateVector<V>)>);
 

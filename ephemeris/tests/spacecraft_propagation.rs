@@ -1,7 +1,7 @@
 use ephemeris::{
-    AccelerationModel, BoundedTrajectory, EvaluateTrajectory, Forward, Frame,
-    InterpolationAlgorithm, NBodyPropagatorError, Polynomial, Propagation, PropagationContext,
-    Transform, eval_slice_horner,
+    AccelerationModel, BoundedPropagator, BoundedTrajectory, CubicHermiteSplineSolout,
+    EvaluateTrajectory, Forward, Frame, InterpolationAlgorithm, NBodyPropagatorError, Polynomial,
+    PolyonmialInterpolator, PropagationContext, SplineInterpolator, Transform, eval_slice_horner,
 };
 use ftime::{Duration, Epoch};
 use glam::{DMat3, DVec3};
@@ -132,7 +132,9 @@ impl InterpolationAlgorithm<DVec3> for LeastSquaresFit {
 
 type StateVector = ephemeris::StateVector<DVec3>;
 type NBodyProblem = ephemeris::NBodyProblem<DVec3>;
-type NBodyPropagator<M> = ephemeris::NBodyPropagator<Forward, DVec3, M, LeastSquaresFit>;
+type SplineInterpolators<D> = ephemeris::SplineInterpolators<D, DVec3, LeastSquaresFit>;
+type NBodyPropagator<M> =
+    ephemeris::NBodyPropagator<Forward, DVec3, M, SplineInterpolators<Forward>>;
 type UniformSpline = ephemeris::UniformSpline<DVec3>;
 
 #[inline]
@@ -146,23 +148,33 @@ where
     M: NewMethod<FixedMethodParams<f64>> + Method<NBodyProblem>,
     M::Integrator: Integrator<NBodyProblem> + IntegratorState<Time = f64>,
 {
-    let ((positions, velocities), mus) = system
+    let (((positions, velocities), mus), interpolators) = system
         .bodies
         .iter()
-        .map(|body| ((body.position, body.velocity), body.mu))
+        .zip(parameters)
+        .map(|(body, &(sample_period, algorithm))| {
+            (
+                ((body.position, body.velocity), body.mu),
+                SplineInterpolator {
+                    last_sample_time: Duration::ZERO,
+                    sample_period,
+                    interpolator: PolyonmialInterpolator::new(&body.position),
+                    algorithm,
+                },
+            )
+        })
         .unzip();
 
-    let mut propagation = Propagation::new(NBodyPropagator::<M>::new(
+    let mut propagator = NBodyPropagator::<M>::new(
         Forward::new(h),
         system.epoch,
         positions,
         velocities,
         mus,
-        parameters.to_vec(),
-    ));
-    propagation.propagate(end)?;
+        SplineInterpolators::new(h, interpolators),
+    );
 
-    Ok(propagation.into_inner().1)
+    propagator.propagate(end)
 }
 
 fn generate_celestial_bodies<M>(
@@ -322,6 +334,7 @@ type SpacecraftPropagator<'a> = ephemeris::SpacecraftPropagator<
     ReferenceFrame,
     &'a CelestialBodies,
     Verner87<f64, AbsTol, f64>,
+    CubicHermiteSplineSolout,
 >;
 
 #[rustfmt::skip]
@@ -434,19 +447,19 @@ fn spacecraft_propagation() -> Result<(), Box<dyn std::error::Error>> {
             ),
         ),
     ]);
-    let mut propagation = Propagation::new(SpacecraftPropagator::new(
+    let mut propagator = SpacecraftPropagator::new(
         initial_time,
         initial_state,
         ADAPTIVE_PARAMETERS,
         timeline,
         &celestial_bodies,
-    ));
+        CubicHermiteSplineSolout,
+    );
 
     let end = "1951-01-01 00:00:00".parse()?;
-    propagation.propagate(end)?;
-    let [spacecraft_trajectory] = propagation.trajectories();
+    let spacecraft_trajectory = propagator.propagate(end)?;
 
-    let distance_from = |t, body: SolarSystemObject| {
+    let distance_from = |body: SolarSystemObject, t| {
         Ok::<_, OutOfBoundsEval>(
             spacecraft_trajectory
                 .position(t)
@@ -460,11 +473,11 @@ fn spacecraft_propagation() -> Result<(), Box<dyn std::error::Error>> {
         )
     };
 
-    assert!(distance_from("1950-01-01 00:00:00".parse()?, SolarSystemObject::Earth)? < 10_000.0);
-    assert!(distance_from("1950-01-01 00:15:00".parse()?, SolarSystemObject::Earth)? < 10_000.0);
+    assert!(distance_from(SolarSystemObject::Earth, "1950-01-01 00:00:00".parse()?)? < 10_000.0);
+    assert!(distance_from(SolarSystemObject::Earth, "1950-01-01 00:15:00".parse()?)? < 10_000.0);
     // Spacecraft enters and stays in Mars' orbit.
-    assert!(distance_from("1950-07-27 15:45:00".parse()?, SolarSystemObject::Mars)? < 10_000.0);
-    assert!(distance_from("1951-01-01 00:00:00".parse()?, SolarSystemObject::Mars)? < 10_000.0);
+    assert!(distance_from(SolarSystemObject::Mars, "1950-07-27 15:45:00".parse()?)? < 10_000.0);
+    assert!(distance_from(SolarSystemObject::Mars, "1951-01-01 00:00:00".parse()?)? < 10_000.0);
 
     Ok(())
 }
