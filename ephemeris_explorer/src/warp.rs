@@ -49,6 +49,7 @@ pub struct WarpTime {
     pub target: Epoch,
     pub duration: std::time::Duration,
     pub elapsed: std::time::Duration,
+    pub auto_extend_enabled: bool,
 }
 
 fn handle_warp_request(
@@ -59,7 +60,6 @@ fn handle_warp_request(
 ) {
     let requested = trigger.event();
 
-    auto_extend.enabled = false;
     sim_time.paused = true;
     commands.trigger(ExtendAllRequest::new(requested.target));
     commands.insert_resource(WarpTime {
@@ -67,7 +67,9 @@ fn handle_warp_request(
         target: requested.target,
         duration: requested.duration,
         elapsed: std::time::Duration::ZERO,
+        auto_extend_enabled: auto_extend.enabled,
     });
+    auto_extend.enabled = false;
 }
 
 fn cubic_ease_in_out(t: f64) -> f64 {
@@ -99,7 +101,7 @@ fn advance_warp_time(
         warp.elapsed = next_elapsed;
 
         if next_t == 1.0 {
-            auto_extend.enabled = true;
+            auto_extend.enabled = warp.auto_extend_enabled;
             commands.remove_resource::<WarpTime>();
         }
     }
