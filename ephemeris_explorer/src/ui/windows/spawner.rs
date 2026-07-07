@@ -3,7 +3,7 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
-        Apsides, Bodies, CubicHermiteSpline, GravitationalBody, Mu, SpacecraftPropagator,
+        Apsides, Bodies, CubicHermiteSpline, GravitationalBody, Mu, Radius, SpacecraftPropagator,
         SpacecraftTrajectory, SphereOfInfluence, Timeline, Trajectory,
     },
     flight_plan::IntegrationMethod,
@@ -94,7 +94,7 @@ impl ShipSpawnerWindow {
             Option<(&mut Name, &PredictionPropagator<SpacecraftTrajectory>)>,
         )>,
         query_trajectory: Query<&Trajectory>,
-        query_context: Query<(Entity, &Trajectory, &Mu, &SphereOfInfluence)>,
+        query_context: Query<(Entity, &Trajectory, &Mu, &Radius, &SphereOfInfluence)>,
         followed: Res<Followed>,
     ) {
         let Ok(ctx) = contexts.ctx_mut() else { return };
@@ -102,7 +102,9 @@ impl ShipSpawnerWindow {
         let new_context = || {
             query_context
                 .iter()
-                .map(|(e, traj, mu, soi)| (e, GravitationalBody::new(traj.clone(), *mu, *soi)))
+                .map(|(e, traj, mu, radius, soi)| {
+                    (e, GravitationalBody::new(traj.clone(), *mu, *radius, *soi))
+                })
                 .collect()
         };
 

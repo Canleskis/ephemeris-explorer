@@ -7,7 +7,7 @@ use bevy::ecs::query::QueryData;
 use bevy::math::{DMat3, DVec3};
 use bevy::prelude::*;
 use ephemeris::{
-    AccelerationModel, BoundedTrajectory, DirectionalPropagator, DirectionalSolout,
+    AccelerationModel, BoundedTrajectory, CubicHermite, DirectionalPropagator, DirectionalSolout,
     EvaluateTrajectory, Forward, Frame, IncrementalPropagator, PropagationContext,
     PropagationDirection, Propagator, SpacecraftPropagatorError, SpacecraftState, Transform,
 };
@@ -19,6 +19,9 @@ pub type CubicHermiteSpline = ephemeris::CubicHermiteSpline<DVec3>;
 
 #[derive(Clone, Copy, Debug, Component, Deref, DerefMut)]
 pub struct Mu(pub f64);
+
+#[derive(Clone, Copy, Debug, Component, Deref, DerefMut)]
+pub struct Radius(pub f64);
 
 #[derive(Clone, Copy, Debug, Component)]
 pub struct SphereOfInfluence {
@@ -54,15 +57,17 @@ pub struct Event {
 pub struct GravitationalBody {
     pub trajectory: Trajectory,
     pub mu: Mu,
+    pub radius: Radius,
     pub soi: SphereOfInfluence,
 }
 
 impl GravitationalBody {
     #[inline]
-    pub fn new(trajectory: Trajectory, mu: Mu, soi: SphereOfInfluence) -> Self {
+    pub fn new(trajectory: Trajectory, mu: Mu, radius: Radius, soi: SphereOfInfluence) -> Self {
         Self {
             trajectory,
             mu,
+            radius,
             soi,
         }
     }
@@ -71,6 +76,11 @@ impl GravitationalBody {
     fn acceleration_at(&self, t: Epoch, position: &DVec3) -> Option<DVec3> {
         let body_position = self.trajectory.position(t)?;
         Some((body_position, *self.mu).acceleration_at::<false>(position, &0.0))
+    }
+
+    #[inline]
+    fn radius_distance_squared_at(&self, t: Epoch, position: DVec3) -> Option<f64> {
+        Some(position.distance_squared(self.trajectory.position(t)?) - *self.radius * *self.radius)
     }
 
     #[inline]
@@ -104,6 +114,16 @@ impl GravitationalBody {
     {
         find_zero_crossing(t0, t1, |t| {
             self.radial_velocity_at(t, traj.state_vector(t)?)
+        })
+    }
+
+    #[inline]
+    pub fn find_collision<T>(&self, traj: &T, t0: Epoch, t1: Epoch) -> Option<Event>
+    where
+        T: EvaluateTrajectory<Vector = DVec3>,
+    {
+        find_zero_crossing(t0, t1, |t| {
+            self.radius_distance_squared_at(t, traj.position(t)?)
         })
     }
 }
@@ -394,6 +414,14 @@ impl Apsis {
     }
 
     #[inline]
+    pub fn from_event(event: Event, distance: f64) -> Self {
+        match event.direction {
+            CrossingDirection::Ascending => Apsis::periapsis(event.time, distance),
+            CrossingDirection::Descending => Apsis::apoapsis(event.time, distance),
+        }
+    }
+
+    #[inline]
     pub fn time(&self) -> Epoch {
         match self {
             Apsis::Apoapsis { time, .. } | Apsis::Periapsis { time, .. } => *time,
@@ -459,56 +487,6 @@ impl SpacecraftSolution {
             .hermite3(self.trajectory.segment_count() - 1)
             .unwrap()
     }
-
-    #[inline]
-    pub fn add_state<T>(&mut self, problem: &SpacecraftProblem<T>) -> bool
-    where
-        T: SpacecraftState<Vector = DVec3>,
-    {
-        let t = Epoch::from_offset_seconds(problem.time);
-        let position = problem.state.position();
-        let velocity = problem.state.velocity();
-        self.trajectory.push(t, *position, *velocity);
-
-        let step_traj = self.last_trajectory_segment();
-        let t0 = step_traj.start();
-        let t1 = step_traj.end();
-
-        let context = problem.ode.context();
-
-        for (entity, body) in context.iter() {
-            if let Some(event) = body.find_soi_crossing(&step_traj, t0, t1) {
-                if matches!(event.direction, CrossingDirection::Descending) {
-                    self.transitions.insert(event.time, *entity);
-                } else if let Some(pos) = step_traj.position(event.time)
-                    && let Some(entered) = context.soi_at_except(event.time, pos, &[*entity])
-                {
-                    self.transitions.insert(event.time, entered);
-                }
-            }
-        }
-
-        let crossed_in_step = self.transitions.starting_at(t0);
-        for (i, &(t, soi)) in crossed_in_step.iter().enumerate() {
-            let t0 = t.max(t0);
-            let t1 = crossed_in_step.get(i + 1).map(|(t, _)| *t).unwrap_or(t1);
-            if let Some(body) = context.get(soi)
-                && let Some(event) = body.find_apsis(&step_traj, t0, t1)
-                && let Some(distance) = body.trajectory.distance_at(&step_traj, event.time)
-            {
-                match event.direction {
-                    CrossingDirection::Ascending => self
-                        .apsides
-                        .insert(Apsis::periapsis(event.time, distance), soi),
-                    CrossingDirection::Descending => self
-                        .apsides
-                        .insert(Apsis::apoapsis(event.time, distance), soi),
-                }
-            }
-        }
-
-        true
-    }
 }
 
 #[derive(Clone)]
@@ -537,50 +515,56 @@ where
     }
 
     #[inline]
-    fn solout(&mut self, problem: &SpacecraftProblem<T>, solution: &mut Self::Solution) -> bool {
-        let t1 = Epoch::from_offset_seconds(problem.time);
-        let position = problem.state.position();
-        let velocity = problem.state.velocity();
-        solution.trajectory.push(t1, *position, *velocity);
+    fn solout(&mut self, problem: &mut SpacecraftProblem<T>, s: &mut Self::Solution) -> bool {
+        let bodies = problem.ode.context();
 
-        let context = problem.ode.context();
+        let &(t0, sv0) = s.trajectory.points().last().unwrap();
 
-        let step_traj = &solution
-            .trajectory
-            .hermite3(solution.trajectory.segment_count() - 1)
-            .unwrap();
-        let t0 = step_traj.start();
+        let time = Epoch::from_offset_seconds(problem.time);
+        let pos = *problem.state.position();
+        let vel = *problem.state.velocity();
 
-        for (entity, body) in context.iter() {
-            if let Some(event) = body.find_soi_crossing(step_traj, t0, t1) {
-                if matches!(event.direction, CrossingDirection::Descending) {
-                    solution.transitions.insert(event.time, *entity);
-                } else if let Some(pos) = step_traj.position(event.time)
-                    && let Some(entered) = context.soi_at_except(event.time, pos, &[*entity])
+        let step_traj = &CubicHermite::new(
+            (t0.as_offset_seconds(), time.as_offset_seconds()),
+            (sv0.position, pos),
+            (sv0.velocity, vel),
+        );
+
+        for (entity, body) in bodies.iter() {
+            if let Some(ev) = body.find_soi_crossing(step_traj, t0, time) {
+                if matches!(ev.direction, CrossingDirection::Descending) {
+                    s.transitions.insert(ev.time, *entity);
+                } else if let Some(pos) = step_traj.position(ev.time)
+                    && let Some(entered) = bodies.soi_at_except(ev.time, pos, &[*entity])
                 {
-                    solution.transitions.insert(event.time, entered);
+                    s.transitions.insert(ev.time, entered);
                 }
             }
         }
 
-        let crossed_in_step = solution.transitions.starting_at(t0);
+        let crossed_in_step = s.transitions.starting_at(t0);
         for (i, &(t, soi)) in crossed_in_step.iter().enumerate() {
             let t0 = t.max(t0);
-            let t1 = crossed_in_step.get(i + 1).map(|(t, _)| *t).unwrap_or(t1);
-            if let Some(body) = context.get(soi)
-                && let Some(event) = body.find_apsis(step_traj, t0, t1)
-                && let Some(distance) = body.trajectory.distance_at(step_traj, event.time)
-            {
-                match event.direction {
-                    CrossingDirection::Ascending => solution
-                        .apsides
-                        .insert(Apsis::periapsis(event.time, distance), soi),
-                    CrossingDirection::Descending => solution
-                        .apsides
-                        .insert(Apsis::apoapsis(event.time, distance), soi),
+            let t1 = crossed_in_step.get(i + 1).map(|(t, _)| *t).unwrap_or(time);
+            if let Some(body) = bodies.get(soi) {
+                if let Some(ev) = body.find_apsis(step_traj, t0, t1)
+                    && let Some(distance) = body.trajectory.distance_at(step_traj, ev.time)
+                {
+                    s.apsides.insert(Apsis::from_event(ev, distance), soi);
+                }
+
+                if let Some(ev) = body.find_collision(step_traj, t0, t1)
+                    && let Some(sv) = step_traj.state_vector(ev.time)
+                {
+                    s.apsides.clear_after(ev.time);
+                    s.transitions.clear_after(ev.time);
+                    s.trajectory.push(ev.time, sv.position, sv.velocity);
+                    return false;
                 }
             }
         }
+
+        s.trajectory.push(time, pos, vel);
 
         true
     }
@@ -808,8 +792,8 @@ spacecraft_propagator! {
 #[query_data(mutable)]
 pub struct SpacecraftTrajectory {
     pub trajectory: &'static mut Trajectory,
-    pub transitions: &'static mut SoiTransitions,
     pub apsides: &'static mut Apsides,
+    pub transitions: &'static mut SoiTransitions,
 }
 
 impl SpacecraftTrajectory {

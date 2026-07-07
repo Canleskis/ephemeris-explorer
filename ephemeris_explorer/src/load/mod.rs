@@ -11,7 +11,7 @@ use crate::{
     camera::{CameraController, FollowParameters, Followed, OrbitCamera},
     dynamics::{
         AbsTol, Backward, Bodies, CelestialTrajectory, Double, ForceModel, Forward,
-        GravitationalBody, Mu, NBodyProblem, SoiTransitions, SpacecraftTrajectory,
+        GravitationalBody, Mu, NBodyProblem, Radius, SoiTransitions, SpacecraftTrajectory,
         SphereOfInfluence, StateVector, Trajectory,
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
@@ -334,6 +334,7 @@ fn spawn_loaded_bodies(
             },
             (
                 Mu(body.mu),
+                Radius(radius as f64),
                 soi,
                 PredictionController::<CelestialTrajectory<Forward>>::new(root),
                 PredictionController::<CelestialTrajectory<Backward>>::new(root),
@@ -477,7 +478,7 @@ fn spawn_ship(
     trigger: On<SpawnShip>,
     mut commands: Commands,
     query_name: Query<(Entity, &Name), With<Mu>>,
-    query_context: Query<(Entity, &Trajectory, &Mu, &SphereOfInfluence)>,
+    query_context: Query<(Entity, &Trajectory, &Mu, &Radius, &SphereOfInfluence)>,
     query_ids: Query<&Id>,
     root: Single<Entity, With<SystemRoot>>,
     mut errors: ResMut<LoadingErrors>,
@@ -489,7 +490,9 @@ fn spawn_ship(
     let bodies = Bodies(
         query_context
             .iter()
-            .map(|(e, traj, mu, soi)| (e, GravitationalBody::new(traj.clone(), *mu, *soi)))
+            .map(|(e, traj, mu, radius, soi)| {
+                (e, GravitationalBody::new(traj.clone(), *mu, *radius, *soi))
+            })
             .collect(),
     );
 
