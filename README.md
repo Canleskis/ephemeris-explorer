@@ -16,7 +16,7 @@
 [Download here](https://github.com/Canleskis/ephemeris-explorer/releases/latest)
 
 Ephemeris Explorer aims to be a multi-purpose interactive simulation of gravitationally bound systems, be it stellar systems, planetary systems or satellite systems.
-It uses concepts from various research, notably [Numerical Representation of Planetary Ephemerides](https://adsabs.harvard.edu/full/1989CeMec..45..305N) to generate accurate[^1] trajectories of celestial bodies and presents them in an interactive manner using the [Bevy Engine](https://bevyengine.org/) and [egui](https://github.com/emilk/egui).
+It uses concepts from various research to generate accurate[^1] trajectories of celestial bodies and presents them in an interactive manner using the [Bevy Engine](https://bevyengine.org/) and [egui](https://github.com/emilk/egui).
 
 [^1]: The accuracy of the current implementation is limited by the fact that the acceleration computation does not take into account general relativity and all bodies are considered to be spheres with an homogeneous mass distribution.
 
@@ -91,15 +91,12 @@ Displays information about each trajectory such as their bounds or their size. U
 
 ## Technical overview of the ephemeris generation
 
-Generating accurate ephemerides for a given system requires the configuration of the following parameters:
+Generating accurate ephemerides for a given system requires the configuration of the following:
 
 - A starting epoch, for which the state vectors of the bodies in the system are provided, as well as their gravitational parameters. This data is loaded with the `state.json` file.
-- A time step or delta time `dt` and for each body the sample count `count` and the degree `deg` of the piecewise polynomial interpolation. This data is loaded with the `ephemeris.json` file. For now, the parameters need to be hand-tuned for each system to ensure the accuracy of the ephemerides. You can compute an estimate of the error from the interpolation in the `Ephemerides Debug` interface.
+- A time step or delta time `dt`, and an error tolerance which controls how closely the generated trajectory must match the underlying numerical integration. This is loaded from the `ephemeris.json` file.
 
-The initial state is used as the starting point for the generation of the ephemerides, whilst the other parameters define the accuracy of the ephemerides. More specifically, each polynomial of degree `deg` is interpolated using 9 samples from the numerical integration. The sample count `count` and the delta `dt` define the distance between each of these samples. For example, with `dt = 1 min`, the resulting trajectory of a body with `count = 10` will be made of polynomials that have been interpolated with 9 samples at `t = 0 min`, `t = 10 min`, ..., `t = 80 min`. As such, each polynomial will be valid for `8 * count * dt` and the delta between each sample will be `count * dt`.  
-Currently, the interpolation is done using a least squares polynomial fit.  
-
-This implementation was custom made for this project and is not validated in any way. It is also better suited to stable trajectories and incorrect configuration of a system will result non-continuous polynomials within the trajectories.
+The initial state is used as the starting point for the generation of the ephemerides. Each body's trajectory is built as a `QuinticHermiteSpline`: at every integration step, a `QuinticHermite` sample is taken from the position, velocity, and acceleration produced and added to the current segment. As long as the accumulated samples stay within tolerance, the segment keeps growing; once they don't, the last valid sample closes off that polynomial and seeds the start of the next one.
 
 ## Goals
 
@@ -111,7 +108,7 @@ This implementation was custom made for this project and is not validated in any
 
 ### Medium term
 
-- [ ] Newhall approximation and automatic selection of interpolation polynomial parameters.
+- [x] Automatic selection of interpolation polynomial parameters.
 - [ ] Hierarchical system simulations (model planetary systems as barycenters before simulating satellites f.e.).
 - [ ] Spherical harmonics gravity models for celestial bodies.
 - [ ] More ways to manoeuvre spacecrafts (brachistochrone, recurring manoeuvres, etc.).
