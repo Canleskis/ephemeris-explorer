@@ -1,12 +1,11 @@
 use super::{
-    Body, BodyVisuals, EphemeridesSettings, InterpolationParameters, OrbitVisuals, Ship,
-    SkyboxImage, SolarSystemState,
+    Body, BodyVisuals, EphemeridesSettings, OrbitVisuals, Ship, SkyboxImage, SolarSystemState,
 };
 
 use bevy::asset::AssetPath;
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use ftime::{Duration, Epoch};
+use ftime::Epoch;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -296,39 +295,10 @@ impl bevy::asset::AssetLoader for EphemeridesSettingsLoader {
         _: &(),
         _: &mut bevy::asset::LoadContext,
     ) -> impl bevy::tasks::ConditionalSendFuture<Output = Result<Self::Asset, Self::Error>> {
-        #[derive(Deserialize)]
-        struct EphemerisSettingsJson {
-            pub degree: usize,
-            pub count: usize,
-        }
-
-        #[derive(Deserialize)]
-        struct EphemeridesSettingsJson {
-            dt: Duration,
-            settings: bevy::platform::collections::hash_map::HashMap<String, EphemerisSettingsJson>,
-        }
-
         async move {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
-            let json = serde_json::from_slice::<EphemeridesSettingsJson>(&bytes)?;
-
-            let settings = EphemeridesSettings {
-                dt: json.dt,
-                interpolation: json
-                    .settings
-                    .into_iter()
-                    .map(|(name, setting)| {
-                        (
-                            name,
-                            InterpolationParameters {
-                                degree: setting.degree,
-                                count: setting.count,
-                            },
-                        )
-                    })
-                    .collect(),
-            };
+            let settings = serde_json::from_slice::<EphemeridesSettings>(&bytes)?;
 
             Ok(settings)
         }

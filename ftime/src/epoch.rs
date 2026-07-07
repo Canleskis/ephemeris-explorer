@@ -13,6 +13,8 @@ impl Epoch {
 
     pub const MAX: Self = Epoch::from_offset(Duration::MAX);
 
+    pub const NAN: Self = Epoch::from_offset(Duration::NAN);
+
     /// Construct from civil date-time components, interpreted on the TAI scale.
     /// Fractional seconds are provided as nanoseconds (0..=999_999_999).
     #[inline]

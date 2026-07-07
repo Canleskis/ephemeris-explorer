@@ -13,6 +13,8 @@ impl Duration {
 
     pub const MAX: Self = Duration(f64::MAX);
 
+    pub const NAN: Self = Duration(f64::NAN);
+
     #[inline]
     pub const fn from_seconds(seconds: f64) -> Self {
         assert!(seconds.is_finite());

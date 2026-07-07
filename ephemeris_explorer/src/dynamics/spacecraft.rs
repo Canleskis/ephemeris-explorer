@@ -737,9 +737,16 @@ macro_rules! spacecraft_propagator {
             }
 
             #[inline]
+            pub fn solution(&self) -> &SpacecraftSolution {
+                match self {
+                    $( Self::$variant(p) => p.solution(), )*
+                }
+            }
+
+            #[inline]
             pub fn join(lhs: &mut CubicHermiteSpline, rhs: CubicHermiteSpline) {
                 lhs.clear_after(rhs.start());
-                lhs.extend(rhs);
+                lhs.append(rhs);
             }
         }
 
@@ -849,5 +856,12 @@ impl PredictionTarget for SpacecraftTrajectory {
         *item.apsides = solution.apsides;
         *item.transitions = solution.transitions;
         *world_traj = solution.trajectory;
+    }
+
+    #[inline]
+    fn insert(commands: &mut EntityCommands, solution: SpacecraftSolution) {
+        commands.insert_if_new(Trajectory::from(solution.trajectory));
+        commands.insert_if_new(solution.apsides);
+        commands.insert_if_new(solution.transitions);
     }
 }

@@ -1,44 +1,180 @@
 use crate::{
     Backward, BoundedTrajectory, DirectionalPropagator, DirectionalSolout, Forward,
-    IncrementalPropagator, PropagationDirection, Propagator, UniformSpline,
-    trajectory::{DIV, Polynomial, StateVector},
+    IncrementalPropagator, PropagationDirection, Propagator,
 };
 
 use ftime::{Duration, Epoch};
 use integration::{Solout, prelude::*, problem::State};
-use particular::gravity::newtonian::AccelerationPaired;
 
-#[derive(Clone, Debug)]
-pub struct NewtonianGravity {
-    pub gravitational_parameters: Vec<f64>,
+pub trait GravitationalForce<V> {
+    fn accelerations_into(&mut self, time: Epoch, positions: &[V], accelerations: &mut [V]);
 }
 
-impl<T, V> SecondOrderODE<T, Vec<V>> for NewtonianGravity
+#[derive(Clone, Copy)]
+pub struct GravityModel<F> {
+    pub force_model: F,
+}
+
+impl<F> GravityModel<F> {
+    #[inline]
+    pub fn new(force_model: F) -> Self {
+        Self { force_model }
+    }
+
+    #[inline]
+    pub fn accelerations_into<V>(&mut self, time: Epoch, positions: &[V], accelerations: &mut [V])
+    where
+        F: GravitationalForce<V>,
+    {
+        self.force_model
+            .accelerations_into(time, positions, accelerations);
+    }
+}
+
+impl<V, F> SecondOrderODE<f64, Vec<V>> for GravityModel<F>
 where
-    V: std::ops::AddAssign + Default + Copy,
-    (V, f64): AccelerationPaired<Softening = f64, Output = V>,
+    F: GravitationalForce<V>,
 {
     #[inline]
-    fn eval(&mut self, _: T, y: &Vec<V>, ddy: &mut Vec<V>) -> Result<(), EvalFailed> {
-        for i in 0..y.len() {
-            let mut output_i = V::default();
-            let p_i = (y[i], self.gravitational_parameters[i]);
-
-            for j in (i + 1)..y.len() {
-                let p_j = (y[j], self.gravitational_parameters[j]);
-                let computed = p_i.acceleration_paired(&p_j, &0.0);
-                output_i += computed.0;
-                ddy[j] += computed.1;
-            }
-
-            ddy[i] += output_i;
-        }
+    fn eval(&mut self, t: f64, y: &Vec<V>, ddy: &mut Vec<V>) -> Result<(), EvalFailed> {
+        self.accelerations_into(Epoch::from_offset_seconds(t), y, ddy);
 
         Ok(())
     }
 }
 
-pub type NBodyProblem<V> = ODEProblem<f64, SecondOrderState<Vec<V>>, NewtonianGravity>;
+pub type NBodyProblem<V, F> = ODEProblem<f64, SecondOrderState<Vec<V>>, GravityModel<F>>;
+
+pub trait AccelerationPairedAssign {
+    type Output;
+
+    fn acceleration_paired_assign(
+        &self,
+        other: &Self,
+        a1: &mut Self::Output,
+        a2: &mut Self::Output,
+    );
+}
+
+pub trait GravitySource: AccelerationPairedAssign {
+    type Vector;
+
+    type Scalar;
+
+    fn new(position: Self::Vector, mu: Self::Scalar) -> Self;
+}
+
+pub struct NewtonianGravity<P: GravitySource> {
+    pub gravitational_parameters: Vec<P::Scalar>,
+}
+
+impl<P: GravitySource> Clone for NewtonianGravity<P>
+where
+    P::Scalar: Clone,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            gravitational_parameters: self.gravitational_parameters.clone(),
+        }
+    }
+}
+
+impl<P: GravitySource> NewtonianGravity<P> {
+    #[inline]
+    pub fn new(gravitational_parameters: Vec<P::Scalar>) -> Self {
+        Self {
+            gravitational_parameters,
+        }
+    }
+}
+
+impl<V, S, P> GravitationalForce<V> for NewtonianGravity<P>
+where
+    P: GravitySource<Vector = V, Scalar = S, Output = V>,
+    V: Copy,
+    S: Copy,
+{
+    #[inline]
+    fn accelerations_into(&mut self, _: Epoch, positions: &[V], accelerations: &mut [V]) {
+        for i in 0..positions.len() {
+            let pi = P::new(positions[i], self.gravitational_parameters[i]);
+
+            #[expect(clippy::needless_range_loop)]
+            for j in (i + 1)..positions.len() {
+                let pj = P::new(positions[j], self.gravitational_parameters[j]);
+                let (accelerations_l, accelerations_r) = accelerations.split_at_mut(j);
+                pi.acceleration_paired_assign(
+                    &pj,
+                    &mut accelerations_l[i],
+                    &mut accelerations_r[0],
+                );
+            }
+        }
+    }
+}
+
+pub struct CachedNewtonianGravity<P: GravitySource> {
+    pub newtonian_gravity: NewtonianGravity<P>,
+    pub time: Epoch,
+    pub buffer: Vec<P::Output>,
+}
+
+impl<P: GravitySource> Clone for CachedNewtonianGravity<P>
+where
+    P::Output: Clone,
+    P::Scalar: Clone,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            newtonian_gravity: self.newtonian_gravity.clone(),
+            time: self.time,
+            buffer: self.buffer.clone(),
+        }
+    }
+}
+
+impl<P: GravitySource> CachedNewtonianGravity<P> {
+    #[inline]
+    pub fn new(mus: Vec<P::Scalar>) -> Self
+    where
+        P::Output: Default,
+    {
+        Self {
+            buffer: mus.iter().map(|_| Default::default()).collect(),
+            newtonian_gravity: NewtonianGravity::new(mus),
+            time: Epoch::NAN,
+        }
+    }
+
+    #[inline]
+    fn accelerations_into_inner(&mut self, time: Epoch, positions: &[P::Output])
+    where
+        P::Output: Default,
+        NewtonianGravity<P>: GravitationalForce<P::Output>,
+    {
+        self.newtonian_gravity
+            .accelerations_into(time, positions, self.buffer.zero());
+    }
+}
+
+impl<V, S, P> GravitationalForce<V> for CachedNewtonianGravity<P>
+where
+    P: GravitySource<Vector = V, Scalar = S, Output = V>,
+    V: Default + Copy,
+    S: Copy,
+{
+    #[inline]
+    fn accelerations_into(&mut self, time: Epoch, positions: &[V], accelerations: &mut [V]) {
+        if time != self.time {
+            self.accelerations_into_inner(time, positions);
+            self.time = time;
+        }
+
+        accelerations.copy_from_slice(&self.buffer);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NBodyPropagatorError {
@@ -46,6 +182,7 @@ pub enum NBodyPropagatorError {
     Solout,
 }
 impl std::fmt::Display for NBodyPropagatorError {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NBodyPropagatorError::Integration(e) => write!(f, "integration failed: {e}"),
@@ -62,89 +199,70 @@ impl From<StepError> for NBodyPropagatorError {
     }
 }
 
-pub struct NBodyPropagator<D, V, M: Method<NBodyProblem<V>>, O: Solout<NBodyProblem<V>>> {
-    integration: Integration<NBodyProblem<V>, M, O>,
-    _marker: std::marker::PhantomData<D>,
+pub struct NBodyPropagator<V, F, M: Method<NBodyProblem<V, F>>, O: Solout<NBodyProblem<V, F>>> {
+    integration: Integration<NBodyProblem<V, F>, M, O>,
 }
 
-impl<D, V, M, O> Clone for NBodyPropagator<D, V, M, O>
+impl<V, F, M, O> Clone for NBodyPropagator<V, F, M, O>
 where
     V: Clone,
-    M: Method<NBodyProblem<V>>,
+    F: Clone,
+    M: Method<NBodyProblem<V, F>>,
     M::Integrator: Clone,
-    O: Solout<NBodyProblem<V>> + Clone,
+    O: Solout<NBodyProblem<V, F>> + Clone,
     O::Solution: Clone,
 {
     #[inline]
     fn clone(&self) -> Self {
         Self {
             integration: self.integration.clone(),
-            ..*self
         }
     }
 }
 
-impl<D, V, M, O> NBodyPropagator<D, V, M, O>
+impl<V, F, M> NBodyPropagator<V, F, M, ()>
 where
-    M: Method<NBodyProblem<V>>,
-    O: Solout<NBodyProblem<V>>,
+    M: Method<NBodyProblem<V, F>>,
 {
     #[inline]
-    pub fn new(
-        direction: D,
-        initial_time: Epoch,
-        positions: Vec<V>,
-        velocities: Vec<V>,
-        gravitational_parameters: Vec<f64>,
-        solout: O,
-    ) -> Self
+    pub fn new<D>(direction: D, problem: NBodyProblem<V, F>) -> Self
     where
         D: PropagationDirection,
         M: NewMethod<FixedMethodParams<f64>>,
-        M::Integrator: Integrator<NBodyProblem<V>>,
+        M::Integrator: Integrator<NBodyProblem<V, F>>,
     {
         Self {
             integration: M::new(FixedMethodParams::new(
                 direction.signed_delta().as_seconds(),
             ))
-            .integrate(NBodyProblem {
-                time: initial_time.as_offset_seconds(),
-                bound: f64::INFINITY,
-                state: SecondOrderState::new(positions, velocities),
-                ode: NewtonianGravity {
-                    gravitational_parameters,
-                },
-            })
-            .with_solout(solout),
-            _marker: std::marker::PhantomData,
+            .integrate(problem),
         }
     }
 
     #[inline]
-    pub fn with(
-        direction: D,
-        initial_time: Epoch,
-        initial_state: Vec<(StateVector<V>, f64)>,
-        solout: O,
-    ) -> Self
+    pub fn with_solout<O>(self, solout: O) -> NBodyPropagator<V, F, M, O>
+    where
+        O: Solout<NBodyProblem<V, F>>,
+    {
+        NBodyPropagator {
+            integration: self.integration.with_solout(solout),
+        }
+    }
+}
+
+impl<V, F, M, O> NBodyPropagator<V, F, M, O>
+where
+    M: Method<NBodyProblem<V, F>>,
+    O: Solout<NBodyProblem<V, F>>,
+{
+    #[inline]
+    pub fn new_solout<D>(direction: D, problem: NBodyProblem<V, F>, solout: O) -> Self
     where
         D: PropagationDirection,
         M: NewMethod<FixedMethodParams<f64>>,
-        M::Integrator: Integrator<NBodyProblem<V>>,
+        M::Integrator: Integrator<NBodyProblem<V, F>>,
     {
-        let (positions, velocities, gravitational_parameters) = initial_state
-            .into_iter()
-            .map(|(sv, m)| (sv.position, sv.velocity, m))
-            .collect();
-
-        Self::new(
-            direction,
-            initial_time,
-            positions,
-            velocities,
-            gravitational_parameters,
-            solout,
-        )
+        NBodyPropagator::new(direction, problem).with_solout(solout)
     }
 
     #[inline]
@@ -161,6 +279,11 @@ where
     }
 
     #[inline]
+    pub fn problem(&self) -> &NBodyProblem<V, F> {
+        &self.integration.problem
+    }
+
+    #[inline]
     pub fn solout(&self) -> &O {
         &self.integration.solout
     }
@@ -171,10 +294,10 @@ where
     }
 }
 
-impl<D, V, M, O> Propagator for NBodyPropagator<D, V, M, O>
+impl<V, F, M, O> Propagator for NBodyPropagator<V, F, M, O>
 where
-    M: Method<NBodyProblem<V>>,
-    O: DirectionalSolout<NBodyProblem<V>, Direction = D>,
+    M: Method<NBodyProblem<V, F>>,
+    O: DirectionalSolout<NBodyProblem<V, F>>,
 {
     type Solution = O::Solution;
 
@@ -189,11 +312,11 @@ where
     }
 }
 
-impl<D, V, M, O> IncrementalPropagator for NBodyPropagator<D, V, M, O>
+impl<V, F, M, O> IncrementalPropagator for NBodyPropagator<V, F, M, O>
 where
-    M: Method<NBodyProblem<V>>,
-    M::Integrator: Integrator<NBodyProblem<V>>,
-    O: DirectionalSolout<NBodyProblem<V>, Direction = D>,
+    M: Method<NBodyProblem<V, F>>,
+    M::Integrator: Integrator<NBodyProblem<V, F>>,
+    O: DirectionalSolout<NBodyProblem<V, F>>,
 {
     type Error = NBodyPropagatorError;
 
@@ -207,20 +330,20 @@ where
     }
 }
 
-impl<D, V, M, O> DirectionalPropagator for NBodyPropagator<D, V, M, O>
+impl<V, F, M, O> DirectionalPropagator for NBodyPropagator<V, F, M, O>
 where
-    D: PropagationDirection,
-    M: Method<NBodyProblem<V>>,
-    O: DirectionalSolout<NBodyProblem<V>, Direction = D>,
+    M: Method<NBodyProblem<V, F>>,
+    O: DirectionalSolout<NBodyProblem<V, F>>,
+    O::Direction: PropagationDirection,
 {
     #[inline]
     fn offset(to: Epoch, duration: Duration) -> Epoch {
-        D::offset(to, duration)
+        O::Direction::offset(to, duration)
     }
 
     #[inline]
     fn distance(from: Epoch, to: Epoch) -> Duration {
-        D::distance(from, to)
+        O::Direction::distance(from, to)
     }
 
     #[inline]
@@ -234,273 +357,173 @@ where
     }
 }
 
-pub trait InterpolationAlgorithm<V> {
-    type Error;
-
-    fn interpolate(&self, ts: &[f64], xs: &[V]) -> Result<Polynomial<V>, Self::Error>;
+pub trait BoundedSpline<D> {
+    fn bound(&self) -> Epoch;
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct PolyonmialInterpolator<const LEN: usize, V> {
-    index: usize,
-    samples: [V; LEN],
-}
-
-impl<const LEN: usize, V> PolyonmialInterpolator<LEN, V> {
+impl<T: BoundedTrajectory> BoundedSpline<Forward> for T {
     #[inline]
-    pub fn new(sample: &V) -> Self
-    where
-        V: Copy,
-    {
-        Self {
-            index: 1,
-            samples: [*sample; LEN],
-        }
-    }
-
-    #[inline]
-    pub fn push(&mut self, sample: &V)
-    where
-        V: Copy,
-    {
-        assert!(self.index < LEN, "too many points for sample");
-        self.samples[self.index] = *sample;
-        self.index += 1;
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.index
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline]
-    pub fn is_full(&self) -> bool {
-        self.len() == LEN
-    }
-
-    #[inline]
-    pub fn try_to_polynomial<A>(
-        &self,
-        ts: [f64; LEN],
-        algorithm: &A,
-    ) -> Option<Result<Polynomial<V>, A::Error>>
-    where
-        A: InterpolationAlgorithm<V>,
-    {
-        if !self.is_full() {
-            return None;
-        }
-
-        Some(algorithm.interpolate(&ts, &self.samples))
-    }
-
-    #[inline]
-    pub fn finish(&mut self) {
-        self.samples.swap(0, self.index - 1);
-        self.index = 1;
+    fn bound(&self) -> Epoch {
+        self.end()
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct SplineInterpolator<V, A> {
-    pub last_sample_time: Duration,
-    pub sample_period: Duration,
-    pub interpolator: PolyonmialInterpolator<{ DIV + 1 }, V>,
-    pub algorithm: A,
+impl<T: BoundedTrajectory> BoundedSpline<Backward> for T {
+    #[inline]
+    fn bound(&self) -> Epoch {
+        self.start()
+    }
 }
 
-impl<V, A> SplineInterpolator<V, A> {
-    #[inline]
-    pub fn time(&self) -> Duration {
-        self.last_sample_time
-            + self.sample_period * (self.interpolator.len().saturating_sub(1)) as f64
-    }
+pub trait ExtendSpline<D, T> {
+    fn push_at_bound(&mut self, item: T);
+}
+
+pub trait InterpolationTolerance<S> {
+    fn is_valid(&mut self, samples: &[S]) -> bool;
+}
+
+pub trait InterpolationSample<V> {
+    type Trajectory;
+
+    fn new(time: Epoch, position: V, velocity: V, acceleration: V) -> Self;
 }
 
 #[derive(Clone, Debug)]
-pub struct SplineInterpolators<D, V, A> {
-    delta: Duration,
-    interpolators: Vec<SplineInterpolator<V, A>>,
-    _marker: std::marker::PhantomData<D>,
+pub struct SplineInterpolator<D, S, T> {
+    pub tolerance: T,
+    pub samples: Vec<S>,
+    pub _marker: std::marker::PhantomData<D>,
 }
 
-impl<D, V, A> SplineInterpolators<D, V, A> {
+impl<D, S, T> SplineInterpolator<D, S, T> {
     #[inline]
-    pub fn new(delta: Duration, interpolators: Vec<SplineInterpolator<V, A>>) -> Self {
-        Self {
-            delta,
-            interpolators,
-            _marker: std::marker::PhantomData,
+    pub fn build<V>(&mut self, sample: S, trajectory: &mut S::Trajectory)
+    where
+        S: InterpolationSample<V> + Clone,
+        S::Trajectory: ExtendSpline<D, S>,
+        T: InterpolationTolerance<S>,
+    {
+        self.samples.push(sample);
+
+        if !self.tolerance.is_valid(&self.samples) {
+            let n = self.samples.len().saturating_sub(2).max(1);
+            self.samples.drain(0..n);
+            let sample = &self.samples[0];
+            trajectory.push_at_bound(sample.clone());
         }
     }
 
     #[inline]
-    pub fn with(
-        delta: Duration,
-        initial_positions: Vec<V>,
-        sample_periods: Vec<Duration>,
-        algorithms: Vec<A>,
-    ) -> Self
+    pub fn first_sample(&self) -> &S {
+        &self.samples[0]
+    }
+
+    #[inline]
+    pub fn last_sample(&self) -> &S {
+        &self.samples[self.samples.len() - 1]
+    }
+}
+
+#[derive(Clone)]
+pub struct SplineInterpolators<D, S, V, T> {
+    pub interpolators: Vec<SplineInterpolator<D, S, T>>,
+    pub accelerations_buffer: Vec<V>,
+}
+
+impl<D, S, V, T> SplineInterpolators<D, S, V, T> {
+    #[inline]
+    pub fn new<F>(problem: &mut NBodyProblem<V, F>, tolerance: T) -> Self
     where
-        V: Copy,
+        S: InterpolationSample<V>,
+        V: Default + Copy,
+        T: Clone,
+        F: GravitationalForce<V>,
     {
+        let time = Epoch::from_offset_seconds(problem.time);
+        let mut accelerations_buffer = problem.state.y.to_vec().zeroed();
+        problem
+            .ode
+            .accelerations_into(time, &problem.state.y, &mut accelerations_buffer);
         Self {
-            delta,
-            interpolators: initial_positions
-                .into_iter()
-                .zip(sample_periods)
-                .zip(algorithms)
-                .map(
-                    |((position, sample_period), algorithm)| SplineInterpolator {
-                        last_sample_time: Duration::ZERO,
-                        sample_period,
-                        interpolator: PolyonmialInterpolator::new(&position),
-                        algorithm,
-                    },
-                )
+            interpolators: problem
+                .state
+                .y
+                .iter()
+                .zip(problem.state.dy.iter())
+                .zip(accelerations_buffer.iter())
+                .map(|((position, velocity), acceleration)| SplineInterpolator {
+                    tolerance: tolerance.clone(),
+                    samples: vec![S::new(time, *position, *velocity, *acceleration)],
+                    _marker: std::marker::PhantomData,
+                })
                 .collect(),
-            _marker: std::marker::PhantomData,
+            accelerations_buffer,
         }
+    }
+}
+
+impl<D, S, V, T, F> Solout<NBodyProblem<V, F>> for SplineInterpolators<D, S, V, T>
+where
+    S: InterpolationSample<V> + Clone,
+    S::Trajectory: ExtendSpline<D, S> + Default,
+    V: Default + Copy,
+    T: InterpolationTolerance<S>,
+    F: GravitationalForce<V>,
+{
+    type Solution = Vec<S::Trajectory>;
+
+    #[inline]
+    fn new_solution(&self, _: &NBodyProblem<V, F>) -> Self::Solution {
+        self.interpolators
+            .iter()
+            .map(|interpolator| {
+                let mut trajectory = S::Trajectory::default();
+                trajectory.push_at_bound(interpolator.first_sample().clone());
+                trajectory
+            })
+            .collect()
     }
 
     #[inline]
-    fn solout_with<F>(
-        &mut self,
-        problem: &NBodyProblem<V>,
-        solution: &mut [UniformSpline<V>],
-        try_extend: F,
-    ) -> bool
-    where
-        V: Copy,
-        F: Fn(&mut UniformSpline<V>, &mut SplineInterpolator<V, A>) -> bool,
-    {
-        for ((position, interp), trajectory) in problem
+    fn solout(&mut self, problem: &mut NBodyProblem<V, F>, trajs: &mut Self::Solution) -> bool {
+        let time = Epoch::from_offset_seconds(problem.time);
+        problem
+            .ode
+            .accelerations_into(time, &problem.state.y, self.accelerations_buffer.zero());
+        for ((((position, velocity), acceleration), trajectory), interpolator) in problem
             .state
             .y
             .iter()
+            .zip(problem.state.dy.iter())
+            .zip(self.accelerations_buffer.iter())
+            .zip(trajs.iter_mut())
             .zip(self.interpolators.iter_mut())
-            .zip(solution.iter_mut())
         {
-            interp.last_sample_time += self.delta;
-            if interp.last_sample_time == interp.sample_period {
-                interp.last_sample_time = Duration::ZERO;
-                interp.interpolator.push(position);
-                if !try_extend(trajectory, interp) {
-                    return false;
-                }
-            }
+            interpolator.build(
+                S::new(time, *position, *velocity, *acceleration),
+                trajectory,
+            );
         }
 
         true
     }
 }
 
-pub trait SplineBound<D, V> {
-    fn bound(&self) -> Epoch;
-
-    fn push_at_bound(&mut self, polynomial: Polynomial<V>);
-
-    fn samples() -> [f64; 9];
-}
-
-impl<V> SplineBound<Forward, V> for UniformSpline<V> {
-    #[inline]
-    fn bound(&self) -> Epoch {
-        self.end()
-    }
-
-    #[inline]
-    fn push_at_bound(&mut self, polynomial: Polynomial<V>) {
-        self.push_back(polynomial);
-    }
-
-    #[inline]
-    fn samples() -> [f64; 9] {
-        std::array::from_fn(|i| i as f64 / DIV as f64)
-    }
-}
-
-impl<V> SplineBound<Backward, V> for UniformSpline<V> {
-    #[inline]
-    fn bound(&self) -> Epoch {
-        self.start()
-    }
-
-    #[inline]
-    fn push_at_bound(&mut self, polynomial: Polynomial<V>) {
-        self.push_front(polynomial);
-    }
-
-    #[inline]
-    fn samples() -> [f64; 9] {
-        std::array::from_fn(|i| 1.0 - i as f64 / DIV as f64)
-    }
-}
-
-impl<D, V, A> Solout<NBodyProblem<V>> for SplineInterpolators<D, V, A>
+impl<D, S, V, T, F> DirectionalSolout<NBodyProblem<V, F>> for SplineInterpolators<D, S, V, T>
 where
     D: PropagationDirection,
-    V: Copy,
-    A: InterpolationAlgorithm<V>,
-    UniformSpline<V>: SplineBound<D, V>,
-{
-    type Solution = Vec<UniformSpline<V>>;
-
-    #[inline]
-    fn new_solution(&self, problem: &NBodyProblem<V>) -> Self::Solution {
-        self.interpolators
-            .iter()
-            .map(|interpolator| {
-                UniformSpline::new(
-                    D::offset(
-                        Epoch::from_offset_seconds(problem.time),
-                        -interpolator.time(),
-                    ),
-                    interpolator.sample_period * DIV as f64,
-                )
-            })
-            .collect()
-    }
-
-    #[inline]
-    fn solout(&mut self, problem: &NBodyProblem<V>, solution: &mut Self::Solution) -> bool {
-        self.solout_with(problem, solution, |trajectory, interp| {
-            let ts = UniformSpline::<V>::samples();
-            match interp
-                .interpolator
-                .try_to_polynomial(ts, &interp.algorithm)
-                .transpose()
-            {
-                Ok(polynomial) => {
-                    if let Some(polynomial) = polynomial {
-                        trajectory.push_at_bound(polynomial);
-                        interp.interpolator.finish();
-                    }
-                    true
-                }
-                Err(_) => false,
-            }
-        })
-    }
-}
-
-impl<D, V, A> DirectionalSolout<NBodyProblem<V>> for SplineInterpolators<D, V, A>
-where
-    D: PropagationDirection,
-    V: Copy,
-    A: InterpolationAlgorithm<V>,
-    UniformSpline<V>: SplineBound<D, V>,
+    S: InterpolationSample<V> + Clone,
+    S::Trajectory: ExtendSpline<D, S> + BoundedSpline<D> + Default,
+    V: Default + Copy,
+    T: InterpolationTolerance<S>,
+    F: GravitationalForce<V>,
 {
     type Direction = D;
 
     #[inline]
-    fn solution_time(solution: &Self::Solution) -> Epoch {
-        solution
+    fn solution_time(trajs: &Self::Solution) -> Epoch {
+        trajs
             .iter()
             .map(|traj| traj.bound())
             .min_by(D::cmp)
@@ -508,8 +531,8 @@ where
     }
 
     #[inline]
-    fn has_reached(solution: &Self::Solution, time: Epoch) -> bool {
-        solution
+    fn has_reached(trajs: &Self::Solution, time: Epoch) -> bool {
+        trajs
             .iter()
             .map(|traj| traj.bound())
             .all(|bound| D::cmp(&bound, &time).is_ge())

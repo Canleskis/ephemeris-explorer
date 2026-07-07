@@ -15,6 +15,7 @@ pub type StateVector = ephemeris::StateVector<DVec3>;
 pub enum PredictionTrajectory {
     UniformSpline(UniformSpline),
     CubicHermiteSpline(CubicHermiteSpline),
+    QuinticHermiteSpline(QuinticHermiteSpline),
 }
 
 impl DeepSizeOf for PredictionTrajectory {
@@ -23,6 +24,7 @@ impl DeepSizeOf for PredictionTrajectory {
         match self {
             Self::UniformSpline(traj) => traj.deep_size_of_children(context),
             Self::CubicHermiteSpline(traj) => traj.deep_size_of_children(context),
+            Self::QuinticHermiteSpline(traj) => traj.deep_size_of_children(context),
         }
     }
 }
@@ -33,6 +35,7 @@ impl BoundedTrajectory for PredictionTrajectory {
         match self {
             Self::UniformSpline(traj) => traj.start(),
             Self::CubicHermiteSpline(traj) => traj.start(),
+            Self::QuinticHermiteSpline(traj) => traj.start(),
         }
     }
 
@@ -41,6 +44,7 @@ impl BoundedTrajectory for PredictionTrajectory {
         match self {
             Self::UniformSpline(traj) => traj.end(),
             Self::CubicHermiteSpline(traj) => traj.end(),
+            Self::QuinticHermiteSpline(traj) => traj.end(),
         }
     }
 
@@ -49,6 +53,7 @@ impl BoundedTrajectory for PredictionTrajectory {
         match self {
             Self::UniformSpline(traj) => traj.contains(time),
             Self::CubicHermiteSpline(traj) => traj.contains(time),
+            Self::QuinticHermiteSpline(traj) => traj.contains(time),
         }
     }
 
@@ -57,6 +62,7 @@ impl BoundedTrajectory for PredictionTrajectory {
         match self {
             Self::UniformSpline(traj) => traj.segment_count(),
             Self::CubicHermiteSpline(traj) => traj.segment_count(),
+            Self::QuinticHermiteSpline(traj) => traj.segment_count(),
         }
     }
 }
@@ -69,6 +75,7 @@ impl EvaluateTrajectory for PredictionTrajectory {
         match self {
             Self::UniformSpline(traj) => traj.position(at),
             Self::CubicHermiteSpline(traj) => traj.position(at),
+            Self::QuinticHermiteSpline(traj) => traj.position(at),
         }
     }
 
@@ -77,6 +84,7 @@ impl EvaluateTrajectory for PredictionTrajectory {
         match self {
             Self::UniformSpline(traj) => traj.state_vector(at),
             Self::CubicHermiteSpline(traj) => traj.state_vector(at),
+            Self::QuinticHermiteSpline(traj) => traj.state_vector(at),
         }
     }
 }
@@ -105,6 +113,13 @@ impl From<CubicHermiteSpline> for Trajectory {
     #[inline]
     fn from(trajectory: CubicHermiteSpline) -> Self {
         Self::new(PredictionTrajectory::CubicHermiteSpline(trajectory))
+    }
+}
+
+impl From<QuinticHermiteSpline> for Trajectory {
+    #[inline]
+    fn from(trajectory: QuinticHermiteSpline) -> Self {
+        Self::new(PredictionTrajectory::QuinticHermiteSpline(trajectory))
     }
 }
 

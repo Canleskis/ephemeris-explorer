@@ -1,15 +1,17 @@
 use crate::{
     MainState,
-    dynamics::{CelestialTrajectory, Forward, PredictionTrajectory, Trajectory},
+    dynamics::{CelestialTrajectory, Double, Forward, PointMass, Trajectory},
     load::{SolarSystemState, SystemRoot, UniqueAsset},
-    prediction::PredictionPropagator,
+    prediction::{PredictionControllerOf, PredictionPropagator},
     simulation::SimulationTime,
-    ui::WindowsUiSet,
+    ui::{Length, WindowsUiSet},
 };
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
-use ephemeris::{BoundedTrajectory, EvaluateTrajectory, NBodyProblem, NewtonianGravity};
+use ephemeris::{
+    BoundedTrajectory, EvaluateTrajectory, GravityModel, NBodyProblem, NewtonianGravity,
+};
 use ftime::{Duration, Epoch};
 use integration::prelude::*;
 use thousands::Separable;
@@ -156,7 +158,7 @@ impl EphemeridesDebugWindow {
                             row.col(|ui| {
                                 ui.label(
                                     error
-                                        .map(|error| format!("{error:.2} metres"))
+                                        .map(|error| format!("{:.2}", Length::km(*error)))
                                         .unwrap_or_else(|| "N/A".to_string()),
                                 );
                             });
@@ -179,29 +181,30 @@ struct ComputeInterpolationErrors {
     duration: Duration,
 }
 
+#[expect(clippy::type_complexity)]
 fn compute_interpolation_errors(
     trigger: On<ComputeInterpolationErrors>,
     system: UniqueAsset<SolarSystemState>,
-    propagator: Single<&PredictionPropagator<CelestialTrajectory<Forward>>>,
+    controller: Single<(
+        &PredictionPropagator<CelestialTrajectory<Forward>>,
+        &PredictionControllerOf<CelestialTrajectory<Forward>>,
+    )>,
     query: Query<(Entity, &Id, &Name, &Trajectory)>,
     root: Single<Entity, With<SystemRoot>>,
     mut commands: Commands,
 ) {
     let Some(system) = system.get() else { return };
+    let (propagator, controller_of) = &*controller;
 
     let dt = propagator.delta();
 
     let (query, positions, velocities, mus): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = query
-        .iter()
-        .sort::<&Id>()
-        .filter(|(.., trajectory)| {
-            matches!(&*trajectory.read(), PredictionTrajectory::UniformSpline(_))
-        })
+        .iter_many(controller_of.iter())
         .map(|(entity, _, name, trajectory)| {
             (
                 (entity, name, trajectory),
-                system.bodies[&**name].position,
-                system.bodies[&**name].velocity,
+                Double::new(system.bodies[&**name].position),
+                Double::new(system.bodies[&**name].velocity),
                 system.bodies[&**name].mu,
             )
         })
@@ -211,9 +214,7 @@ fn compute_interpolation_errors(
         time: trigger.event().start.as_offset_seconds(),
         bound: trigger.event().start.as_offset_seconds() + trigger.event().duration.as_seconds(),
         state: SecondOrderState::new(positions, velocities),
-        ode: NewtonianGravity {
-            gravitational_parameters: mus,
-        },
+        ode: GravityModel::new(NewtonianGravity::<PointMass>::new(mus)),
     };
 
     let method: QuinlanTremaine12<f64> =
@@ -226,7 +227,7 @@ fn compute_interpolation_errors(
         for ((entity, _, traj), position) in query.iter().zip(&nbody.state.y) {
             let traj_position = traj.position(epoch).unwrap();
 
-            let error = position.distance(traj_position) * 1e3;
+            let error = position.value().distance(traj_position);
             errors
                 .entry(*entity)
                 .and_modify(|e| *e = e.max(error))

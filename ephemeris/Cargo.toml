@@ -10,7 +10,6 @@ version = "0.1.0"
 [dependencies]
 ftime = { workspace = true }
 integration = { workspace = true }
-particular = { workspace = true }
 
 num-traits = "0.2.19"
 deepsize = "0.2.0"

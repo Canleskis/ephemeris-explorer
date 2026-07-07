@@ -30,7 +30,7 @@ impl<'a> IntoIterator for &'a Satellites {
     }
 }
 
-#[derive(Component, Debug, Eq, PartialEq, Deref)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Component, Deref)]
 #[relationship(relationship_target = Satellites)]
 pub struct Primary(pub Entity);
 
@@ -75,18 +75,17 @@ fn sphere_of_influence_to_hierarchy(
     mut commands: Commands,
     sim_time: Res<SimulationTime>,
     query: Query<(Entity, &SoiTransitions, Option<&Primary>)>,
+    root: Single<Entity, With<SystemRoot>>,
 ) {
     for (entity, transitions, orbiting) in query.iter() {
-        if let Some(new_orbiting) = transitions.soi_at(sim_time.current())
-            && orbiting.is_none_or(|orbiting| **orbiting != new_orbiting)
-        {
+        let new_orbiting = transitions.soi_at(sim_time.current()).unwrap_or(*root);
+        if orbiting.is_none_or(|orbiting| **orbiting != new_orbiting) {
             commands.entity(entity).insert(Primary(new_orbiting));
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-#[require(SoiTransitions)]
 pub enum SoiTransitionsAnalysis {
     Static,
     Dynamic,

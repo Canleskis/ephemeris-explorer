@@ -46,6 +46,11 @@ pub trait PredictionTarget: QueryData + 'static {
         propagated: <<Self::Propagator as Propagator>::Solution as IntoIterator>::Item,
     );
 
+    fn insert(
+        commands: &mut EntityCommands,
+        propagated: <<Self::Propagator as Propagator>::Solution as IntoIterator>::Item,
+    );
+
     #[inline]
     fn new(
         entity: Entity,
@@ -197,6 +202,7 @@ where
 {
     fn build(&self, app: &mut App) {
         app.add_observer(dispatch_predictions::<T>)
+            .add_observer(prepare_solutions::<T>)
             .add_observer(add_prediction_markers::<T>)
             .add_observer(remove_prediction_markers::<T>)
             .add_systems(
@@ -443,6 +449,21 @@ async fn prediction_task<T>(
     }
 
     info!("Computing {name} prediction took: {:?}", t0.elapsed());
+}
+
+fn prepare_solutions<T>(
+    trigger: On<Add, PredictionPropagator<T>>,
+    mut commands: Commands,
+    mut query: Query<(&mut PredictionPropagator<T>, &PredictionControllerOf<T>)>,
+) where
+    T: PredictionTarget,
+{
+    if let Ok((mut propagator, controller_of)) = query.get_mut(trigger.entity) {
+        let solution = propagator.take_solution();
+        for (entity, sol) in controller_of.iter().zip(solution) {
+            T::insert(&mut commands.entity(entity), sol);
+        }
+    }
 }
 
 /// Inserts streamed propagator snapshots back into the ECS.

@@ -34,39 +34,39 @@ pub trait State: Sized {
     fn iter_mut(&mut self) -> Self::IteratorMut<'_>;
 
     #[inline]
-    fn fill(&mut self, value: Self::Variable) -> &mut Self
+    fn fill_with<F>(&mut self, mut f: F) -> &mut Self
     where
-        Self::Variable: Copy,
+        F: FnMut() -> Self::Variable,
     {
         for var in self.iter_mut() {
-            *var = value;
+            *var = f();
         }
         self
     }
 
     #[inline]
-    fn filled(mut self, value: Self::Variable) -> Self
+    fn filled_with<F>(mut self, f: F) -> Self
     where
-        Self::Variable: Copy,
+        F: FnMut() -> Self::Variable,
     {
-        self.fill(value);
+        self.fill_with(f);
         self
     }
 
     #[inline]
     fn zero(&mut self) -> &mut Self
     where
-        Self::Variable: Default + Copy,
+        Self::Variable: Default,
     {
-        self.fill(Default::default())
+        self.fill_with(Default::default)
     }
 
     #[inline]
     fn zeroed(self) -> Self
     where
-        Self::Variable: Default + Copy,
+        Self::Variable: Default,
     {
-        self.filled(Default::default())
+        self.filled_with(Default::default)
     }
 }
 

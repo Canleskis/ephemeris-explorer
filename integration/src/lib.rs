@@ -341,7 +341,7 @@ pub trait Solout<P> {
 
     fn new_solution(&self, problem: &P) -> Self::Solution;
 
-    fn solout(&mut self, problem: &P, solution: &mut Self::Solution) -> bool;
+    fn solout(&mut self, problem: &mut P, solution: &mut Self::Solution) -> bool;
 }
 
 impl<P> Solout<P> for () {
@@ -351,7 +351,7 @@ impl<P> Solout<P> for () {
     fn new_solution(&self, _: &P) -> Self::Solution {}
 
     #[inline]
-    fn solout(&mut self, _: &P, _: &mut Self::Solution) -> bool {
+    fn solout(&mut self, _: &mut P, _: &mut Self::Solution) -> bool {
         true
     }
 }
@@ -549,7 +549,7 @@ where
     }
 
     #[inline]
-    fn solout(&mut self, problem: &P, (time, state): &mut Self::Solution) -> bool {
+    fn solout(&mut self, problem: &mut P, (time, state): &mut Self::Solution) -> bool {
         time.clone_from(&problem.as_ref().time);
         state.clone_from(&problem.as_ref().state);
 

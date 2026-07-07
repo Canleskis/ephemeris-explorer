@@ -394,7 +394,6 @@ pub const END_SIZE: f32 = 4e-3;
 
 fn bound_marker_picking(
     ray_map: Res<RayMap>,
-    query: Query<(&Trajectory, &PlotSourceOf)>,
     query_plot: Query<(Entity, &PlotSource, &PlotPoints)>,
     query_trajectory: Query<&Trajectory>,
     perspective: Single<&Projection, With<Camera>>,
@@ -409,36 +408,36 @@ fn bound_marker_picking(
     };
     let ray = &bevy::math::bounding::RayCast3d::from_ray(*ray, f32::MAX);
 
-    if let Some((entity, data)) = query
+    if let Some((entity, data)) = query_plot
         .iter()
-        .flat_map(|(traj, source_of)| {
-            query_plot
-                .iter_many(source_of.iter())
-                .flat_map(|(plot_entity, source, points)| {
-                    [
-                        (traj.start(), BoundHit::Start { depth: 0.0 }, START_SIZE),
-                        (traj.end(), BoundHit::End { depth: 0.0 }, END_SIZE),
-                    ]
-                    .into_iter()
-                    .filter_map(move |(time, mut hit, size)| {
-                        let world_pos = points.evaluate(time)?;
-                        let relative = source.get_relative_trajectory(&query_trajectory).ok()?;
-                        let distance = relative.position(time)?.length();
-                        let size =
-                            world_pos.distance(Vec3::from(ray.origin)) * perspective.fov * size;
-                        let size = size.min(distance as f32);
+        .filter_map(|(plot_entity, source, points)| {
+            Some((
+                plot_entity,
+                source,
+                points,
+                source.get_relative_trajectory(&query_trajectory).ok()?,
+            ))
+        })
+        .flat_map(|(plot_entity, _, points, t)| {
+            [
+                (t.start(), BoundHit::Start { depth: 0.0 }, START_SIZE, t),
+                (t.end(), BoundHit::End { depth: 0.0 }, END_SIZE, t),
+            ]
+            .into_iter()
+            .filter_map(move |(time, mut hit, size, traj)| {
+                let world_pos = points.evaluate(time)?;
+                let distance = traj.position(time)?.length();
+                let size = world_pos.distance(Vec3::from(ray.origin)) * perspective.fov * size;
+                let size = size.min(distance as f32);
 
-                        match &mut hit {
-                            BoundHit::Start { depth: d } | BoundHit::End { depth: d } => {
-                                *d = ray.sphere_intersection_at(&BoundingSphere::new(
-                                    world_pos, size,
-                                ))?;
-                            }
-                        }
+                match &mut hit {
+                    BoundHit::Start { depth: d } | BoundHit::End { depth: d } => {
+                        *d = ray.sphere_intersection_at(&BoundingSphere::new(world_pos, size))?;
+                    }
+                }
 
-                        Some((plot_entity, hit))
-                    })
-                })
+                Some((plot_entity, hit))
+            })
         })
         .min_by(|(_, a), (_, b)| a.depth().total_cmp(&b.depth()))
     {

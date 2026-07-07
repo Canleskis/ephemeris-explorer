@@ -202,7 +202,6 @@ fn plot_apsis_markers(
 
 fn plot_bounds_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
-    query: Query<(&Trajectory, &PlotSourceOf)>,
     query_plot: Query<(&PlotPoints, &PlotSource, &PlotConfig)>,
     query_trajectory: Query<&Trajectory>,
     camera: Single<(&GlobalTransform, &Projection)>,
@@ -211,34 +210,32 @@ fn plot_bounds_markers(
         unreachable!("Camera is not perspective");
     };
 
-    for (trajectory, source_of) in query.iter() {
-        let start = trajectory.start();
-        let end = trajectory.end();
-        for (points, source, plot) in query_plot.iter_many(source_of.iter()) {
-            if let Ok(relative) = source.get_relative_trajectory(&query_trajectory) {
-                if let Some(world_pos) = points.evaluate(start)
-                    && let Some(distance) = relative.position(start).map(|p| p.length())
-                {
-                    let direction = camera_transform.translation() - world_pos;
-                    let size = direction.length() * perspective.fov * START_SIZE;
-                    let size = size.min(distance as f32);
+    for (points, source, plot) in query_plot {
+        if let Ok(relative) = source.get_relative_trajectory(&query_trajectory) {
+            let start = relative.start();
+            let end = relative.end();
+            if let Some(world_pos) = points.evaluate(start)
+                && let Some(distance) = relative.position(start).map(|p| p.length())
+            {
+                let direction = camera_transform.translation() - world_pos;
+                let size = direction.length() * perspective.fov * START_SIZE;
+                let size = size.min(distance as f32);
 
-                    let mut transform = Transform::from_translation(world_pos)
-                        .looking_to(direction, camera_transform.up());
-                    transform.rotate_local_z(std::f32::consts::FRAC_PI_4);
-                    gizmos.rect(transform.to_isometry(), Vec2::splat(size), plot.color);
-                }
-                if let Some(world_pos) = points.evaluate(end)
-                    && let Some(distance) = relative.position(end).map(|p| p.length())
-                {
-                    let direction = camera_transform.translation() - world_pos;
-                    let size = direction.length() * perspective.fov * END_SIZE;
-                    let size = size.min(distance as f32);
-                    let mut transform = Transform::from_translation(world_pos)
-                        .looking_to(direction, camera_transform.up());
-                    transform.rotate_local_z(std::f32::consts::FRAC_PI_4);
-                    gizmos.cross(transform.to_isometry(), size, plot.color);
-                }
+                let mut transform = Transform::from_translation(world_pos)
+                    .looking_to(direction, camera_transform.up());
+                transform.rotate_local_z(std::f32::consts::FRAC_PI_4);
+                gizmos.rect(transform.to_isometry(), Vec2::splat(size), plot.color);
+            }
+            if let Some(world_pos) = points.evaluate(end)
+                && let Some(distance) = relative.position(end).map(|p| p.length())
+            {
+                let direction = camera_transform.translation() - world_pos;
+                let size = direction.length() * perspective.fov * END_SIZE;
+                let size = size.min(distance as f32);
+                let mut transform = Transform::from_translation(world_pos)
+                    .looking_to(direction, camera_transform.up());
+                transform.rotate_local_z(std::f32::consts::FRAC_PI_4);
+                gizmos.cross(transform.to_isometry(), size, plot.color);
             }
         }
     }
@@ -467,7 +464,8 @@ fn apsis_tooltip_window(
 fn bound_tooltip_window(
     hover: Res<PointerHover>,
     query_plot: Query<(&PlotSource, &PlotPoints)>,
-    query: Query<(&Trajectory, &Name)>,
+    query_trajectory: Query<&Trajectory>,
+    query_name: Query<&Name>,
     camera: Single<(&GlobalTransform, &Camera)>,
     mut contexts: EguiContexts,
 ) {
@@ -477,7 +475,8 @@ fn bound_tooltip_window(
 
     if let Some(PointerHit(entity, HitData::Bound(hit))) = &hover.0
         && let Ok((source, points)) = query_plot.get(*entity)
-        && let Ok((trajectory, name)) = query.get(source.entity)
+        && let Ok(trajectory) = source.get_relative_trajectory(&query_trajectory)
+        && let Ok(name) = query_name.get(source.entity)
     {
         let time = match hit {
             BoundHit::Start { .. } => trajectory.start(),
@@ -881,6 +880,7 @@ fn trajectory_tooltips_window(
                                 data.selected = if range.contains(&j) {
                                     ui.scope(|ui| {
                                         ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 4.0;
                                             let time = data.time;
                                             let is_current = time == sim_time.current();
                                             if ui

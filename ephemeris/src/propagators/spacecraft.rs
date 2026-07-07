@@ -557,7 +557,7 @@ where
     #[inline]
     pub fn join(lhs: &mut CubicHermiteSpline<T::Vector>, rhs: CubicHermiteSpline<T::Vector>) {
         lhs.clear_after(rhs.start());
-        lhs.extend(rhs);
+        lhs.append(rhs);
     }
 
     #[inline]
@@ -663,7 +663,7 @@ where
     #[inline]
     fn solout(
         &mut self,
-        problem: &SpacecraftProblem<T, F, C>,
+        problem: &mut SpacecraftProblem<T, F, C>,
         solution: &mut Self::Solution,
     ) -> bool {
         solution.push(

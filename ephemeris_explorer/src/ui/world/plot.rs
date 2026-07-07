@@ -299,6 +299,7 @@ pub fn compute_plot_points_parallel(
             let Ok(reference) = source.reference.map(|e| query_traj.get(e)).transpose() else {
                 return;
             };
+
             // Lock now so that upcoming evaluations don't need to repeatedly acquire the lock.
             let trajectory = trajectory.read();
             let reference = reference.map(|r| r.read());
@@ -418,7 +419,11 @@ fn plot_knots(
                 plot_knots(&mut gizmos, *camera, knots, points);
             }
             PredictionTrajectory::CubicHermiteSpline(traj) => {
-                let knots = traj.points().iter().map(|(t, _)| *t);
+                let knots = traj.points().iter().map(|(t, ..)| *t);
+                plot_knots(&mut gizmos, *camera, knots, points);
+            }
+            PredictionTrajectory::QuinticHermiteSpline(traj) => {
+                let knots = traj.points().iter().map(|(t, ..)| *t);
                 plot_knots(&mut gizmos, *camera, knots, points);
             }
         }

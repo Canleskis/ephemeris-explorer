@@ -192,17 +192,10 @@ fn handle_missing_visuals(
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct InterpolationParameters {
-    pub degree: usize,
-    pub count: usize,
-}
-
-#[derive(Debug, Default, Asset, TypePath)]
+#[derive(Debug, Default, Asset, TypePath, serde::Deserialize)]
 pub struct EphemeridesSettings {
     pub dt: Duration,
-    pub interpolation:
-        bevy::platform::collections::hash_map::HashMap<String, InterpolationParameters>,
+    pub interpolation_tolerance: f64,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]

@@ -1,185 +1,178 @@
 use ephemeris::{
-    AccelerationModel, BoundedPropagator, BoundedTrajectory, CubicHermiteSplineSolout,
-    EvaluateTrajectory, Forward, Frame, InterpolationAlgorithm, NBodyPropagatorError, Polynomial,
-    PolyonmialInterpolator, PropagationContext, SplineInterpolator, Transform, eval_slice_horner,
+    AccelerationModel, AccelerationPairedAssign, BoundedPropagator, BoundedTrajectory,
+    CubicHermiteSplineSolout, EvaluateTrajectory, ExtendSpline, Forward, Frame, GravityModel,
+    GravitySource, InterpolationSample, InterpolationTolerance, NBodyPropagatorError,
+    PropagationContext, QuinticHermite, QuinticHermiteSpline, Transform,
 };
 use ftime::{Duration, Epoch};
 use glam::{DMat3, DVec3};
 use horizons_solar_system::{SolarSystem, SolarSystemObject};
 use integration::prelude::*;
-use particular::gravity::newtonian::AccelerationAt;
+use particular::{
+    gravity::newtonian::{AccelerationAt, AccelerationPaired},
+    prelude::{Mass, Position},
+};
 
 mod common;
 
-#[derive(Clone, Copy, Debug)]
-pub struct LeastSquaresFit {
-    pub degree: usize,
+#[derive(Position, Mass)]
+pub struct PointMass {
+    position: DVec3,
+    mu: f64,
 }
 
-impl InterpolationAlgorithm<DVec3> for LeastSquaresFit {
-    type Error = ();
+impl AccelerationPairedAssign for PointMass {
+    type Output = DVec3;
 
-    // Credit to the poly_it crate (https://github.com/SkyeC0re/polyit-rs)
     #[inline]
-    fn interpolate(&self, ts: &[f64], xs: &[DVec3]) -> Result<Polynomial<DVec3>, Self::Error> {
-        debug_assert!(ts.len() == xs.len());
-        let data_len = ts.len();
-        let (mut d_0, gamma_0, mut b_0) = ts.iter().zip(xs.iter()).fold(
-            (DVec3::ZERO, DVec3::ZERO, DVec3::ZERO),
-            |mut acc, (xi, yi)| {
-                acc.0 += yi;
-                acc.1 += DVec3::ONE;
-                acc.2 += xi;
-                acc
-            },
+    fn acceleration_paired_assign(
+        &self,
+        other: &Self,
+        a1: &mut Self::Output,
+        a2: &mut Self::Output,
+    ) {
+        let (ai, aj) = self.acceleration_paired(other, &0.0);
+        *a1 += ai;
+        *a2 += aj;
+    }
+}
+
+impl GravitySource for PointMass {
+    type Vector = DVec3;
+
+    type Scalar = f64;
+
+    #[inline]
+    fn new(position: Self::Vector, mu: Self::Scalar) -> Self {
+        Self { position, mu }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct QuinticHermiteSample {
+    pub time: Epoch,
+    pub position: DVec3,
+    pub velocity: DVec3,
+    pub acceleration: DVec3,
+}
+
+impl QuinticHermiteSample {
+    #[inline]
+    pub fn new(time: Epoch, position: DVec3, velocity: DVec3, acceleration: DVec3) -> Self {
+        Self {
+            time,
+            position,
+            velocity,
+            acceleration,
+        }
+    }
+}
+
+impl InterpolationSample<DVec3> for QuinticHermiteSample {
+    type Trajectory = QuinticHermiteSpline<DVec3>;
+
+    #[inline]
+    fn new(time: Epoch, position: DVec3, velocity: DVec3, acceleration: DVec3) -> Self {
+        Self {
+            time,
+            position,
+            velocity,
+            acceleration,
+        }
+    }
+}
+
+impl ExtendSpline<Forward, QuinticHermiteSample> for QuinticHermiteSpline<DVec3> {
+    #[inline]
+    fn push_at_bound(&mut self, sample: QuinticHermiteSample) {
+        self.push_back(
+            sample.time,
+            sample.position,
+            sample.velocity,
+            sample.acceleration,
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct MidDistance(f64);
+
+impl MidDistance {
+    #[inline]
+    pub fn new(tolerance: f64) -> Self {
+        Self(tolerance * tolerance)
+    }
+}
+
+impl InterpolationTolerance<QuinticHermiteSample> for MidDistance {
+    #[inline]
+    fn is_valid(&mut self, samples: &[QuinticHermiteSample]) -> bool {
+        let len = samples.len();
+        if len < 3 {
+            return true;
+        }
+
+        let first = samples[0];
+        let last = samples[len - 1];
+        let hermite = QuinticHermite::new(
+            (
+                first.time.as_offset_seconds(),
+                last.time.as_offset_seconds(),
+            ),
+            (first.position, last.position),
+            (first.velocity, last.velocity),
+            (first.acceleration, last.acceleration),
         );
 
-        if gamma_0 == DVec3::ZERO {
-            return Err(());
-        }
-        // Impossible for `data_len` to be zero at this stage.
-        let degree = self.degree.min(data_len - 1);
+        let mid = len / 2;
+        let mid_sample = &samples[mid];
 
-        b_0 /= gamma_0;
-        d_0 /= gamma_0;
-
-        let mut p_data = smallvec::SmallVec::new_const();
-
-        if degree == 0 {
-            p_data.push(d_0);
-            return Ok(Polynomial::new(p_data));
-        }
-
-        for _ in 0..(degree + 1) {
-            p_data.push(DVec3::ZERO);
-        }
-        let mut p_km1 = p_data.clone();
-        let mut p_km1 = p_km1.as_mut_slice();
-        let mut p_k = p_data.clone();
-        let mut p_k = p_k.as_mut_slice();
-        let p_data_slice = p_data.as_mut_slice();
-        p_data_slice[0] = d_0;
-        // Safety: `p_data` has `deg + 1` elements.
-        *unsafe { p_k.get_unchecked_mut(0) } = DVec3::ONE;
-
-        let mut gamma_k = gamma_0;
-        let mut b_k = b_0;
-        let mut minus_c_k = DVec3::ZERO;
-        let mut kp1 = 1;
-
-        loop {
-            // Overwrite $p_{k-1}$ with $p_{k+1}$
-            for i in 0..kp1 {
-                // Safety: `kp1 <= deg + 1`.
-                let p_km1i = unsafe { p_km1.get_unchecked_mut(i) };
-                *p_km1i = minus_c_k * *p_km1i - b_k * unsafe { p_k.get_unchecked(i) };
-            }
-
-            for im1 in 0..kp1 {
-                // Safety: `kp1 <= deg`.
-                let p_km1i = unsafe { p_km1.get_unchecked_mut(im1 + 1) };
-                *p_km1i += unsafe { p_k.get_unchecked(im1) };
-            }
-
-            let (mut d_kp1, gamma_kp1, mut b_kp1) = ts.iter().zip(xs.iter()).fold(
-                (DVec3::ZERO, DVec3::ZERO, DVec3::ZERO),
-                |mut acc, (xi, yi)| {
-                    // Safety: `kp1 <= deg`.
-                    let px = eval_slice_horner(unsafe { p_km1.get_unchecked(0..(kp1 + 1)) }, xi);
-                    let wipx = px;
-                    acc.0 += yi * wipx;
-
-                    let wipxpx = wipx * px;
-                    acc.1 += wipxpx;
-                    acc.2 += xi * wipxpx;
-
-                    acc
-                },
-            );
-
-            if gamma_kp1 == DVec3::ZERO {
-                break;
-            }
-
-            d_kp1 /= gamma_kp1;
-
-            for i in 0..(kp1 + 1) {
-                // Safety: `kp1 <= deg`.
-                let pi = unsafe { p_data_slice.get_unchecked_mut(i) };
-                *pi += d_kp1 * unsafe { p_km1.get_unchecked(i) };
-            }
-
-            if kp1 == degree {
-                break;
-            }
-
-            // Delay the remaining work left for $b_{k+1}$ until it is certain to be needed.
-            b_kp1 /= gamma_kp1;
-
-            kp1 += 1;
-            b_k = b_kp1;
-            minus_c_k = -(gamma_kp1 / gamma_k);
-            gamma_k = gamma_kp1;
-
-            // Reorient the offsets
-            std::mem::swap(&mut p_k, &mut p_km1);
-        }
-        let mut p = Polynomial::new(p_data);
-        p.trim();
-        Ok(p)
+        hermite
+            .eval(mid_sample.time.as_offset_seconds())
+            .distance_squared(mid_sample.position)
+            <= self.0
     }
 }
 
 type StateVector = ephemeris::StateVector<DVec3>;
-type NBodyProblem = ephemeris::NBodyProblem<DVec3>;
-type SplineInterpolators<D> = ephemeris::SplineInterpolators<D, DVec3, LeastSquaresFit>;
+type ForceModel = ephemeris::CachedNewtonianGravity<PointMass>;
+type NBodyProblem = ephemeris::NBodyProblem<DVec3, ForceModel>;
+type SplineInterpolators<D> =
+    ephemeris::SplineInterpolators<D, QuinticHermiteSample, DVec3, MidDistance>;
 type NBodyPropagator<M> =
-    ephemeris::NBodyPropagator<Forward, DVec3, M, SplineInterpolators<Forward>>;
-type UniformSpline = ephemeris::UniformSpline<DVec3>;
+    ephemeris::NBodyPropagator<DVec3, ForceModel, M, SplineInterpolators<Forward>>;
 
 #[inline]
 fn propagate_solar_system<M>(
     system: &SolarSystem,
-    parameters: &[(Duration, LeastSquaresFit)],
     h: Duration,
     end: Epoch,
-) -> Result<Vec<UniformSpline>, NBodyPropagatorError>
+) -> Result<Vec<QuinticHermiteSpline<DVec3>>, NBodyPropagatorError>
 where
     M: NewMethod<FixedMethodParams<f64>> + Method<NBodyProblem>,
     M::Integrator: Integrator<NBodyProblem> + IntegratorState<Time = f64>,
 {
-    let (((positions, velocities), mus), interpolators) = system
+    let ((positions, velocities), mus): ((Vec<_>, _), _) = system
         .bodies
         .iter()
-        .zip(parameters)
-        .map(|(body, &(sample_period, algorithm))| {
-            (
-                ((body.position, body.velocity), body.mu),
-                SplineInterpolator {
-                    last_sample_time: Duration::ZERO,
-                    sample_period,
-                    interpolator: PolyonmialInterpolator::new(&body.position),
-                    algorithm,
-                },
-            )
-        })
+        .map(|body| ((body.position, body.velocity), body.mu))
         .unzip();
 
-    let mut propagator = NBodyPropagator::<M>::new(
-        Forward::new(h),
-        system.epoch,
-        positions,
-        velocities,
-        mus,
-        SplineInterpolators::new(h, interpolators),
+    let mut problem = NBodyProblem::new(
+        system.epoch.as_offset_seconds(),
+        f64::INFINITY,
+        SecondOrderState::new(positions, velocities),
+        GravityModel::new(ForceModel::new(mus)),
     );
+
+    let solout = SplineInterpolators::new(&mut problem, MidDistance::new(1e-3));
+    let mut propagator = NBodyPropagator::<M>::new_solout(Forward::from(h), problem, solout);
 
     propagator.propagate(end)
 }
 
 fn generate_celestial_bodies<M>(
     system: &SolarSystem,
-    parameters: &[(Duration, LeastSquaresFit)],
     h: Duration,
     end: Epoch,
 ) -> Result<CelestialBodies, NBodyPropagatorError>
@@ -187,7 +180,7 @@ where
     M: NewMethod<FixedMethodParams<f64>> + Method<NBodyProblem>,
     M::Integrator: Integrator<NBodyProblem> + IntegratorState<Time = f64>,
 {
-    let trajectories = propagate_solar_system::<M>(system, parameters, h, end)?;
+    let trajectories = propagate_solar_system::<M>(system, h, end)?;
 
     Ok(CelestialBodies {
         bodies: system
@@ -210,7 +203,7 @@ where
 
 #[derive(Clone)]
 struct CelestialBody {
-    trajectory: UniformSpline,
+    trajectory: QuinticHermiteSpline<DVec3>,
     mu: f64,
 }
 
@@ -356,20 +349,6 @@ const BODIES: &[SolarSystemObject] = {
 
 const DELTA: Duration = Duration::from_hours(6.0);
 
-#[rustfmt::skip]
-const INTERPOLATION_PARAMETERS: &[(Duration, LeastSquaresFit)] = &[
-    (Duration::from_hours(72.0), LeastSquaresFit { degree: 6 }), // Sun
-        (Duration::from_hours(12.0), LeastSquaresFit { degree: 7 }), // Mercury
-        (Duration::from_hours(60.0), LeastSquaresFit { degree: 7 }), // Venus
-        (Duration::from_hours(18.0), LeastSquaresFit { degree: 7 }), // Earth
-            (Duration::from_hours(6.0), LeastSquaresFit { degree: 6 }),  // Moon
-        (Duration::from_hours(72.0), LeastSquaresFit { degree: 7 }), // Mars
-        (Duration::from_hours(150.0), LeastSquaresFit { degree: 7 }), // JupiterBarycenter
-        (Duration::from_hours(150.0), LeastSquaresFit { degree: 6 }), // SaturnBarycenter
-        (Duration::from_hours(150.0), LeastSquaresFit { degree: 6 }), // UranusBarycenter
-        (Duration::from_hours(150.0), LeastSquaresFit { degree: 5 }), // NeptuneBarycenter
-];
-
 const fn ratio_f64(ratio: Ratio<u16>) -> f64 {
     ratio.numerator() as f64 / ratio.denominator() as f64
 }
@@ -402,7 +381,6 @@ impl std::error::Error for OutOfBoundsEval {}
 fn spacecraft_propagation() -> Result<(), Box<dyn std::error::Error>> {
     let celestial_bodies = generate_celestial_bodies::<QuinlanTremaine12<_>>(
         &common::fetch_solar_system_cached(BODIES, "1950-01-01 00:00:00".parse()?),
-        INTERPOLATION_PARAMETERS,
         DELTA,
         "1952-01-01 00:00:00".parse()?,
     )?;

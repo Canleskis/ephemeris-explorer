@@ -580,7 +580,7 @@ impl BodyInfoWindow {
                                 Burn::new(
                                     start,
                                     match **parent {
-                                        parent if parent == *root => BurnFrame::Relative,
+                                        parent if parent != *root => BurnFrame::Relative,
                                         _ => BurnFrame::Inertial,
                                     },
                                     **parent,

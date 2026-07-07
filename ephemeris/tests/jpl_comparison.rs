@@ -1,10 +1,46 @@
-use ephemeris::{NBodyProblem, NewtonianGravity};
+use ephemeris::{
+    AccelerationPairedAssign, GravityModel, GravitySource, NBodyProblem, NewtonianGravity,
+};
 use ftime::Duration;
 use glam::DVec3;
 use horizons_solar_system::{SolarSystem, SolarSystemObject};
 use integration::prelude::*;
+use particular::{gravity::newtonian::AccelerationPaired, prelude::*};
 
 mod common;
+
+#[derive(Position, Mass)]
+pub struct PointMass {
+    position: DVec3,
+    mu: f64,
+}
+
+impl AccelerationPairedAssign for PointMass {
+    type Output = DVec3;
+
+    #[inline]
+    fn acceleration_paired_assign(
+        &self,
+        other: &Self,
+        a1: &mut Self::Output,
+        a2: &mut Self::Output,
+    ) {
+        let (ai, aj) = self.acceleration_paired(other, &0.0);
+        *a1 += ai;
+        *a2 += aj;
+    }
+}
+
+impl GravitySource for PointMass {
+    type Vector = DVec3;
+
+    type Scalar = f64;
+
+    #[inline]
+    fn new(position: Self::Vector, mu: Self::Scalar) -> Self {
+        Self { position, mu }
+    }
+}
 
 fn barycenter(system: &SolarSystem) -> DVec3 {
     let total_mass: f64 = system.bodies.iter().map(|b| b.mu).sum();
@@ -16,7 +52,9 @@ fn barycenter(system: &SolarSystem) -> DVec3 {
         / total_mass
 }
 
-fn n_body_problem_from_solar_system(system: &SolarSystem) -> NBodyProblem<DVec3> {
+fn n_body_problem_from_solar_system(
+    system: &SolarSystem,
+) -> NBodyProblem<DVec3, NewtonianGravity<PointMass>> {
     let ((positions, velocities), mus): ((Vec<DVec3>, Vec<DVec3>), Vec<f64>) = system
         .bodies
         .iter()
@@ -30,9 +68,7 @@ fn n_body_problem_from_solar_system(system: &SolarSystem) -> NBodyProblem<DVec3>
             y: positions,
             dy: velocities,
         },
-        ode: NewtonianGravity {
-            gravitational_parameters: mus,
-        },
+        ode: GravityModel::new(NewtonianGravity::new(mus)),
     }
 }
 

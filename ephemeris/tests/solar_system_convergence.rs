@@ -252,8 +252,8 @@ where
 
             let mut max_error = SecondOrderState::new(0.0, 0.0);
             for i in 0..n {
-                let position_error = (state.y[i].value - truth.y[i].value).length() * 1e3;
-                let velocity_error = (state.dy[i].value - truth.dy[i].value).length() * 1e3;
+                let position_error = (state.y[i] - truth.y[i]).value.length() * 1e3;
+                let velocity_error = (state.dy[i] - truth.dy[i]).value.length() * 1e3;
 
                 max_error.y = position_error.max(max_error.y);
                 max_error.dy = velocity_error.max(max_error.dy);

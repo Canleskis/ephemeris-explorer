@@ -1,7 +1,7 @@
 pub mod solar_system;
 pub mod ui;
 
-use integration::{AdaptiveMethodParams, ratio::Ratio};
+use integration::{AdaptiveMethodParams, problem::SecondOrderState, ratio::Ratio};
 pub use solar_system::*;
 pub use ui::*;
 
@@ -10,9 +10,9 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, SoiTransitionsAnalysis},
     camera::{CameraController, FollowParameters, Followed, OrbitCamera},
     dynamics::{
-        AbsTol, Apsides, Backward, Bodies, CelestialTrajectory, CubicHermiteSpline, Forward,
-        GravitationalBody, LeastSquaresFit, Mu, SpacecraftTrajectory, SphereOfInfluence,
-        StateVector, Trajectory, UniformSpline,
+        AbsTol, Backward, Bodies, CelestialTrajectory, Double, ForceModel, Forward,
+        GravitationalBody, Mu, NBodyProblem, SoiTransitions, SpacecraftTrajectory,
+        SphereOfInfluence, StateVector, Trajectory,
     },
     flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
     floating_origin::{BigGridBundle, BigSpaceRootBundle, CellCoord, FloatingOrigin},
@@ -31,7 +31,7 @@ use bevy::prelude::*;
 use bevy::{
     asset::RecursiveDependencyLoadState, core_pipeline::Skybox, platform::hash::FixedState,
 };
-use ephemeris::DIV;
+use ephemeris::GravityModel;
 use ftime::{Duration, Epoch};
 use std::hash::{BuildHasher, Hash};
 
@@ -205,18 +205,12 @@ fn ships_loaded(folder: Res<ShipsHandles>, asset_server: Res<AssetServer>) -> bo
 #[derive(Clone, Debug)]
 pub enum LoadingError {
     AssetLoadError(bevy::asset::AssetLoadError),
-    MissingBody(String),
-    MissingInterpolationParameter(String),
     MissingReference { ship: String, reference: String },
 }
 impl std::fmt::Display for LoadingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AssetLoadError(err) => write!(f, "Asset load error: {err}"),
-            Self::MissingBody(name) => write!(f, "Missing body in solar system state: {name}"),
-            Self::MissingInterpolationParameter(name) => {
-                write!(f, "Missing interpolation parameter for body: {name}")
-            }
             Self::MissingReference { ship, reference } => {
                 write!(f, "Reference \"{reference}\" for \"{ship}\" does not exist")
             }
@@ -256,7 +250,6 @@ fn spawn_loaded_bodies(
     solar_system: UniqueAsset<SolarSystemState>,
     ephemerides: UniqueAsset<EphemeridesSettings>,
     visuals: Res<Assets<BodyVisuals>>,
-    mut errors: ResMut<LoadingErrors>,
 ) {
     // We can assume all assets are loaded at this point and unwrap.
 
@@ -307,22 +300,14 @@ fn spawn_loaded_bodies(
     }
 
     let mut entities = vec![];
-    let mut states = vec![];
+    let mut state = SecondOrderState::new(vec![], vec![]);
+    let mut mus = vec![];
 
     for (id, (name, body)) in system.bodies.iter().enumerate() {
-        let interpolation = match ephemerides.interpolation.get(name) {
-            Some(interpolation) => interpolation,
-            None => {
-                errors.push(LoadingError::MissingInterpolationParameter(name.clone()));
-                continue;
-            }
-        };
         let visual = visuals.get(&body.visuals).unwrap();
 
         let radius = ((visual.radii.x + visual.radii.y + visual.radii.z) / 3.0) as f32;
         let (soi, depth) = info.swap_remove(name).unwrap();
-
-        let sample_period = ephemerides.dt * interpolation.count as f64;
 
         let mut entity = commands.spawn((
             // No state scope needed as it is always a child of the root.
@@ -349,14 +334,14 @@ fn spawn_loaded_bodies(
             },
             (
                 Mu(body.mu),
-                Trajectory::from(UniformSpline::new(system.epoch, sample_period * DIV as f64)),
+                soi,
                 PredictionController::<CelestialTrajectory<Forward>>::new(root),
                 PredictionController::<CelestialTrajectory<Backward>>::new(root),
             ),
             BoundsTime,
             FlightPlanDependency,
-            soi,
             SoiTransitionsAnalysis::Static,
+            SoiTransitions::default(),
             OrbitPlotConfig {
                 enabled: depth <= 1,
                 start: Epoch::MIN,
@@ -396,14 +381,9 @@ fn spawn_loaded_bodies(
         });
 
         entities.push(entity.id());
-        states.push((
-            StateVector::new(body.position, body.velocity),
-            body.mu,
-            sample_period,
-            LeastSquaresFit {
-                degree: interpolation.degree,
-            },
-        ));
+        state.y.push(Double::new(body.position));
+        state.dy.push(Double::new(body.velocity));
+        mus.push(body.mu);
 
         let entity = entity.id();
         commands.entity(root).add_child(entity);
@@ -412,10 +392,18 @@ fn spawn_loaded_bodies(
     }
 
     let dt = ephemerides.dt;
+    let tolerance = ephemerides.interpolation_tolerance;
+    let problem = NBodyProblem::new(
+        system.epoch.as_offset_seconds(),
+        f64::INFINITY,
+        state,
+        GravityModel::new(ForceModel::new(mus)),
+    );
+
     commands.entity(root).insert((
-        CelestialTrajectory::<Forward>::new_propagator(dt, system.epoch, states.clone()),
+        CelestialTrajectory::<Forward>::new_propagator(dt, tolerance, problem.clone()),
         CelestialTrajectory::<Forward>::new_controller_of(entities.clone()),
-        CelestialTrajectory::<Backward>::new_propagator(dt, system.epoch, states.clone()),
+        CelestialTrajectory::<Backward>::new_propagator(dt, tolerance, problem),
         CelestialTrajectory::<Backward>::new_controller_of(entities),
     ));
 
@@ -567,6 +555,10 @@ fn spawn_ship(
         bodies,
     );
 
+    let propagator = PredictionPropagator::<SpacecraftTrajectory>(
+        flight_plan.build_propagator_at(ship.start, StateVector::new(ship.position, ship.velocity)),
+    );
+
     entity.insert((
         // No state scope needed as this is always a child of the root.
         Name::new(ship.name.to_string()),
@@ -586,20 +578,11 @@ fn spawn_ship(
             offset: Vec2::new(0.0, radius) * 1.1,
             index: 99,
         },
-        Trajectory::from(CubicHermiteSpline::new(
-            ship.start,
-            ship.position,
-            ship.velocity,
-        )),
-        PredictionPropagator::<SpacecraftTrajectory>(
-            flight_plan
-                .build_propagator_at(ship.start, StateVector::new(ship.position, ship.velocity)),
-        ),
+        propagator,
         PredictionController::<SpacecraftTrajectory>::new(id),
         PredictionControllerOf::<SpacecraftTrajectory>::new(vec![id]),
         flight_plan,
         SoiTransitionsAnalysis::Dynamic,
-        Apsides::default(),
         OrbitPlotConfig {
             enabled: true,
             start: Epoch::MIN,

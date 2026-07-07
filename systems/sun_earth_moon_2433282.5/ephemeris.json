@@ -1,17 +1,4 @@
 {
     "dt": "6 hour",
-    "settings": {
-        "Sun": {
-            "degree": 6,
-            "count": 12
-        },
-        "Earth": {
-            "degree": 7,
-            "count": 3
-        },
-        "Moon": {
-            "degree": 6,
-            "count": 1
-        }
-    }
+    "interpolation_tolerance": 1e-3
 }

@@ -121,6 +121,138 @@ where
     }
 }
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, PartialOrd)]
+pub struct KinematicState<V> {
+    pub position: V,
+    pub velocity: V,
+    pub acceleration: V,
+}
+
+impl<V> KinematicState<V> {
+    #[inline]
+    pub const fn new(position: V, velocity: V, acceleration: V) -> Self {
+        Self {
+            position,
+            velocity,
+            acceleration,
+        }
+    }
+
+    #[inline]
+    pub fn splat(value: V) -> Self
+    where
+        V: Clone,
+    {
+        Self {
+            position: value.clone(),
+            velocity: value.clone(),
+            acceleration: value,
+        }
+    }
+
+    #[inline]
+    pub fn from_position(position: V) -> Self
+    where
+        V: Default,
+    {
+        Self {
+            position,
+            velocity: Default::default(),
+            acceleration: Default::default(),
+        }
+    }
+
+    #[inline]
+    pub fn component_mul(&self, other: &Self) -> Self
+    where
+        V: std::ops::Mul<Output = V> + Clone,
+    {
+        Self {
+            position: self.position.clone() * other.position.clone(),
+            velocity: self.velocity.clone() * other.velocity.clone(),
+            acceleration: self.acceleration.clone() * other.acceleration.clone(),
+        }
+    }
+
+    #[inline]
+    pub fn component_div(&self, other: &Self) -> Self
+    where
+        V: std::ops::Div<Output = V> + Clone,
+    {
+        Self {
+            position: self.position.clone() / other.position.clone(),
+            velocity: self.velocity.clone() / other.velocity.clone(),
+            acceleration: self.acceleration.clone() / other.acceleration.clone(),
+        }
+    }
+}
+
+impl<S, V> std::ops::Mul<S> for KinematicState<V>
+where
+    S: Clone,
+    V: std::ops::Mul<S, Output = V>,
+{
+    type Output = KinematicState<V>;
+
+    #[inline]
+    fn mul(self, rhs: S) -> Self::Output {
+        Self::Output {
+            position: self.position * rhs.clone(),
+            velocity: self.velocity * rhs.clone(),
+            acceleration: self.acceleration * rhs,
+        }
+    }
+}
+
+impl<S, V> std::ops::Div<S> for KinematicState<V>
+where
+    S: Clone,
+    V: std::ops::Div<S, Output = V>,
+{
+    type Output = KinematicState<V>;
+
+    #[inline]
+    fn div(self, rhs: S) -> Self::Output {
+        Self::Output {
+            position: self.position / rhs.clone(),
+            velocity: self.velocity / rhs.clone(),
+            acceleration: self.acceleration / rhs,
+        }
+    }
+}
+
+impl<V> std::ops::Add for KinematicState<V>
+where
+    V: std::ops::Add<Output = V>,
+{
+    type Output = KinematicState<V>;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::Output {
+            position: self.position + rhs.position,
+            velocity: self.velocity + rhs.velocity,
+            acceleration: self.acceleration + rhs.acceleration,
+        }
+    }
+}
+
+impl<V> std::ops::Sub for KinematicState<V>
+where
+    V: std::ops::Sub<Output = V>,
+{
+    type Output = KinematicState<V>;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::Output {
+            position: self.position - rhs.position,
+            velocity: self.velocity - rhs.velocity,
+            acceleration: self.acceleration - rhs.acceleration,
+        }
+    }
+}
+
 pub trait BoundedTrajectory {
     fn start(&self) -> Epoch;
 
@@ -745,6 +877,13 @@ impl<V> BoundedTrajectory for CubicHermite<V> {
 #[derive(Clone, Debug)]
 pub struct CubicHermiteSpline<V>(Vec<(Epoch, StateVector<V>)>);
 
+impl<V> Default for CubicHermiteSpline<V> {
+    #[inline]
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
 impl<V> DeepSizeOf for CubicHermiteSpline<V> {
     #[inline]
     fn deep_size_of_children(&self, _: &mut deepsize::Context) -> usize {
@@ -839,7 +978,7 @@ impl<V> CubicHermiteSpline<V> {
     }
 
     #[inline]
-    pub fn extend(&mut self, rhs: CubicHermiteSpline<V>) {
+    pub fn append(&mut self, rhs: CubicHermiteSpline<V>) {
         self.0.extend(rhs.0);
     }
 
@@ -850,6 +989,273 @@ impl<V> CubicHermiteSpline<V> {
 
     #[inline]
     pub fn points(&self) -> &[(Epoch, StateVector<V>)] {
+        &self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct QuinticHermite<V> {
+    bounds: (f64, f64),
+    a0: V,
+    a1: V,
+    a2: V,
+    a3: V,
+    a4: V,
+    a5: V,
+}
+
+impl<V> QuinticHermite<V> {
+    #[inline]
+    pub fn new(
+        bounds: (f64, f64),
+        values: (V, V),
+        derivatives: (V, V),
+        accelerations: (V, V),
+    ) -> Self
+    where
+        V: std::ops::Add<Output = V>
+            + std::ops::Sub<Output = V>
+            + std::ops::Mul<f64, Output = V>
+            + PartialEq
+            + Default
+            + Copy,
+    {
+        let a0 = values.0;
+        let a1 = derivatives.0;
+        let a2 = accelerations.0 * 0.5;
+        let dt = bounds.1 - bounds.0;
+
+        let (a3, a4, a5) = if dt == 0.0
+            && values.0 == values.1
+            && derivatives.0 == derivatives.1
+            && accelerations.0 == accelerations.1
+        {
+            (V::default(), V::default(), V::default())
+        } else {
+            let dt_recip = 1.0 / dt;
+            let dt_recip_2 = dt_recip * dt_recip;
+            let dt_recip_3 = dt_recip * dt_recip_2;
+            let dt_recip_4 = dt_recip * dt_recip_3;
+            let dt_recip_5 = dt_recip * dt_recip_4;
+
+            let dp = values.1 - values.0;
+            let dv0 = derivatives.0;
+            let dv1 = derivatives.1;
+            let da0 = accelerations.0;
+            let da1 = accelerations.1;
+
+            let c0 = dp * 10.0 - (dv0 * 6.0 + dv1 * 4.0) * dt + (da1 * 0.5 - da0 * 1.5) * (dt * dt);
+            let c1 = dp * -15.0 + (dv0 * 8.0 + dv1 * 7.0) * dt + (da0 * 1.5 - da1) * (dt * dt);
+            let c2 = dp * 6.0 - (dv0 + dv1) * 3.0 * dt + (da1 * 0.5 - da0 * 0.5) * (dt * dt);
+
+            (c0 * dt_recip_3, c1 * dt_recip_4, c2 * dt_recip_5)
+        };
+
+        QuinticHermite {
+            bounds,
+            a0,
+            a1,
+            a2,
+            a3,
+            a4,
+            a5,
+        }
+    }
+
+    #[inline]
+    pub fn eval(&self, t: f64) -> V
+    where
+        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    {
+        let dt = t - self.bounds.0;
+        (((((self.a5 * dt + self.a4) * dt) + self.a3) * dt + self.a2) * dt + self.a1) * dt + self.a0
+    }
+
+    #[inline]
+    pub fn eval_derivative(&self, t: f64) -> V
+    where
+        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    {
+        let dt = t - self.bounds.0;
+        ((((self.a5 * dt * 5.0 + self.a4 * 4.0) * dt) + self.a3 * 3.0) * dt + self.a2 * 2.0) * dt
+            + self.a1
+    }
+
+    #[inline]
+    pub fn eval_derivative2(&self, t: f64) -> V
+    where
+        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    {
+        let dt = t - self.bounds.0;
+        (((self.a5 * dt * 20.0 + self.a4 * 12.0) * dt) + self.a3 * 6.0) * dt + self.a2 * 2.0
+    }
+}
+
+impl<V> EvaluateTrajectory for QuinticHermite<V>
+where
+    V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+{
+    type Vector = V;
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<Self::Vector> {
+        Some(self.eval(at.as_offset_seconds()))
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<Self::Vector>> {
+        Some(StateVector::new(
+            self.eval(at.as_offset_seconds()),
+            self.eval_derivative(at.as_offset_seconds()),
+        ))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct QuinticHermiteSpline<V>(VecDeque<(Epoch, KinematicState<V>)>);
+
+impl<V> Default for QuinticHermiteSpline<V> {
+    #[inline]
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<V> DeepSizeOf for QuinticHermiteSpline<V> {
+    #[inline]
+    fn deep_size_of_children(&self, _: &mut deepsize::Context) -> usize {
+        self.0.capacity() * size_of::<(Epoch, KinematicState<V>)>()
+    }
+}
+
+impl<V> BoundedTrajectory for QuinticHermiteSpline<V> {
+    #[inline]
+    fn start(&self) -> Epoch {
+        self.0.front().map(|i| i.0).unwrap_or(Epoch::MIN)
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        self.0.back().map(|i| i.0).unwrap_or(Epoch::MAX)
+    }
+
+    #[inline]
+    fn segment_count(&self) -> usize {
+        self.0.len().saturating_sub(1)
+    }
+}
+
+impl<V> EvaluateTrajectory for QuinticHermiteSpline<V>
+where
+    V: std::ops::Add<Output = V>
+        + std::ops::Sub<Output = V>
+        + std::ops::Mul<f64, Output = V>
+        + PartialEq
+        + Default
+        + Copy,
+{
+    type Vector = V;
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<V> {
+        match self.binary_search(at) {
+            Ok(i) => Some(self.0[i].1.position),
+            Err(i) => self.hermite5(i.checked_sub(1)?)?.position(at),
+        }
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<V>> {
+        match self.binary_search(at) {
+            Ok(i) => {
+                let (_, state) = self.0[i];
+                Some(StateVector::new(state.position, state.velocity))
+            }
+            Err(i) => self.hermite5(i.checked_sub(1)?)?.state_vector(at),
+        }
+    }
+}
+
+impl<V> QuinticHermiteSpline<V> {
+    #[inline]
+    pub fn new(start: Epoch, position: V, velocity: V, acceleration: V) -> Self {
+        Self([(start, KinematicState::new(position, velocity, acceleration))].into())
+    }
+
+    #[inline]
+    pub fn push_front(&mut self, at: Epoch, position: V, velocity: V, acceleration: V) {
+        self.0
+            .push_front((at, KinematicState::new(position, velocity, acceleration)));
+    }
+
+    #[inline]
+    pub fn push_back(&mut self, at: Epoch, position: V, velocity: V, acceleration: V) {
+        self.0
+            .push_back((at, KinematicState::new(position, velocity, acceleration)));
+    }
+
+    #[inline]
+    pub fn binary_search(&self, at: Epoch) -> Result<usize, usize> {
+        self.0.binary_search_by(|(t, ..)| t.cmp(&at))
+    }
+
+    #[inline]
+    pub fn hermite5(&self, i: usize) -> Option<QuinticHermite<V>>
+    where
+        V: std::ops::Add<Output = V>
+            + std::ops::Sub<Output = V>
+            + std::ops::Mul<f64, Output = V>
+            + PartialEq
+            + Default
+            + Copy,
+    {
+        let (t1, s1) = self.0.get(i)?;
+        let (t2, s2) = self.0.get(i + 1)?;
+        Some(QuinticHermite::new(
+            (t1.as_offset_seconds(), t2.as_offset_seconds()),
+            (s1.position, s2.position),
+            (s1.velocity, s2.velocity),
+            (s1.acceleration, s2.acceleration),
+        ))
+    }
+
+    #[inline]
+    pub fn clear_before(&mut self, at: Epoch) {
+        let i = match self.binary_search(at) {
+            Ok(i) => i + 1,
+            Err(i) => i,
+        };
+        self.0.drain(..i);
+    }
+
+    #[inline]
+    pub fn clear_after(&mut self, at: Epoch) {
+        let i = match self.binary_search(at) {
+            Ok(i) | Err(i) => i,
+        };
+        self.0.drain(i..);
+    }
+
+    #[inline]
+    pub fn append(&mut self, trajectory: QuinticHermiteSpline<V>) {
+        self.0.extend(trajectory.0);
+    }
+
+    #[inline]
+    pub fn prepend(&mut self, trajectory: QuinticHermiteSpline<V>) {
+        self.0.reserve(trajectory.0.len());
+        for item in trajectory.0.into_iter().rev() {
+            self.0.push_front(item);
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, at: Epoch) -> Option<&KinematicState<V>> {
+        self.binary_search(at).ok().map(|i| &self.0[i].1)
+    }
+
+    #[inline]
+    pub fn points(&self) -> &VecDeque<(Epoch, KinematicState<V>)> {
         &self.0
     }
 }

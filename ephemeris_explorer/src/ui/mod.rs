@@ -372,6 +372,28 @@ use uom::si::{
 
 pub struct Length(uom::si::f64::Length);
 
+type LengthMaker = fn(f64) -> uom::si::f64::Length;
+type LengthGetter = fn(&uom::si::f64::Length) -> f64;
+
+struct LengthUnit {
+    name: &'static str,
+    threshold: f64,
+    make: LengthMaker,
+    get: LengthGetter,
+}
+
+#[rustfmt::skip]
+const LENGTH_UNITS: &[LengthUnit] = &[
+    LengthUnit { name: "ly", threshold: 0.1, make: uom::si::f64::Length::new::<ly>, get: uom::si::f64::Length::get::<ly> },
+    LengthUnit { name: "AU", threshold: 0.1, make: uom::si::f64::Length::new::<au>, get: uom::si::f64::Length::get::<au> },
+    LengthUnit { name: "km", threshold: 1.0, make: uom::si::f64::Length::new::<km>, get: uom::si::f64::Length::get::<km> },
+    LengthUnit { name: "m",  threshold: 1.0, make: uom::si::f64::Length::new::<m>,  get: uom::si::f64::Length::get::<m>  },
+    LengthUnit { name: "cm", threshold: 1.0, make: uom::si::f64::Length::new::<cm>, get: uom::si::f64::Length::get::<cm> },
+    LengthUnit { name: "mm", threshold: 1.0, make: uom::si::f64::Length::new::<mm>, get: uom::si::f64::Length::get::<mm> },
+    LengthUnit { name: "µm", threshold: 1.0, make: uom::si::f64::Length::new::<um>, get: uom::si::f64::Length::get::<um> },
+    LengthUnit { name: "nm", threshold: 1.0, make: uom::si::f64::Length::new::<nm>, get: uom::si::f64::Length::get::<nm> },
+];
+
 impl Length {
     #[inline]
     pub fn km(position: f64) -> Self {
@@ -384,38 +406,46 @@ impl Length {
     }
 
     #[inline]
+    fn unit_index(&self) -> usize {
+        let abs = self.0.abs();
+        LENGTH_UNITS
+            .iter()
+            .position(|u| abs >= (u.make)(u.threshold))
+            .unwrap_or(3)
+    }
+
+    #[inline]
     pub fn as_value_and_unit(&self) -> (f64, &'static str) {
-        let base = &self.0;
-        if base.abs() >= uom::si::f64::Length::new::<ly>(0.1) {
-            (base.get::<ly>(), "ly")
-        } else if base.abs() >= uom::si::f64::Length::new::<au>(0.1) {
-            (base.get::<au>(), "AU")
-        } else if base.abs() >= uom::si::f64::Length::new::<km>(1.0) {
-            (base.get::<km>(), "km")
-        } else if base.abs() >= uom::si::f64::Length::new::<m>(1.0) {
-            (base.get::<m>(), "m")
-        } else if base.abs() >= uom::si::f64::Length::new::<cm>(1.0) {
-            (base.get::<cm>(), "cm")
-        } else if base.abs() >= uom::si::f64::Length::new::<mm>(1.0) {
-            (base.get::<mm>(), "mm")
-        } else if base.abs() >= uom::si::f64::Length::new::<um>(1.0) {
-            (base.get::<um>(), "µm")
-        } else if base.abs() >= uom::si::f64::Length::new::<nm>(1.0) {
-            (base.get::<nm>(), "nm")
-        } else {
-            (base.get::<m>(), "m")
-        }
+        let unit = &LENGTH_UNITS[self.unit_index()];
+        ((unit.get)(&self.0), unit.name)
     }
 }
 
 impl std::fmt::Display for Length {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (val, unit) = self.as_value_and_unit();
-
         if let Some(precision) = f.precision() {
+            let (val, unit) = 'u: {
+                let idx = self.unit_index();
+                let unit = &LENGTH_UNITS[idx];
+                let val = (unit.get)(&self.0);
+
+                if idx == 0 {
+                    break 'u (val, unit.name);
+                }
+
+                let rounded = round_to(val, precision);
+
+                let next = &LENGTH_UNITS[idx - 1];
+                if (unit.make)(rounded).abs() >= (next.make)(next.threshold) {
+                    ((next.get)(&self.0), next.name)
+                } else {
+                    (val, unit.name)
+                }
+            };
             write!(f, "{} {}", nformat!("{:.*}", precision, val), unit)
         } else {
+            let (val, unit) = self.as_value_and_unit();
             write!(f, "{} {}", nformat!("{}", val), unit)
         }
     }
@@ -432,7 +462,33 @@ impl std::str::FromStr for Length {
 
 pub struct Velocity(uom::si::f64::Velocity);
 
+type VelocityMaker = fn(f64) -> uom::si::f64::Velocity;
+type VelocityGetter = fn(&uom::si::f64::Velocity) -> f64;
+
+struct VelocityUnit {
+    name: &'static str,
+    threshold: f64,
+    make: VelocityMaker,
+    get: VelocityGetter,
+}
+
+#[rustfmt::skip]
+const VELOCITY_UNITS: &[VelocityUnit] = &[
+    VelocityUnit { name: "km/s", threshold: 1.0, make: uom::si::f64::Velocity::new::<kps>,  get: uom::si::f64::Velocity::get::<kps>  },
+    VelocityUnit { name: "m/s",  threshold: 1.0, make: uom::si::f64::Velocity::new::<mps>,  get: uom::si::f64::Velocity::get::<mps>  },
+    VelocityUnit { name: "cm/s", threshold: 1.0, make: uom::si::f64::Velocity::new::<cmps>, get: uom::si::f64::Velocity::get::<cmps> },
+    VelocityUnit { name: "mm/s", threshold: 1.0, make: uom::si::f64::Velocity::new::<mmps>, get: uom::si::f64::Velocity::get::<mmps> },
+];
+
 impl Velocity {
+    fn unit_index(&self) -> usize {
+        let abs = self.0.abs();
+        VELOCITY_UNITS
+            .iter()
+            .position(|u| abs >= (u.make)(u.threshold))
+            .unwrap_or(1)
+    }
+
     #[inline]
     pub fn kps(velocity: f64) -> Self {
         Self(uom::si::f64::Velocity::new::<kps>(velocity))
@@ -445,29 +501,36 @@ impl Velocity {
 
     #[inline]
     pub fn as_value_and_unit(&self) -> (f64, &'static str) {
-        let base = &self.0;
-        if base.abs() >= uom::si::f64::Velocity::new::<kps>(1.0) {
-            (base.get::<kps>(), "km/s")
-        } else if base.abs() >= uom::si::f64::Velocity::new::<mps>(1.0) {
-            (base.get::<mps>(), "m/s")
-        } else if base.abs() >= uom::si::f64::Velocity::new::<cmps>(1.0) {
-            (base.get::<cmps>(), "cm/s")
-        } else if base.abs() >= uom::si::f64::Velocity::new::<mmps>(1.0) {
-            (base.get::<mmps>(), "mm/s")
-        } else {
-            (base.get::<mps>(), "m/s")
-        }
+        let unit = &VELOCITY_UNITS[self.unit_index()];
+        ((unit.get)(&self.0), unit.name)
     }
 }
 
 impl std::fmt::Display for Velocity {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (val, unit) = self.as_value_and_unit();
-
         if let Some(precision) = f.precision() {
+            let (val, unit) = 'u: {
+                let idx = self.unit_index();
+                let unit = &VELOCITY_UNITS[idx];
+                let val = (unit.get)(&self.0);
+
+                if idx == 0 {
+                    break 'u (val, unit.name);
+                }
+
+                let rounded = round_to(val, precision);
+
+                let next = &VELOCITY_UNITS[idx - 1];
+                if (unit.make)(rounded).abs() >= (next.make)(next.threshold) {
+                    ((next.get)(&self.0), next.name)
+                } else {
+                    (val, unit.name)
+                }
+            };
             write!(f, "{} {}", nformat!("{:.*}", precision, val), unit)
         } else {
+            let (val, unit) = self.as_value_and_unit();
             write!(f, "{} {}", nformat!("{}", val), unit)
         }
     }
@@ -475,7 +538,6 @@ impl std::fmt::Display for Velocity {
 
 impl std::str::FromStr for Velocity {
     type Err = uom::str::ParseQuantityError;
-
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(uom::si::f64::Velocity::from_str(s)?))
@@ -484,7 +546,33 @@ impl std::str::FromStr for Velocity {
 
 pub struct Acceleration(uom::si::f64::Acceleration);
 
+type AccelerationMaker = fn(f64) -> uom::si::f64::Acceleration;
+type AccelerationGetter = fn(&uom::si::f64::Acceleration) -> f64;
+
+struct AccelerationUnitStep {
+    name: &'static str,
+    threshold: f64,
+    make: AccelerationMaker,
+    get: AccelerationGetter,
+}
+
+#[rustfmt::skip]
+const ACCELERATION_UNITS: &[AccelerationUnitStep] = &[
+    AccelerationUnitStep { name: "km/s²", threshold: 1.0, make: uom::si::f64::Acceleration::new::<kps2>,  get: uom::si::f64::Acceleration::get::<kps2>  },
+    AccelerationUnitStep { name: "m/s²",  threshold: 1.0, make: uom::si::f64::Acceleration::new::<mps2>,  get: uom::si::f64::Acceleration::get::<mps2>  },
+    AccelerationUnitStep { name: "cm/s²", threshold: 1.0, make: uom::si::f64::Acceleration::new::<cmps2>, get: uom::si::f64::Acceleration::get::<cmps2> },
+    AccelerationUnitStep { name: "mm/s²", threshold: 1.0, make: uom::si::f64::Acceleration::new::<mmps2>, get: uom::si::f64::Acceleration::get::<mmps2> },
+];
+
 impl Acceleration {
+    fn unit_index(&self) -> usize {
+        let abs = self.0.abs();
+        ACCELERATION_UNITS
+            .iter()
+            .position(|u| abs >= (u.make)(u.threshold))
+            .unwrap_or(1)
+    }
+
     #[inline]
     pub fn kps2(acceleration: f64) -> Self {
         Self(uom::si::f64::Acceleration::new::<kps2>(acceleration))
@@ -507,29 +595,36 @@ impl Acceleration {
 
     #[inline]
     pub fn as_value_and_unit(&self) -> (f64, &'static str) {
-        let base = &self.0;
-        if base.abs() >= uom::si::f64::Acceleration::new::<kps2>(1.0) {
-            (base.get::<kps2>(), "km/s²")
-        } else if base.abs() >= uom::si::f64::Acceleration::new::<mps2>(1.0) {
-            (base.get::<mps2>(), "m/s²")
-        } else if base.abs() >= uom::si::f64::Acceleration::new::<cmps2>(1.0) {
-            (base.get::<cmps2>(), "cm/s²")
-        } else if base.abs() >= uom::si::f64::Acceleration::new::<mmps2>(1.0) {
-            (base.get::<mmps2>(), "mm/s²")
-        } else {
-            (base.get::<mps2>(), "m/s²")
-        }
+        let unit = &ACCELERATION_UNITS[self.unit_index()];
+        ((unit.get)(&self.0), unit.name)
     }
 }
 
 impl std::fmt::Display for Acceleration {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (val, unit) = self.as_value_and_unit();
-
         if let Some(precision) = f.precision() {
+            let (val, unit) = 'u: {
+                let idx = self.unit_index();
+                let unit = &ACCELERATION_UNITS[idx];
+                let val = (unit.get)(&self.0);
+
+                if idx == 0 {
+                    break 'u (val, unit.name);
+                }
+
+                let rounded = round_to(val, precision);
+
+                let next = &ACCELERATION_UNITS[idx - 1];
+                if (unit.make)(rounded).abs() >= (next.make)(next.threshold) {
+                    ((next.get)(&self.0), next.name)
+                } else {
+                    (val, unit.name)
+                }
+            };
             write!(f, "{} {}", nformat!("{:.*}", precision, val), unit)
         } else {
+            let (val, unit) = self.as_value_and_unit();
             write!(f, "{} {}", nformat!("{}", val), unit)
         }
     }
@@ -537,7 +632,6 @@ impl std::fmt::Display for Acceleration {
 
 impl std::str::FromStr for Acceleration {
     type Err = uom::str::ParseQuantityError;
-
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(uom::si::f64::Acceleration::from_str(s)?))
@@ -599,6 +693,11 @@ pub fn acceleration_parser(text: &str) -> Option<f64> {
     Acceleration::from_str(&text.replace(',', ""))
         .ok()
         .map(|a| a.as_kps2())
+}
+
+fn round_to(x: f64, decimals: usize) -> f64 {
+    let y = 10u8.pow(decimals as _) as f64;
+    (x * y).round() / y
 }
 
 // Adapted from egui::emath::format_with_decimals_in_range

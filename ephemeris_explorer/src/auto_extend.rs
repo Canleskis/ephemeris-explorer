@@ -8,11 +8,6 @@ use bevy::prelude::*;
 use ephemeris::DirectionalPropagator;
 use ftime::{Duration, Epoch};
 
-#[derive(Resource)]
-pub struct ExtendSettings {
-    pub enabled: bool,
-}
-
 /// Request for the simulation bounds to be extended to the given epoch by extending the prediction
 /// for the given [`PredictionTarget`]s. If `forced` is false, requests will be ignored when one is
 /// already being fulfilled. If true, requests will result in any ongoing extension to be cancelled,
