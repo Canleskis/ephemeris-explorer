@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "ephemeris_explorer",
     "ephemeris",
+    "double_double",
     "integration",
     "ftime",
     "horizons_solar_system",
@@ -19,6 +20,7 @@ edition = "2024"
 too_many_arguments = "allow"
 
 [workspace.dependencies]
+double_double = { path = "double_double"}
 integration = { path = "integration" }
 ftime = { path = "ftime" }
 ephemeris = { path = "ephemeris" }

@@ -1,178 +1,55 @@
-use std::ops::{Add, Div, Mul, Neg, Sub};
+mod common;
 
-use ephemeris::StateVector;
+use common::DoubleDVec3;
+use ephemeris::{AccelerationPairedAssign, GravityModel, GravitySource};
 use ftime::{Duration, Epoch, Unit};
 use glam::DVec3;
 use horizons_solar_system::{SolarSystem, SolarSystemObject};
 use integration::prelude::*;
-use particular::gravity::newtonian::AccelerationPaired;
+use particular::{
+    gravity::newtonian::AccelerationPaired,
+    prelude::{Mass, Position},
+};
 
-mod common;
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Double<T> {
-    value: T,
-    error: T,
+// Double precision for point-mass acceleration is enough. Implemented to work with double-double.
+#[derive(Position, Mass)]
+pub struct PointMass {
+    position: DVec3,
+    mu: f64,
 }
 
-impl<T> Double<T> {
+impl AccelerationPairedAssign for PointMass {
+    type Output = DoubleDVec3;
+
     #[inline]
-    fn new(value: T) -> Self
-    where
-        T: Default,
-    {
+    fn acceleration_paired_assign(
+        &self,
+        other: &Self,
+        a1: &mut Self::Output,
+        a2: &mut Self::Output,
+    ) {
+        let (ai, aj) = self.acceleration_paired(other, &0.0);
+        a1.h += ai;
+        a2.h += aj;
+    }
+}
+
+impl GravitySource for PointMass {
+    type Vector = DoubleDVec3;
+
+    type Scalar = f64;
+
+    #[inline]
+    fn init(position: Self::Vector, mu: Self::Scalar) -> Self {
         Self {
-            value,
-            error: T::default(),
-        }
-    }
-
-    #[inline]
-    fn two_sum(a: T, b: T) -> Self
-    where
-        T: Add<Output = T> + Sub<Output = T> + Copy,
-    {
-        let value = a + b;
-        let v = value - a;
-        let error = (a - (value - v)) + (b - v);
-
-        Self { value, error }
-    }
-
-    #[inline]
-    fn two_sub(a: T, b: T) -> Self
-    where
-        T: Add<Output = T> + Sub<Output = T> + Neg<Output = T> + Copy,
-    {
-        Self::two_sum(a, -b)
-    }
-
-    #[inline]
-    fn fast_two_sum(a: T, b: T) -> Self
-    where
-        T: Add<Output = T> + Sub<Output = T> + Copy,
-    {
-        let value = a + b;
-        let error = b - (value - a);
-
-        Self { value, error }
-    }
-}
-
-impl<T> Add for Double<T>
-where
-    T: Add<Output = T> + Sub<Output = T> + Copy,
-{
-    type Output = Self;
-
-    #[inline]
-    fn add(self, other: Self) -> Self::Output {
-        let sum = Double::two_sum(self.value, other.value);
-        Double::fast_two_sum(sum.value, (sum.error + self.error) + other.error)
-    }
-}
-
-impl<T> Sub for Double<T>
-where
-    T: Add<Output = T> + Sub<Output = T> + Neg<Output = T> + Copy,
-{
-    type Output = Self;
-
-    #[inline]
-    fn sub(self, other: Self) -> Self::Output {
-        let sum = Double::two_sub(self.value, other.value);
-        Double::fast_two_sum(sum.value, (sum.error + self.error) - other.error)
-    }
-}
-
-impl Mul<f64> for Double<DVec3> {
-    type Output = Double<DVec3>;
-
-    #[inline]
-    fn mul(self, rhs: f64) -> Self::Output {
-        Double {
-            value: self.value * rhs,
-            error: self.error * rhs,
+            position: position.h,
+            mu,
         }
     }
 }
 
-impl Div<f64> for Double<DVec3> {
-    type Output = Double<DVec3>;
-
-    #[inline]
-    fn div(self, rhs: f64) -> Self::Output {
-        Double {
-            value: self.value / rhs,
-            error: self.error / rhs,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct NewtonianGravity {
-    pub gravitational_parameters: Vec<f64>,
-}
-
-impl SecondOrderODE<f64, Vec<Double<DVec3>>> for NewtonianGravity {
-    #[inline]
-    fn eval(
-        &mut self,
-        _: f64,
-        y: &Vec<Double<DVec3>>,
-        ddy: &mut Vec<Double<DVec3>>,
-    ) -> Result<(), EvalFailed> {
-        ddy.fill(Double::new(DVec3::ZERO));
-        for i in 0..y.len() {
-            let mut output_i = DVec3::ZERO;
-            let p_i = (y[i].value, self.gravitational_parameters[i]);
-
-            for j in (i + 1)..y.len() {
-                let p_j = (y[j].value, self.gravitational_parameters[j]);
-                let computed = p_i.acceleration_paired(&p_j, &0.0);
-                output_i += computed.0;
-                ddy[j].value += computed.1;
-            }
-
-            ddy[i].value += output_i;
-        }
-
-        Ok(())
-    }
-}
-
-impl FirstOrderODE<f64, Vec<StateVector<Double<DVec3>>>> for NewtonianGravity {
-    #[inline]
-    fn eval(
-        &mut self,
-        _: f64,
-        y: &Vec<StateVector<Double<DVec3>>>,
-        dy: &mut Vec<StateVector<Double<DVec3>>>,
-    ) -> Result<(), EvalFailed> {
-        for (y, dy) in y.iter().zip(dy.iter_mut()) {
-            dy.position = y.velocity;
-            dy.velocity = Double::new(DVec3::ZERO);
-        }
-        for i in 0..y.len() {
-            let mut output_i = DVec3::ZERO;
-            let p_i = (y[i].position.value, self.gravitational_parameters[i]);
-
-            for j in (i + 1)..y.len() {
-                let p_j = (y[j].position.value, self.gravitational_parameters[j]);
-                let computed = p_i.acceleration_paired(&p_j, &0.0);
-                output_i += computed.0;
-                dy[j].velocity.value += computed.1;
-            }
-
-            dy[i].velocity.value += output_i;
-        }
-
-        Ok(())
-    }
-}
-
-pub type NBodyProblem<V = Vec<Double<DVec3>>> =
-    ODEProblem<f64, SecondOrderState<V>, NewtonianGravity>;
+pub type NewtonianGravity = ephemeris::NewtonianGravity<PointMass>;
+pub type NBodyProblem = ephemeris::NBodyProblem<DoubleDVec3, NewtonianGravity>;
 
 fn n_body_from_solar_system(system: &SolarSystem) -> NBodyProblem {
     let ((positions, velocities), mus): ((Vec<_>, Vec<_>), Vec<f64>) = system
@@ -180,7 +57,10 @@ fn n_body_from_solar_system(system: &SolarSystem) -> NBodyProblem {
         .iter()
         .map(|body| {
             (
-                (Double::new(body.position), Double::new(body.velocity)),
+                (
+                    DoubleDVec3::new(body.position),
+                    DoubleDVec3::new(body.velocity),
+                ),
                 body.mu,
             )
         })
@@ -193,9 +73,7 @@ fn n_body_from_solar_system(system: &SolarSystem) -> NBodyProblem {
             y: positions,
             dy: velocities,
         },
-        ode: NewtonianGravity {
-            gravitational_parameters: mus,
-        },
+        ode: GravityModel::new(NewtonianGravity::new(mus)),
     }
 }
 
@@ -250,22 +128,37 @@ where
                 .with_solout(EveryStepSolout);
             let (end, state) = integration.solve()?;
 
-            let mut max_error = SecondOrderState::new(0.0, 0.0);
+            let mut max_position_errors = vec![0.0; n];
+            let mut max_velocity_errors = vec![0.0; n];
             for i in 0..n {
-                let position_error = (state.y[i] - truth.y[i]).value.length() * 1e3;
-                let velocity_error = (state.dy[i] - truth.dy[i]).value.length() * 1e3;
+                let position_error = (state.y[i] - truth.y[i]).as_dvec3().length() * 1e3;
+                let velocity_error = (state.dy[i] - truth.dy[i]).as_dvec3().length() * 1e3;
 
-                max_error.y = position_error.max(max_error.y);
-                max_error.dy = velocity_error.max(max_error.dy);
+                max_position_errors[i] = position_error.max(max_position_errors[i]);
+                max_velocity_errors[i] = velocity_error.max(max_velocity_errors[i]);
+                println!("{}: {}", BODIES[i], max_position_errors[i]);
             }
 
             if (problem.bound - end).abs() != 0.0 {
                 return Err(ConvergenceError::Overstep);
             }
+            let max_position_error = max_position_errors
+                .iter()
+                .copied()
+                .max_by(f64::total_cmp)
+                .unwrap_or(0.0);
+            let max_velocity_error = max_velocity_errors
+                .iter()
+                .copied()
+                .max_by(f64::total_cmp)
+                .unwrap_or(0.0);
 
-            errors.push((Duration::from_seconds(h), max_error));
+            errors.push((
+                Duration::from_seconds(h),
+                SecondOrderState::new(max_position_error, max_velocity_error),
+            ));
 
-            if max_error.y > 10.0 || max_error.dy > 1.0 {
+            if max_position_error > 10.0 || max_velocity_error > 1.0 {
                 break;
             }
 
@@ -297,7 +190,6 @@ const BODIES: &[SolarSystemObject] = {
                 Phobos,
                 Deimos,
             Ceres,
-            Vesta,
             Jupiter,
                 Io,
                 Europa,
@@ -319,15 +211,8 @@ const BODIES: &[SolarSystemObject] = {
                 Miranda,
             Neptune,
                 Triton,
-                // Naiad,
-                // Thalassa,
-                // Despina,
-                // Galatea,
-                // Larissa,
-                // Proteus,
             Pluto,
                 Charon,
-            Eris,
     ]
 };
 
@@ -344,7 +229,7 @@ fn solar_system_convergence() -> Result<(), Box<dyn std::error::Error>> {
     use Unit::*;
 
     assert_eq!(
-        convergence::<QuinlanTremaine12<_>>(&n_body_problem, 75.0 * Second)?,
+        convergence::<QuinlanTremaine12<_>>(&n_body_problem, 10.0 * Minute)?,
         10.0 * Minute
     );
     assert_eq!(

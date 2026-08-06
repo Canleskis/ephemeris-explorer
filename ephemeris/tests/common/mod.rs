@@ -1,9 +1,80 @@
 #![allow(dead_code)]
 
 use std::hash::{Hash, Hasher};
+use std::ops::{Add, Div, Mul, Sub};
 
+use double_double as dd;
 use ftime::{Duration, Epoch};
+use glam::DVec3;
 use horizons_solar_system::{SolarSystem, SolarSystemObject};
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DoubleDVec3 {
+    pub h: DVec3,
+    pub l: DVec3,
+}
+
+impl DoubleDVec3 {
+    #[inline]
+    pub fn new(h: DVec3) -> Self {
+        Self { h, l: DVec3::ZERO }
+    }
+
+    #[inline]
+    pub fn as_dvec3(&self) -> DVec3 {
+        self.h
+    }
+}
+
+impl From<DoubleDVec3> for (DVec3, DVec3) {
+    #[inline]
+    fn from(value: DoubleDVec3) -> Self {
+        (value.h, value.l)
+    }
+}
+
+impl From<(DVec3, DVec3)> for DoubleDVec3 {
+    #[inline]
+    fn from((h, l): (DVec3, DVec3)) -> Self {
+        Self { h, l }
+    }
+}
+
+impl Add for DoubleDVec3 {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self::Output {
+        dd::accurate::dw_add_dw(self.into(), rhs.into()).into()
+    }
+}
+
+impl Sub for DoubleDVec3 {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self::Output {
+        dd::accurate::dw_sub_dw(self.into(), rhs.into()).into()
+    }
+}
+
+impl Mul<f64> for DoubleDVec3 {
+    type Output = Self;
+
+    #[inline]
+    fn mul(self, rhs: f64) -> Self::Output {
+        dd::accurate::dw_mul(self.into(), rhs, DVec3::splat(dd::C), dd::C).into()
+    }
+}
+
+impl Div<f64> for DoubleDVec3 {
+    type Output = Self;
+
+    #[inline]
+    fn div(self, rhs: f64) -> Self::Output {
+        dd::accurate::dw_div(self.into(), rhs, DVec3::splat(dd::C), dd::C).into()
+    }
+}
 
 const CACHE_PATH: &str = "fetch_cache";
 

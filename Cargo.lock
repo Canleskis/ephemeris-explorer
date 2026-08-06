@@ -2243,6 +2243,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "double_double"
+version = "0.1.0"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2442,6 +2449,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "deepsize",
+ "double_double",
  "ftime",
  "glam",
  "horizons_solar_system",
@@ -2463,6 +2471,7 @@ dependencies = [
  "big_space",
  "deepsize",
  "dirs",
+ "double_double",
  "egui_extras",
  "embed-resource",
  "ephemeris",

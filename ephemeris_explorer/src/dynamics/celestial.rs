@@ -3,156 +3,99 @@ use crate::{
     prediction::{PredictionControllerOf, PredictionPropagator, PredictionTarget},
 };
 
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::ops::{Add, Div, Mul, Sub};
 
 use bevy::ecs::query::QueryData;
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use double_double as dd;
 use ephemeris::{
     AccelerationPairedAssign, BoundedTrajectory, ExtendSpline, GravitySource, InterpolationSample,
     InterpolationTolerance, PropagationDirection, QuinticHermite,
 };
+pub use ephemeris::{Backward, Forward};
 use ftime::{Duration, Epoch};
 use integration::prelude::*;
-
-pub use ephemeris::{Backward, Forward};
 use particular::{
     gravity::newtonian::AccelerationPaired,
     prelude::{Mass, Position},
 };
+
 pub type UniformSpline = ephemeris::UniformSpline<DVec3>;
 pub type QuinticHermiteSpline = ephemeris::QuinticHermiteSpline<DVec3>;
 
+// We use the less accurate operations here, since the difference is acceptable (at most a couple
+// kilometers for some major moons after 100 years), whilst the performance is nearly doubled.
+// See the `integrators_comparison` test.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Double<T> {
-    value: T,
-    error: T,
+pub struct DoubleDVec3 {
+    pub h: DVec3,
+    pub l: DVec3,
 }
 
-impl<T> From<Double<T>> for (T, T) {
+impl DoubleDVec3 {
     #[inline]
-    fn from(d: Double<T>) -> Self {
-        (d.value, d.error)
-    }
-}
-
-impl<T> Double<T> {
-    #[inline]
-    pub fn new(value: T) -> Self
-    where
-        T: Default,
-    {
-        Self {
-            value,
-            error: T::default(),
-        }
+    pub fn new(h: DVec3) -> Self {
+        Self { h, l: DVec3::ZERO }
     }
 
     #[inline]
-    pub fn value(&self) -> T
-    where
-        T: Copy,
-    {
-        self.value
-    }
-
-    #[inline]
-    fn two_sum(a: T, b: T) -> Self
-    where
-        T: Add<Output = T> + Sub<Output = T> + Copy,
-    {
-        let value = a + b;
-        let v = value - a;
-        let error = (a - (value - v)) + (b - v);
-
-        Self { value, error }
-    }
-
-    #[inline]
-    fn two_sub(a: T, b: T) -> Self
-    where
-        T: Add<Output = T> + Sub<Output = T> + Neg<Output = T> + Copy,
-    {
-        Self::two_sum(a, -b)
-    }
-
-    #[inline]
-    fn fast_two_sum(a: T, b: T) -> Self
-    where
-        T: Add<Output = T> + Sub<Output = T> + Copy,
-    {
-        let value = a + b;
-        let error = b - (value - a);
-
-        Self { value, error }
+    pub fn as_dvec3(&self) -> DVec3 {
+        self.h
     }
 }
 
-#[inline]
-pub fn fast_two_sum<T>(a: T, b: T) -> Double<T>
-where
-    T: Add<Output = T> + Sub<Output = T> + Copy,
-{
-    // Joldes et al. (2017) Algorithm 1
-    let s = a + b;
-    let z = s - a;
-    Double {
-        value: s,
-        error: b - z,
+impl From<DoubleDVec3> for (DVec3, DVec3) {
+    #[inline]
+    fn from(value: DoubleDVec3) -> Self {
+        (value.h, value.l)
     }
 }
 
-impl<T> Add for Double<T>
-where
-    T: Add<Output = T> + Sub<Output = T> + Copy,
-{
+impl From<(DVec3, DVec3)> for DoubleDVec3 {
+    #[inline]
+    fn from((h, l): (DVec3, DVec3)) -> Self {
+        Self { h, l }
+    }
+}
+
+impl Add for DoubleDVec3 {
     type Output = Self;
 
     #[inline]
     fn add(self, rhs: Self) -> Self::Output {
-        let sum = Double::two_sum(self.value, rhs.value);
-        Double::fast_two_sum(sum.value, (sum.error + self.error) + rhs.error)
+        dd::sloppy::dw_add_dw(self.into(), rhs.into()).into()
     }
 }
 
-impl<T> Sub for Double<T>
-where
-    T: Add<Output = T> + Sub<Output = T> + Neg<Output = T> + Copy,
-{
+impl Sub for DoubleDVec3 {
     type Output = Self;
 
     #[inline]
     fn sub(self, rhs: Self) -> Self::Output {
-        let sum = Double::two_sub(self.value, rhs.value);
-        Double::fast_two_sum(sum.value, (sum.error + self.error) - rhs.error)
+        dd::sloppy::dw_sub_dw(self.into(), rhs.into()).into()
     }
 }
 
-impl Mul<f64> for Double<DVec3> {
-    type Output = Double<DVec3>;
+impl Mul<f64> for DoubleDVec3 {
+    type Output = Self;
 
     #[inline]
     fn mul(self, rhs: f64) -> Self::Output {
-        Double {
-            value: self.value * rhs,
-            error: self.error * rhs,
-        }
+        dd::naive::dw_mul(self.into(), rhs).into()
     }
 }
 
-impl Div<f64> for Double<DVec3> {
-    type Output = Double<DVec3>;
+impl Div<f64> for DoubleDVec3 {
+    type Output = Self;
 
     #[inline]
     fn div(self, rhs: f64) -> Self::Output {
-        Double {
-            value: self.value / rhs,
-            error: self.error / rhs,
-        }
+        dd::naive::dw_div(self.into(), rhs).into()
     }
 }
 
-// Double precision for point-mass is sufficient. Implemented to work with double-double.
+// Double precision for point-mass acceleration is enough. Implemented to work with double-double.
 #[derive(Position, Mass)]
 pub struct PointMass {
     position: DVec3,
@@ -160,7 +103,7 @@ pub struct PointMass {
 }
 
 impl AccelerationPairedAssign for PointMass {
-    type Output = Double<DVec3>;
+    type Output = DoubleDVec3;
 
     #[inline]
     fn acceleration_paired_assign(
@@ -170,20 +113,20 @@ impl AccelerationPairedAssign for PointMass {
         a2: &mut Self::Output,
     ) {
         let (ai, aj) = self.acceleration_paired(other, &0.0);
-        a1.value += ai;
-        a2.value += aj;
+        a1.h += ai;
+        a2.h += aj;
     }
 }
 
 impl GravitySource for PointMass {
-    type Vector = Double<DVec3>;
+    type Vector = DoubleDVec3;
 
     type Scalar = f64;
 
     #[inline]
-    fn new(position: Self::Vector, mu: Self::Scalar) -> Self {
+    fn init(position: Self::Vector, mu: Self::Scalar) -> Self {
         Self {
-            position: position.value,
+            position: position.h,
             mu,
         }
     }
@@ -209,21 +152,21 @@ impl QuinticHermiteSample {
     }
 }
 
-impl InterpolationSample<Double<DVec3>> for QuinticHermiteSample {
+impl InterpolationSample<DoubleDVec3> for QuinticHermiteSample {
     type Trajectory = QuinticHermiteSpline;
 
     #[inline]
     fn new(
         time: Epoch,
-        position: Double<DVec3>,
-        velocity: Double<DVec3>,
-        acceleration: Double<DVec3>,
+        position: DoubleDVec3,
+        velocity: DoubleDVec3,
+        acceleration: DoubleDVec3,
     ) -> Self {
         Self {
             time,
-            position: position.value,
-            velocity: velocity.value,
-            acceleration: acceleration.value,
+            position: position.h,
+            velocity: velocity.h,
+            acceleration: acceleration.h,
         }
     }
 }
@@ -292,7 +235,7 @@ impl InterpolationTolerance<QuinticHermiteSample> for MidDistance {
     }
 }
 
-pub type Vector = Double<DVec3>;
+pub type Vector = DoubleDVec3;
 pub type ForceModel = ephemeris::CachedNewtonianGravity<PointMass>;
 pub type NBodyProblem = ephemeris::NBodyProblem<Vector, ForceModel>;
 pub type SplineInterpolators<D> =

@@ -1,0 +1,10 @@
+[package]
+name = "double_double"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+num-traits = "0.2.19"
+
+[lints]
+workspace = true

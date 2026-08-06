@@ -10,6 +10,7 @@ too_many_arguments = "allow"
 embed-resource = "1"
 
 [dependencies]
+double_double = { workspace = true }
 integration = { workspace = true }
 ftime = { workspace = true, features = ["serde"] }
 ephemeris = { workspace = true }

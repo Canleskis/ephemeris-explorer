@@ -1,3 +1,5 @@
+mod common;
+
 use ephemeris::{
     AccelerationModel, AccelerationPairedAssign, BoundedPropagator, BoundedTrajectory,
     CubicHermiteSplineSolout, EvaluateTrajectory, ExtendSpline, Forward, Frame, GravityModel,
@@ -12,8 +14,6 @@ use particular::{
     gravity::newtonian::{AccelerationAt, AccelerationPaired},
     prelude::{Mass, Position},
 };
-
-mod common;
 
 #[derive(Position, Mass)]
 pub struct PointMass {
@@ -43,7 +43,7 @@ impl GravitySource for PointMass {
     type Scalar = f64;
 
     #[inline]
-    fn new(position: Self::Vector, mu: Self::Scalar) -> Self {
+    fn init(position: Self::Vector, mu: Self::Scalar) -> Self {
         Self { position, mu }
     }
 }

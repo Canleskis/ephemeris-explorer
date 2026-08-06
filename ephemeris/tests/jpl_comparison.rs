@@ -1,3 +1,5 @@
+mod common;
+
 use ephemeris::{
     AccelerationPairedAssign, GravityModel, GravitySource, NBodyProblem, NewtonianGravity,
 };
@@ -6,8 +8,6 @@ use glam::DVec3;
 use horizons_solar_system::{SolarSystem, SolarSystemObject};
 use integration::prelude::*;
 use particular::{gravity::newtonian::AccelerationPaired, prelude::*};
-
-mod common;
 
 #[derive(Position, Mass)]
 pub struct PointMass {
@@ -37,7 +37,7 @@ impl GravitySource for PointMass {
     type Scalar = f64;
 
     #[inline]
-    fn new(position: Self::Vector, mu: Self::Scalar) -> Self {
+    fn init(position: Self::Vector, mu: Self::Scalar) -> Self {
         Self { position, mu }
     }
 }
@@ -116,7 +116,6 @@ fn jpl_comparison() -> Result<(), Box<dyn std::error::Error>> {
         t += h;
 
         if let Some(real_system) = systems.get(&t) {
-            println!("{t}:");
             for (i, body) in BODIES.iter().enumerate() {
                 let real_position = real_system.bodies[i].position;
                 let integrated_position = integrator.problem.state.y[i];
@@ -124,8 +123,6 @@ fn jpl_comparison() -> Result<(), Box<dyn std::error::Error>> {
 
                 let max_error = max_errors.entry(*body).or_insert(0.0);
                 *max_error = (*max_error).max(abs_error);
-
-                println!("  {body}: {abs_error} km error");
             }
         }
 
@@ -141,8 +138,8 @@ fn jpl_comparison() -> Result<(), Box<dyn std::error::Error>> {
     assert!(max_errors[&SolarSystemObject::SaturnBarycenter] < 1.0);
     assert!(max_errors[&SolarSystemObject::UranusBarycenter] < 1.0);
     assert!(max_errors[&SolarSystemObject::NeptuneBarycenter] < 1.0);
-    // The inner-planet absolute errors can reach 100s of km because the model currently only uses
-    // Newtonian point-mass gravity, neglecting oblateness and relativistic corrections.
+    // The inner-planet absolute errors can reach 100s of km because the model only uses Newtonian
+    // point-mass gravity, neglecting oblateness and relativistic corrections.
     assert!(max_errors[&SolarSystemObject::Mercury] < 200.0);
     assert!(max_errors[&SolarSystemObject::Venus] < 100.0);
     assert!(max_errors[&SolarSystemObject::Earth] < 100.0);

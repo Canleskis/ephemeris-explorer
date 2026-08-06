@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    dynamics::{CelestialTrajectory, Double, Forward, PointMass, Trajectory},
+    dynamics::{CelestialTrajectory, DoubleDVec3, Forward, PointMass, Trajectory},
     load::{SolarSystemState, SystemRoot, UniqueAsset},
     prediction::{PredictionControllerOf, PredictionPropagator},
     simulation::SimulationTime,
@@ -203,8 +203,8 @@ fn compute_interpolation_errors(
         .map(|(entity, _, name, trajectory)| {
             (
                 (entity, name, trajectory),
-                Double::new(system.bodies[&**name].position),
-                Double::new(system.bodies[&**name].velocity),
+                DoubleDVec3::new(system.bodies[&**name].position),
+                DoubleDVec3::new(system.bodies[&**name].velocity),
                 system.bodies[&**name].mu,
             )
         })
@@ -227,7 +227,7 @@ fn compute_interpolation_errors(
         for ((entity, _, traj), position) in query.iter().zip(&nbody.state.y) {
             let traj_position = traj.position(epoch).unwrap();
 
-            let error = position.value().distance(traj_position);
+            let error = position.as_dvec3().distance(traj_position);
             errors
                 .entry(*entity)
                 .and_modify(|e| *e = e.max(error))

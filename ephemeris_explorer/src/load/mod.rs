@@ -10,7 +10,7 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, SoiTransitionsAnalysis},
     camera::{CameraController, FollowParameters, Followed, OrbitCamera},
     dynamics::{
-        AbsTol, Backward, Bodies, CelestialTrajectory, Double, ForceModel, Forward,
+        AbsTol, Backward, Bodies, CelestialTrajectory, DoubleDVec3, ForceModel, Forward,
         GravitationalBody, Mu, NBodyProblem, Radius, SoiTransitions, SpacecraftTrajectory,
         SphereOfInfluence, StateVector, Trajectory,
     },
@@ -382,8 +382,8 @@ fn spawn_loaded_bodies(
         });
 
         entities.push(entity.id());
-        state.y.push(Double::new(body.position));
-        state.dy.push(Double::new(body.velocity));
+        state.y.push(DoubleDVec3::new(body.position));
+        state.dy.push(DoubleDVec3::new(body.velocity));
         mus.push(body.mu);
 
         let entity = entity.id();

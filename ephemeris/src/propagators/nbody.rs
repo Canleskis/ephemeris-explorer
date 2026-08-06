@@ -61,7 +61,7 @@ pub trait GravitySource: AccelerationPairedAssign {
 
     type Scalar;
 
-    fn new(position: Self::Vector, mu: Self::Scalar) -> Self;
+    fn init(position: Self::Vector, mu: Self::Scalar) -> Self;
 }
 
 pub struct NewtonianGravity<P: GravitySource> {
@@ -98,11 +98,11 @@ where
     #[inline]
     fn accelerations_into(&mut self, _: Epoch, positions: &[V], accelerations: &mut [V]) {
         for i in 0..positions.len() {
-            let pi = P::new(positions[i], self.gravitational_parameters[i]);
+            let pi = P::init(positions[i], self.gravitational_parameters[i]);
 
             #[expect(clippy::needless_range_loop)]
             for j in (i + 1)..positions.len() {
-                let pj = P::new(positions[j], self.gravitational_parameters[j]);
+                let pj = P::init(positions[j], self.gravitational_parameters[j]);
                 let (accelerations_l, accelerations_r) = accelerations.split_at_mut(j);
                 pi.acceleration_paired_assign(
                     &pj,
