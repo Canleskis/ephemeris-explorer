@@ -198,7 +198,7 @@ pub struct EphemeridesSettings {
     pub interpolation_tolerance: f64,
 }
 
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BurnDe {
     pub start: Epoch,
     pub duration: Duration,
@@ -206,7 +206,7 @@ pub struct BurnDe {
     pub reference: Option<String>,
 }
 
-#[derive(Clone, Asset, TypePath, Debug, serde::Deserialize)]
+#[derive(Clone, Asset, TypePath, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Ship {
     pub name: String,
     pub integrator: IntegrationMethod,
@@ -216,6 +216,7 @@ pub struct Ship {
     pub position: DVec3,
     pub velocity: DVec3,
     pub burns: Vec<BurnDe>,
+    pub context: Option<Vec<String>>,
 }
 
 impl Ship {
@@ -228,6 +229,7 @@ impl Ship {
         position: DVec3,
         velocity: DVec3,
         burns: Vec<BurnDe>,
+        context: Option<Vec<String>>,
     ) -> Self {
         Ship {
             name,
@@ -238,6 +240,7 @@ impl Ship {
             position,
             velocity,
             burns,
+            context,
         }
     }
 }

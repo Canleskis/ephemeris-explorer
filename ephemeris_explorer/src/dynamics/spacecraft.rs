@@ -193,6 +193,11 @@ impl Bodies {
     }
 
     #[inline]
+    pub fn keys(&self) -> bevy::ecs::entity::hash_map::Keys<'_, GravitationalBody> {
+        self.0.keys()
+    }
+
+    #[inline]
     pub fn soi_at_except(&self, t: Epoch, position: DVec3, except: &[Entity]) -> Option<Entity> {
         find_soi(
             self.0
@@ -213,6 +218,21 @@ impl Bodies {
     #[inline]
     pub fn get(&self, entity: Entity) -> Option<&GravitationalBody> {
         self.0.get(&entity)
+    }
+
+    #[inline]
+    pub fn contains(&self, entity: Entity) -> bool {
+        self.0.contains_key(&entity)
+    }
+
+    #[inline]
+    pub fn insert(&mut self, entity: Entity, body: GravitationalBody) -> Option<GravitationalBody> {
+        self.0.insert(entity, body)
+    }
+
+    #[inline]
+    pub fn remove(&mut self, entity: Entity) -> Option<GravitationalBody> {
+        self.0.remove(&entity)
     }
 
     #[inline]

@@ -1,8 +1,9 @@
 use crate::{
     dynamics::{
         AbsTol, BaseSpacecraftPropagator, Bodies, ConstantThrust, CubicHermiteSpline,
-        PredictionTrajectory, ReferenceFrame, SpacecraftPropagator, SpacecraftSolout,
-        SpacecraftTrajectory, StateVector, Timeline, Trajectory,
+        GravitationalBody, Mu, PredictionTrajectory, Radius, ReferenceFrame, SpacecraftPropagator,
+        SpacecraftSolout, SpacecraftTrajectory, SphereOfInfluence, StateVector, Timeline,
+        Trajectory,
     },
     prediction::{
         InPredictionWith, PredictionPropagator, PredictionSystems, PredictionTarget,
@@ -217,6 +218,10 @@ impl FlightPlan {
             context,
         }
     }
+    #[inline]
+    pub fn bodies(&self) -> &Bodies {
+        &self.context
+    }
 
     #[inline]
     pub fn compute_overlaps(&mut self) {
@@ -275,7 +280,7 @@ impl FlightPlan {
         //
         // We want to restart from the latest possible time that is unaffected by the changes.
         // Specifically:
-        // 1. If an integration parameter changed, we recompute the entire propagation.
+        // 1. If a parameter or the context changed, we recompute the entire propagation.
         // 2. Otherwise, we find the first point where the new timeline differs from the old one. We
         //    restart from the last common event before this difference.
         // 3. If no change was previously detected, we restart from the last event preceding the end
@@ -283,6 +288,8 @@ impl FlightPlan {
         let restart_epoch = if &self.method != previous
             || &self.parameters.tol != previous.tolerance()
             || self.parameters.n_max as usize != previous.max_iterations()
+            || !(self.context.keys().all(|e| previous.context().contains(*e))
+                && previous.context().keys().all(|e| self.context.contains(*e)))
         {
             trajectory.start()
         } else {
@@ -303,6 +310,34 @@ impl FlightPlan {
     }
 }
 
+// Bodies are currently immutable (except for their trajectories, but they are behind a shared reference).
+#[derive(Clone, Resource)]
+pub struct GlobalBodies(Bodies);
+
+impl GlobalBodies {
+    #[inline]
+    pub fn bodies(&self) -> &Bodies {
+        &self.0
+    }
+}
+
+fn add_to_global_context(
+    trigger: On<Add, Trajectory>,
+    query: Query<(&Trajectory, &Mu, &Radius, &SphereOfInfluence)>,
+    mut global: ResMut<GlobalBodies>,
+) {
+    if let Ok((trajectory, mu, radius, soi)) = query.get(trigger.entity) {
+        global.0.0.insert(
+            trigger.entity,
+            GravitationalBody::new(trajectory.clone(), *mu, *radius, *soi),
+        );
+    }
+}
+
+fn remove_from_global_context(trigger: On<Remove, Trajectory>, mut global: ResMut<GlobalBodies>) {
+    global.0.0.remove(&trigger.entity);
+}
+
 #[derive(Component)]
 pub struct FlightPlanDependency;
 
@@ -315,10 +350,14 @@ pub struct FlightPlanPlugin;
 
 impl Plugin for FlightPlanPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(apply_flight_plan).add_systems(
-            PreUpdate,
-            trigger_on_trajectory_updates.after(PredictionSystems),
-        );
+        app.insert_resource(GlobalBodies(Bodies(Default::default())))
+            .add_observer(add_to_global_context)
+            .add_observer(remove_from_global_context)
+            .add_observer(apply_flight_plan)
+            .add_systems(
+                PreUpdate,
+                trigger_on_trajectory_updates.after(PredictionSystems),
+            );
     }
 }
 

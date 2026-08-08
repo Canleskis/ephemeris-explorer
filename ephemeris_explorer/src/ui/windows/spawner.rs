@@ -3,10 +3,10 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
     dynamics::{
-        Apsides, Bodies, CubicHermiteSpline, GravitationalBody, Mu, Radius, SpacecraftPropagator,
-        SpacecraftTrajectory, SphereOfInfluence, Timeline, Trajectory,
+        Apsides, CubicHermiteSpline, SpacecraftPropagator, SpacecraftTrajectory, Timeline,
+        Trajectory,
     },
-    flight_plan::IntegrationMethod,
+    flight_plan::{GlobalBodies, IntegrationMethod},
     floating_origin::BigGridBundle,
     load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
     prediction::{
@@ -87,26 +87,17 @@ impl ShipSpawnerWindow {
         sim_time: Res<SimulationTime>,
         window: Option<ResMut<Self>>,
         root: Single<Entity, With<SystemRoot>>,
-        mut query_hierarchy: Query<(Entity, &Name, Option<&Satellites>), Without<ShipSpawnerData>>,
+        query_hierarchy: Query<(Entity, &Name, Option<&Satellites>), Without<ShipSpawnerData>>,
         mut query_preview: Query<(
             Entity,
             &mut ShipSpawnerData,
             Option<(&mut Name, &PredictionPropagator<SpacecraftTrajectory>)>,
         )>,
         query_trajectory: Query<&Trajectory>,
-        query_context: Query<(Entity, &Trajectory, &Mu, &Radius, &SphereOfInfluence)>,
+        context: Res<GlobalBodies>,
         followed: Res<Followed>,
     ) {
         let Ok(ctx) = contexts.ctx_mut() else { return };
-
-        let new_context = || {
-            query_context
-                .iter()
-                .map(|(e, traj, mu, radius, soi)| {
-                    (e, GravitationalBody::new(traj.clone(), *mu, *radius, *soi))
-                })
-                .collect()
-        };
 
         let Some(mut window) = window else { return };
 
@@ -158,7 +149,7 @@ impl ShipSpawnerWindow {
                     data.start,
                     sv,
                     INITIAL_ADAPTIVE_PARAMS,
-                    Bodies(new_context()),
+                    context.bodies().clone(),
                     Timeline::default(),
                 ),
                 PredictionController::<SpacecraftTrajectory>::new(entity),
@@ -234,7 +225,7 @@ impl ShipSpawnerWindow {
 
                 let name = data
                     .reference
-                    .map(|entity| get_name(entity, &query_hierarchy.transmute_lens().query()))
+                    .map(|entity| get_name(entity, &query_hierarchy))
                     .unwrap_or_else(|| "None".to_string());
                 egui::ComboBox::from_id_salt("Reference")
                     .wrap_mode(egui::TextWrapMode::Extend)
@@ -377,6 +368,7 @@ impl ShipSpawnerWindow {
                         sv.position,
                         sv.velocity,
                         Vec::new(),
+                        None,
                     )));
 
                     commands.remove_resource::<Self>();

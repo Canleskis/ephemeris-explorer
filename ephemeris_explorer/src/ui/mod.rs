@@ -6,9 +6,9 @@ pub use fixed::*;
 pub use windows::*;
 pub use world::*;
 
-use crate::{MainState, load::LoadSolarSystem};
+use crate::{MainState, analysis::Satellites, load::LoadSolarSystem};
 
-use bevy::prelude::*;
+use bevy::{ecs::query::QueryFilter, prelude::*};
 use bevy_egui::{EguiContext, EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
 use ftime::{Duration, Epoch};
@@ -255,12 +255,22 @@ where
 }
 
 #[inline]
-fn get_name(entity: Entity, query_name: &Query<&Name>) -> String {
-    query_name
+fn try_get_name<F: QueryFilter>(
+    entity: Entity,
+    query_hierarchy: &Query<(Entity, &Name, Option<&Satellites>), F>,
+) -> Option<String> {
+    query_hierarchy
         .get(entity)
         .ok()
-        .map(|name| name.to_string())
-        .unwrap_or_else(|| "Unknown".to_string())
+        .map(|(_, name, _)| name.to_string())
+}
+
+#[inline]
+fn get_name<F: QueryFilter>(
+    entity: Entity,
+    query_hierarchy: &Query<(Entity, &Name, Option<&Satellites>), F>,
+) -> String {
+    try_get_name(entity, query_hierarchy).unwrap_or_else(|| "Unknown".to_string())
 }
 
 fn show_tree<T, I, IdSource>(

@@ -10,11 +10,12 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, SoiTransitionsAnalysis},
     camera::{CameraController, FollowParameters, Followed, OrbitCamera},
     dynamics::{
-        AbsTol, Backward, Bodies, CelestialTrajectory, DoubleDVec3, ForceModel, Forward,
-        GravitationalBody, Mu, NBodyProblem, Radius, SoiTransitions, SpacecraftTrajectory,
-        SphereOfInfluence, StateVector, Trajectory,
+        AbsTol, Backward, Bodies, CelestialTrajectory, DoubleDVec3, ForceModel, Forward, Mu,
+        NBodyProblem, Radius, SoiTransitions, SpacecraftTrajectory, SphereOfInfluence, StateVector,
     },
-    flight_plan::{Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency},
+    flight_plan::{
+        Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency, GlobalBodies,
+    },
     floating_origin::{BigGridBundle, BigSpaceRootBundle, CellCoord, FloatingOrigin},
     prediction::{
         PredictionController, PredictionControllerOf, PredictionPropagator, PredictionTarget,
@@ -27,10 +28,10 @@ use crate::{
     ui::{Id, Labelled, PlotBound},
 };
 
-use bevy::prelude::*;
 use bevy::{
     asset::RecursiveDependencyLoadState, core_pipeline::Skybox, platform::hash::FixedState,
 };
+use bevy::{ecs::query::QueryFilter, prelude::*};
 use ephemeris::GravityModel;
 use ftime::{Duration, Epoch};
 use std::hash::{BuildHasher, Hash};
@@ -447,7 +448,10 @@ impl SpawnShip {
     }
 }
 
-pub fn find_by_name(query: &Query<(Entity, &Name), With<Mu>>, reference: &str) -> Option<Entity> {
+pub fn find_by_name<F: QueryFilter>(
+    query: &Query<(Entity, &Name), F>,
+    reference: &str,
+) -> Option<Entity> {
     query
         .iter()
         .find(|(_, name)| name.as_str() == reference)
@@ -478,23 +482,14 @@ fn spawn_ship(
     trigger: On<SpawnShip>,
     mut commands: Commands,
     query_name: Query<(Entity, &Name), With<Mu>>,
-    query_context: Query<(Entity, &Trajectory, &Mu, &Radius, &SphereOfInfluence)>,
     query_ids: Query<&Id>,
     root: Single<Entity, With<SystemRoot>>,
+    global_context: Res<GlobalBodies>,
     mut errors: ResMut<LoadingErrors>,
 ) {
     let ship = &trigger.event().ship;
 
     let radius = 0.01;
-
-    let bodies = Bodies(
-        query_context
-            .iter()
-            .map(|(e, traj, mu, radius, soi)| {
-                (e, GravitationalBody::new(traj.clone(), *mu, *radius, *soi))
-            })
-            .collect(),
-    );
 
     let mut entity = match trigger.event().entity {
         Some(entity) => commands.entity(entity),
@@ -524,7 +519,7 @@ fn spawn_ship(
         })
         .collect();
 
-    let mapped_burns = match mapped_burns {
+    let burns = match mapped_burns {
         Ok(burns) => burns,
         Err(missing) => {
             errors.push(LoadingError::MissingReference {
@@ -533,6 +528,29 @@ fn spawn_ship(
             });
             return;
         }
+    };
+
+    let mapped_context = ship.context.as_ref().map(|ship_context| {
+        ship_context
+            .iter()
+            .map(|name| {
+                find_by_name(&query_name, name)
+                    .and_then(|e| Some((e, global_context.bodies().get(e)?.clone())))
+                    .ok_or(name.as_str())
+            })
+            .collect()
+    });
+
+    let context = match mapped_context {
+        Some(Ok(context)) => Bodies(context),
+        Some(Err(missing)) => {
+            errors.push(LoadingError::MissingReference {
+                ship: ship.name.to_string(),
+                reference: missing.to_string(),
+            });
+            return;
+        }
+        None => global_context.bodies().clone(),
     };
 
     let hash = FixedState::default().hash_one(&ship.name);
@@ -554,8 +572,8 @@ fn spawn_ship(
             },
             ..INITIAL_ADAPTIVE_PARAMS
         },
-        mapped_burns,
-        bodies,
+        burns,
+        context,
     );
 
     let propagator = PredictionPropagator::<SpacecraftTrajectory>(

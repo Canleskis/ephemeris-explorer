@@ -1,10 +1,11 @@
 use crate::{
     analysis::{OrbitPlotConfig, Satellites},
     camera::Followed,
+    flight_plan::FlightPlan,
     load::SystemRoot,
     ouf_of_bounds::OutOfBounds,
     selection::{Selectable, Selected},
-    ui::show_tree,
+    ui::{FlightPlanWindow, show_tree},
 };
 
 use bevy::prelude::*;
@@ -17,6 +18,7 @@ pub fn solar_system_hierarchy(
     query: Query<(Entity, &Name, Option<&Satellites>), Without<OutOfBounds>>,
     query_inactive: Query<(Entity, &Name), With<OutOfBounds>>,
     mut query_plot: Query<&mut OrbitPlotConfig>,
+    mut query_flight_plans: Query<&mut FlightPlanWindow, With<FlightPlan>>,
     query_selectable: Query<&Selectable>,
     root: Single<Entity, With<SystemRoot>>,
 ) {
@@ -75,6 +77,14 @@ pub fn solar_system_hierarchy(
                                 }
                             });
 
+                            ui.scope(|ui| {
+                                if let Ok(mut state) = query_flight_plans.get_mut(entity)
+                                    && ui.selectable_label(state.open, "✈").clicked()
+                                {
+                                    state.open = !state.open
+                                }
+                            });
+
                             if query_selectable.contains(entity) {
                                 let is_selected = **selected == Some(entity);
                                 if ui.selectable_label(is_selected, name.as_str()).clicked() {
@@ -130,6 +140,14 @@ pub fn solar_system_hierarchy(
 
                                 if ui.selectable_label(plot_config.enabled, "○").clicked() {
                                     plot_config.enabled = !plot_config.enabled;
+                                }
+                            });
+
+                            ui.scope(|ui| {
+                                if let Ok(mut state) = query_flight_plans.get_mut(entity)
+                                    && ui.selectable_label(state.open, "✈").clicked()
+                                {
+                                    state.open = !state.open
                                 }
                             });
 
