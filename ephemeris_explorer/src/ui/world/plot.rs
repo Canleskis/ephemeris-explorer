@@ -293,6 +293,10 @@ pub fn compute_plot_points_parallel(
                 });
             });
 
+            if plot.start >= plot.end {
+                return;
+            }
+
             let Ok(trajectory) = query_traj.get(source.entity) else {
                 return;
             };
@@ -313,8 +317,13 @@ pub fn compute_plot_points_parallel(
                 let start = relative.start();
                 let end = relative.end();
 
+                // No overlap between trajectory and reference.
+                if start >= end {
+                    return;
+                }
+
                 let current = sim_time.current();
-                let current_clamped = current.clamp(relative.start(), relative.end());
+                let current_clamped = current.clamp(start, end);
 
                 let mut min = plot.start.clamp(start, end);
                 let mut max = plot.end.clamp(start, end);
@@ -322,10 +331,6 @@ pub fn compute_plot_points_parallel(
                     PlotBound::Start => min = min.max(current_clamped),
                     PlotBound::End => max = max.min(current_clamped),
                     PlotBound::None => (),
-                }
-
-                if min >= max {
-                    return;
                 }
 
                 let translation = StateVector::from_position(
