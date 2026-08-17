@@ -387,12 +387,11 @@ fn apply_flight_plan(
         error!("could not restart propagation after the flight plan changed");
         return;
     };
-    let restart_epoch = propagator.time();
 
     commands.trigger(
         SpacecraftTrajectory::extend(
             entity,
-            flight_plan.end - restart_epoch,
+            flight_plan.end - propagator.time(),
             flight_plan.synchronisation,
         )
         .with_propagator(propagator),

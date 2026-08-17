@@ -94,7 +94,7 @@ impl ShipSpawnerWindow {
             Option<(&mut Name, &PredictionPropagator<SpacecraftTrajectory>)>,
         )>,
         query_trajectory: Query<&Trajectory>,
-        context: Res<GlobalBodies>,
+        global: Res<GlobalBodies>,
         followed: Res<Followed>,
     ) {
         let Ok(ctx) = contexts.ctx_mut() else { return };
@@ -149,7 +149,7 @@ impl ShipSpawnerWindow {
                     data.start,
                     sv,
                     INITIAL_ADAPTIVE_PARAMS,
-                    context.bodies().clone(),
+                    global.bodies().clone(),
                     Timeline::default(),
                 ),
                 PredictionController::<SpacecraftTrajectory>::new(entity),

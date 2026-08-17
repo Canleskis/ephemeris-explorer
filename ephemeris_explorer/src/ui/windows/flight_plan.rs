@@ -99,7 +99,7 @@ impl FlightPlanWindow {
             &mut OrbitTarget,
             &mut Self,
         )>,
-        context: Res<GlobalBodies>,
+        global: Res<GlobalBodies>,
         root: Single<Entity, With<SystemRoot>>,
     ) {
         for (entity, trajectory, parent, mut fp, propagator, mut target, mut window) in &mut query {
@@ -138,7 +138,7 @@ impl FlightPlanWindow {
                                             ),
                                         })
                                         .collect(),
-                                    if context.bodies().keys().any(|e| !fp.context.contains(*e)) {
+                                    if global.bodies().keys().any(|e| !fp.context.contains(*e)) {
                                         Some(
                                             fp.context
                                                 .keys()
@@ -261,7 +261,7 @@ impl FlightPlanWindow {
                             if ui.checkbox(&mut window.context_all, "All").changed()
                                 && window.context_all
                             {
-                                fp.context = context.bodies().clone();
+                                fp.context = global.bodies().clone();
                             }
 
                             ui.separator();
@@ -280,7 +280,7 @@ impl FlightPlanWindow {
                                                 let children = || {
                                                     children.map(|c| {
                                                         c.iter().filter(|e| {
-                                                            context.bodies().contains(*e)
+                                                            global.bodies().contains(*e)
                                                         })
                                                     })
                                                 };
@@ -331,7 +331,7 @@ impl FlightPlanWindow {
                                                             } else {
                                                                 fp.context.insert(
                                                                     entity,
-                                                                    context
+                                                                    global
                                                                         .bodies()
                                                                         .get(entity)
                                                                         .unwrap()
@@ -344,7 +344,7 @@ impl FlightPlanWindow {
                                                     }
                                                 });
 
-                                                if context.bodies().contains(entity) {
+                                                if global.bodies().contains(entity) {
                                                     let checked = fp.context.contains(entity);
                                                     if ui
                                                         .selectable_label(checked, name.as_str())
@@ -356,7 +356,7 @@ impl FlightPlanWindow {
                                                             }
                                                             Entry::Vacant(entry) => {
                                                                 entry.insert(
-                                                                    context
+                                                                    global
                                                                         .bodies()
                                                                         .get(entity)
                                                                         .unwrap()

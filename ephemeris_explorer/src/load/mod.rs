@@ -484,7 +484,7 @@ fn spawn_ship(
     query_name: Query<(Entity, &Name), With<Mu>>,
     query_ids: Query<&Id>,
     root: Single<Entity, With<SystemRoot>>,
-    global_context: Res<GlobalBodies>,
+    global: Res<GlobalBodies>,
     mut errors: ResMut<LoadingErrors>,
 ) {
     let ship = &trigger.event().ship;
@@ -535,7 +535,7 @@ fn spawn_ship(
             .iter()
             .map(|name| {
                 find_by_name(&query_name, name)
-                    .and_then(|e| Some((e, global_context.bodies().get(e)?.clone())))
+                    .and_then(|e| Some((e, global.bodies().get(e)?.clone())))
                     .ok_or(name.as_str())
             })
             .collect()
@@ -550,7 +550,7 @@ fn spawn_ship(
             });
             return;
         }
-        None => global_context.bodies().clone(),
+        None => global.bodies().clone(),
     };
 
     let hash = FixedState::default().hash_one(&ship.name);
