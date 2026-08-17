@@ -166,6 +166,7 @@ impl FlightPlanWindow {
                     });
 
                     egui::Window::new("Confirm deletion")
+                        .id(format!("{name} deletion").into())
                         .resizable(false)
                         .collapsible(false)
                         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
