@@ -667,7 +667,7 @@ macro_rules! spacecraft_propagator {
 
         impl SpacecraftPropagator {
             #[inline]
-            pub fn new(
+            pub fn verner87(
                 initial_time: Epoch,
                 initial_state: StateVector,
                 params: AdaptiveMethodParams<f64, AbsTol, f64>,
@@ -825,7 +825,7 @@ impl SpacecraftTrajectory {
         context: Bodies,
         timeline: Timeline,
     ) -> PredictionPropagator<Self> {
-        PredictionPropagator(SpacecraftPropagator::new(
+        PredictionPropagator(SpacecraftPropagator::verner87(
             initial_time,
             initial_state,
             params,

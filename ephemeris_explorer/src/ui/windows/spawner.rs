@@ -403,7 +403,7 @@ impl ShipSpawnerWindow {
 
             commands.trigger(SpacecraftTrajectory::new(
                 preview,
-                SpacecraftPropagator::new(
+                SpacecraftPropagator::verner87(
                     data.start,
                     sv,
                     INITIAL_ADAPTIVE_PARAMS,
