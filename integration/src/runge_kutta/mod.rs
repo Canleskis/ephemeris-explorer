@@ -11,7 +11,7 @@ use crate::{
     Method, NewMethod, StepError,
     problem::{EvalFailed, Problem},
 };
-use num_traits::{Inv, One, Pow, bounds::UpperBounded, clamp, clamp_max};
+use num_traits::{Inv, One, Pow, bounds::UpperBounded, clamp, clamp_max, clamp_min};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 pub trait RKCoefficients<P> {
@@ -106,12 +106,12 @@ where
 impl<P, R> Integrator<P> for FixedRungeKuttaIntegrator<R, P::Time>
 where
     P: Problem,
-    P::Time: Add<Output = P::Time> + PartialOrd + Copy,
+    P::Time: Add<Output = P::Time> + PartialOrd + Default + Copy,
     R: RKInstance<P>,
 {
     #[inline]
     fn advance(&mut self, problem: &mut P) -> Result<(), StepError> {
-        if problem.as_ref().time >= problem.as_ref().bound {
+        if problem.as_ref().is_bound_reached(self.h) {
             return Err(StepError::BoundReached);
         }
 
@@ -232,12 +232,17 @@ impl<T, U> IController<T, U> {
             + From<u16>
             + One
             + Copy,
-        T: Mul<U, Output = T> + PartialOrd + Copy,
+        T: Mul<U, Output = T> + Neg<Output = T> + PartialOrd + Default + Copy,
     {
         let k = U::from(order);
         let m = self.fac * err.pow(-k.inv());
         let nh = *h * clamp(m, self.fac_min, self.fac_max);
-        *h = clamp_max(nh, self.h_max);
+
+        *h = if nh >= T::default() {
+            clamp_max(nh, self.h_max)
+        } else {
+            clamp_min(nh, -self.h_max)
+        };
 
         err <= U::one()
     }
@@ -396,8 +401,13 @@ impl<T, R, Tol, U, V> AdaptiveRKState for AdaptiveRungeKuttaIntegrator<T, R, Tol
 impl<R, P, Tol, U> Integrator<P> for AdaptiveRungeKuttaIntegrator<R, P::Time, Tol, U>
 where
     P: Problem,
-    P::Time: Add<Output = P::Time> + Sub<Output = P::Time> + PartialOrd + Copy,
-    P::Time: Mul<U, Output = P::Time>,
+    P::Time: Add<Output = P::Time>
+        + Sub<Output = P::Time>
+        + Mul<U, Output = P::Time>
+        + Neg<Output = P::Time>
+        + PartialOrd
+        + Default
+        + Copy,
     P::State: Clone,
     R: RKInstance<P> + RKEmbedded<P::Time, State = P::State>,
     Tol: Tolerance<P::State, Output = U> + Clone,
@@ -412,6 +422,10 @@ where
 {
     #[inline]
     fn advance(&mut self, problem: &mut P) -> Result<(), StepError> {
+        if problem.as_ref().is_bound_reached(self.next_h) {
+            return Err(StepError::BoundReached);
+        }
+
         self.prev.store(problem, &self.frk.rk, &self.tol);
 
         loop {
@@ -419,9 +433,7 @@ where
                 return Err(StepError::MaxIterationsReached);
             }
 
-            if problem.as_ref().time + self.next_h > problem.as_ref().bound {
-                self.next_h = problem.as_ref().bound - problem.as_ref().time;
-            }
+            self.next_h = problem.as_ref().clamped_step(self.next_h);
 
             self.frk.h = self.next_h;
             self.frk.advance(problem)?;

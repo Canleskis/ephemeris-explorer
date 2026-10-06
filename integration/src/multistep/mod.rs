@@ -194,13 +194,13 @@ where
 impl<P, L, S> Integrator<P> for LinearMultistepIntegrator<L, P::Time, S>
 where
     P: Problem,
-    P::Time: Add<Output = P::Time> + PartialOrd + Copy,
+    P::Time: Add<Output = P::Time> + PartialOrd + Default + Copy,
     L: LMInstance<P>,
     S: IntegratorState + Integrator<P>,
 {
     #[inline]
     fn advance(&mut self, problem: &mut P) -> Result<(), StepError> {
-        if problem.as_ref().time >= problem.as_ref().bound {
+        if problem.as_ref().is_bound_reached(self.h) {
             return Err(StepError::BoundReached);
         }
 

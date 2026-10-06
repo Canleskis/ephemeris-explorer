@@ -8,8 +8,6 @@ use ftime::{Duration, Epoch};
 use integration::Solout;
 
 pub trait PropagationDirection {
-    fn signed_delta(&self) -> Duration;
-
     fn offset(to: Epoch, duration: Duration) -> Epoch;
 
     fn distance(from: Epoch, to: Epoch) -> Duration;
@@ -21,30 +19,9 @@ pub trait PropagationDirection {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Forward {
-    delta: Duration,
-}
-
-impl From<Duration> for Forward {
-    #[inline]
-    fn from(value: Duration) -> Self {
-        Self::new(value)
-    }
-}
-
-impl Forward {
-    #[inline]
-    pub fn new(delta: Duration) -> Self {
-        Self { delta: delta.abs() }
-    }
-}
+pub struct Forward;
 
 impl PropagationDirection for Forward {
-    #[inline]
-    fn signed_delta(&self) -> Duration {
-        self.delta
-    }
-
     #[inline]
     fn offset(to: Epoch, duration: Duration) -> Epoch {
         to + duration
@@ -57,30 +34,9 @@ impl PropagationDirection for Forward {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Backward {
-    delta: Duration,
-}
-
-impl From<Duration> for Backward {
-    #[inline]
-    fn from(value: Duration) -> Self {
-        Self::new(value)
-    }
-}
-
-impl Backward {
-    #[inline]
-    pub fn new(delta: Duration) -> Self {
-        Self { delta: delta.abs() }
-    }
-}
+pub struct Backward;
 
 impl PropagationDirection for Backward {
-    #[inline]
-    fn signed_delta(&self) -> Duration {
-        -self.delta
-    }
-
     #[inline]
     fn offset(to: Epoch, duration: Duration) -> Epoch {
         to - duration

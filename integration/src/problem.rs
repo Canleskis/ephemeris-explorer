@@ -16,6 +16,36 @@ impl<T, V, ODE> ODEProblem<T, V, ODE> {
             ode,
         }
     }
+
+    #[inline]
+    pub fn is_bound_reached(&self, h: T) -> bool
+    where
+        T: PartialOrd + Default,
+    {
+        if h >= T::default() {
+            self.time >= self.bound
+        } else {
+            self.time <= self.bound
+        }
+    }
+
+    #[inline]
+    pub fn clamped_step(&self, h: T) -> T
+    where
+        T: std::ops::Add<Output = T> + std::ops::Sub<Output = T> + PartialOrd + Default + Copy,
+    {
+        let next = self.time + h;
+        let overshoots = if h >= T::default() {
+            next > self.bound
+        } else {
+            next < self.bound
+        };
+        if overshoots {
+            self.bound - self.time
+        } else {
+            h
+        }
+    }
 }
 
 pub trait State: Sized {

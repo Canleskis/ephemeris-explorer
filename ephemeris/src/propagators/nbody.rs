@@ -225,17 +225,14 @@ where
     M: Method<NBodyProblem<V, F>>,
 {
     #[inline]
-    pub fn new<D>(direction: D, problem: NBodyProblem<V, F>) -> Self
+    pub fn new<D>(h: Duration, problem: NBodyProblem<V, F>) -> Self
     where
         D: PropagationDirection,
         M: NewMethod<FixedMethodParams<f64>>,
         M::Integrator: Integrator<NBodyProblem<V, F>>,
     {
         Self {
-            integration: M::new(FixedMethodParams::new(
-                direction.signed_delta().as_seconds(),
-            ))
-            .integrate(problem),
+            integration: M::new(FixedMethodParams::new(h.as_seconds())).integrate(problem),
         }
     }
 
@@ -256,13 +253,13 @@ where
     O: Solout<NBodyProblem<V, F>>,
 {
     #[inline]
-    pub fn new_solout<D>(direction: D, problem: NBodyProblem<V, F>, solout: O) -> Self
+    pub fn new_solout<D>(h: Duration, problem: NBodyProblem<V, F>, solout: O) -> Self
     where
         D: PropagationDirection,
         M: NewMethod<FixedMethodParams<f64>>,
         M::Integrator: Integrator<NBodyProblem<V, F>>,
     {
-        NBodyPropagator::new(direction, problem).with_solout(solout)
+        NBodyPropagator::new::<D>(h, problem).with_solout(solout)
     }
 
     #[inline]

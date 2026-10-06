@@ -254,7 +254,7 @@ impl<D> CelestialTrajectory<D>
 where
     CelestialTrajectory<D>: PredictionTarget<Propagator = NBodyPropagator<D>>,
     SplineInterpolators<D>: Solout<NBodyProblem>,
-    D: From<Duration> + PropagationDirection,
+    D: PropagationDirection,
 {
     #[inline]
     pub fn new_propagator(
@@ -263,7 +263,7 @@ where
         mut problem: NBodyProblem,
     ) -> PredictionPropagator<Self> {
         let solout = SplineInterpolators::new(&mut problem, MidDistance::new(tolerance));
-        PredictionPropagator(NBodyPropagator::new_solout(D::from(delta), problem, solout))
+        PredictionPropagator(NBodyPropagator::new_solout::<D>(delta, problem, solout))
     }
 
     #[inline]

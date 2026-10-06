@@ -395,17 +395,21 @@ fn spawn_loaded_bodies(
 
     let dt = ephemerides.dt;
     let tolerance = ephemerides.interpolation_tolerance;
-    let problem = NBodyProblem::new(
+    let fw_problem = NBodyProblem::new(
         system.epoch.as_offset_seconds(),
         f64::INFINITY,
         state,
         GravityModel::new(ForceModel::new(mus)),
     );
+    let bw_problem = NBodyProblem {
+        bound: -fw_problem.bound,
+        ..fw_problem.clone()
+    };
 
     commands.entity(root).insert((
-        CelestialTrajectory::<Forward>::new_propagator(dt, tolerance, problem.clone()),
+        CelestialTrajectory::<Forward>::new_propagator(dt, tolerance, fw_problem),
         CelestialTrajectory::<Forward>::new_controller_of(entities.clone()),
-        CelestialTrajectory::<Backward>::new_propagator(dt, tolerance, problem),
+        CelestialTrajectory::<Backward>::new_propagator(-dt, tolerance, bw_problem),
         CelestialTrajectory::<Backward>::new_controller_of(entities),
     ));
 

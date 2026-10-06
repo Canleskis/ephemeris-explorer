@@ -43,7 +43,7 @@
 //! let expected_y = (-5.0_f64).exp();
 //!
 //! let method = RK4::new(FixedMethodParams::new(0.001));
-//! let mut integration = method.integrate(problem);
+//! let integration = method.integrate(problem).with_solout(EveryStepSolout);
 //!
 //! let (t_end, [y_end]) = integration.solve()?;
 //! println!("t = {t_end}, y = {y_end}");
@@ -80,7 +80,7 @@
 //!     .h_max(0.2);
 //!
 //! let method = DormandPrince54::new(params);
-//! let mut integration = method.integrate(problem);
+//! let integration = method.integrate(problem).with_solout(EveryStepSolout);
 //!
 //! let (t_end, [y_end]) = integration.solve()?;
 //! println!("t = {t_end}, y = {y_end}");
@@ -133,7 +133,7 @@ pub mod runge_kutta;
 pub mod methods;
 
 use crate::{problem::Problem, ratio::Ratio};
-use num_traits::{bounds::UpperBounded, real::Real};
+use num_traits::{AsPrimitive, bounds::UpperBounded, real::Real};
 use std::ops::{Div, Sub};
 
 pub trait Method<P> {
@@ -231,6 +231,8 @@ impl<T, Tol, U> AdaptiveMethodParams<T, Tol, U> {
         )
     }
 
+    /// The initial step size defaults to the largest positive value, which integrates forward.
+    /// Use [`h_init`](Self::h_init) with a negative value to integrate backward.
     #[inline]
     pub fn new(tol: Tol, n_max: u32) -> Self
     where
@@ -292,10 +294,10 @@ pub trait DivCeil {
     fn div_ceil(self, rhs: Self) -> usize;
 }
 
-impl<T: Real> DivCeil for T {
+impl<T: Real + AsPrimitive<usize>> DivCeil for T {
     #[inline]
     fn div_ceil(self, rhs: Self) -> usize {
-        (self / rhs).ceil().to_usize().unwrap()
+        (self / rhs).ceil().as_()
     }
 }
 
@@ -360,17 +362,12 @@ pub trait Integrator<P> {
     fn advance(&mut self, problem: &mut P) -> Result<(), StepError>;
 
     #[inline]
-    fn advance_to_bound(&mut self, problem: &mut P) -> Result<(), StepError>
-    where
-        P: Problem,
-        P::Time: PartialOrd,
-    {
-        // If the bound is already reached, `advance` would return an error and so we don't need to
-        // check it beforehand.
+    fn advance_to_bound(&mut self, problem: &mut P) -> Result<(), StepError> {
         loop {
-            self.advance(problem)?;
-            if problem.as_ref().time >= problem.as_ref().bound {
-                return Ok(());
+            match self.advance(problem) {
+                Ok(()) => {}
+                Err(StepError::BoundReached) => return Ok(()),
+                Err(err) => return Err(err),
             }
         }
     }
@@ -473,7 +470,7 @@ where
     #[inline]
     pub fn step_count_until_bound_hint(&self) -> (usize, Option<usize>) {
         self.integrator
-            .step_count_until_bound_hint(self.problem.as_ref().time - self.problem.as_ref().bound)
+            .step_count_until_bound_hint(self.problem.as_ref().bound - self.problem.as_ref().time)
     }
 
     #[inline]
@@ -483,7 +480,7 @@ where
         M::Integrator: FixedIntegrator<Time = P::Time>,
     {
         self.integrator
-            .step_count_until_bound(self.problem.as_ref().time - self.problem.as_ref().bound)
+            .step_count_until_bound(self.problem.as_ref().bound - self.problem.as_ref().time)
     }
 }
 
@@ -502,16 +499,17 @@ where
             .advance_solution(&mut self.problem, &mut self.solout, &mut self.solution)
     }
 
+    /// Advances until the bound is reached or the solout requests to stop.
     #[inline]
     pub fn advance_to_bound(&mut self) -> Result<(), StepError>
     where
-        P: Problem,
-        P::Time: PartialOrd,
         O: Solout<P>,
     {
         loop {
-            if !self.advance()? || self.problem.as_ref().time >= self.problem.as_ref().bound {
-                return Ok(());
+            match self.advance() {
+                Ok(true) => {}
+                Ok(false) | Err(StepError::BoundReached) => return Ok(()),
+                Err(err) => return Err(err),
             }
         }
     }
@@ -519,8 +517,6 @@ where
     #[inline]
     pub fn solve(mut self) -> Result<O::Solution, StepError>
     where
-        P: Problem,
-        P::Time: PartialOrd,
         O: Solout<P>,
     {
         self.advance_to_bound()?;
