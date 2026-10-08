@@ -10,40 +10,67 @@ pub trait GravitationalForce<V> {
     fn accelerations_into(&mut self, time: Epoch, positions: &[V], accelerations: &mut [V]);
 }
 
-#[derive(Clone, Copy)]
-pub struct GravityModel<F> {
+#[derive(Clone)]
+pub struct GravityModel<F, V> {
     pub force_model: F,
+    cache_evaluations: bool,
+    last_time: f64,
+    last_accelerations: Vec<V>,
 }
 
-impl<F> GravityModel<F> {
+impl<F, V> GravityModel<F, V> {
     #[inline]
     pub fn new(force_model: F) -> Self {
-        Self { force_model }
+        Self {
+            force_model,
+            cache_evaluations: false,
+            last_time: f64::NAN,
+            last_accelerations: Vec::new(),
+        }
     }
 
     #[inline]
-    pub fn accelerations_into<V>(&mut self, time: Epoch, positions: &[V], accelerations: &mut [V])
+    pub fn cache_evaluations(mut self, cache_evaluations: bool) -> Self {
+        self.cache_evaluations = cache_evaluations;
+        self
+    }
+
+    #[inline]
+    pub fn accelerations_into(&mut self, time: Epoch, positions: &[V], accelerations: &mut [V])
     where
         F: GravitationalForce<V>,
+        V: Copy,
     {
-        self.force_model
-            .accelerations_into(time, positions, accelerations);
+        if self.cache_evaluations && time.as_offset_seconds() == self.last_time {
+            accelerations.copy_from_slice(&self.last_accelerations);
+        } else {
+            self.force_model
+                .accelerations_into(time, positions, accelerations);
+        }
     }
 }
 
-impl<V, F> SecondOrderODE<f64, Vec<V>> for GravityModel<F>
+impl<V, F> SecondOrderODE<f64, Vec<V>> for GravityModel<F, V>
 where
     F: GravitationalForce<V>,
+    V: Copy,
 {
     #[inline]
     fn eval(&mut self, t: f64, y: &Vec<V>, ddy: &mut Vec<V>) -> Result<(), EvalFailed> {
-        self.accelerations_into(Epoch::from_offset_seconds(t), y, ddy);
+        self.force_model
+            .accelerations_into(Epoch::from_offset_seconds(t), y, ddy);
+
+        if self.cache_evaluations {
+            self.last_time = t;
+            self.last_accelerations.clear();
+            self.last_accelerations.extend_from_slice(ddy);
+        }
 
         Ok(())
     }
 }
 
-pub type NBodyProblem<V, F> = ODEProblem<f64, SecondOrderState<Vec<V>>, GravityModel<F>>;
+pub type NBodyProblem<V, F> = ODEProblem<f64, SecondOrderState<Vec<V>>, GravityModel<F, V>>;
 
 pub trait AccelerationPairedAssign {
     type Output;
@@ -111,68 +138,6 @@ where
                 );
             }
         }
-    }
-}
-
-pub struct CachedNewtonianGravity<P: GravitySource> {
-    pub newtonian_gravity: NewtonianGravity<P>,
-    pub time: Epoch,
-    pub buffer: Vec<P::Output>,
-}
-
-impl<P: GravitySource> Clone for CachedNewtonianGravity<P>
-where
-    P::Output: Clone,
-    P::Scalar: Clone,
-{
-    #[inline]
-    fn clone(&self) -> Self {
-        Self {
-            newtonian_gravity: self.newtonian_gravity.clone(),
-            time: self.time,
-            buffer: self.buffer.clone(),
-        }
-    }
-}
-
-impl<P: GravitySource> CachedNewtonianGravity<P> {
-    #[inline]
-    pub fn new(mus: Vec<P::Scalar>) -> Self
-    where
-        P::Output: Default,
-    {
-        Self {
-            buffer: mus.iter().map(|_| Default::default()).collect(),
-            newtonian_gravity: NewtonianGravity::new(mus),
-            time: Epoch::NAN,
-        }
-    }
-
-    #[inline]
-    fn accelerations_into_inner(&mut self, time: Epoch, positions: &[P::Output])
-    where
-        P::Output: Default,
-        NewtonianGravity<P>: GravitationalForce<P::Output>,
-    {
-        self.newtonian_gravity
-            .accelerations_into(time, positions, self.buffer.zero());
-    }
-}
-
-impl<V, S, P> GravitationalForce<V> for CachedNewtonianGravity<P>
-where
-    P: GravitySource<Vector = V, Scalar = S, Output = V>,
-    V: Default + Copy,
-    S: Copy,
-{
-    #[inline]
-    fn accelerations_into(&mut self, time: Epoch, positions: &[V], accelerations: &mut [V]) {
-        if time != self.time {
-            self.accelerations_into_inner(time, positions);
-            self.time = time;
-        }
-
-        accelerations.copy_from_slice(&self.buffer);
     }
 }
 
@@ -253,7 +218,7 @@ where
     O: Solout<NBodyProblem<V, F>>,
 {
     #[inline]
-    pub fn new_solout<D>(h: Duration, problem: NBodyProblem<V, F>, solout: O) -> Self
+    pub fn new_with_solout<D>(h: Duration, problem: NBodyProblem<V, F>, solout: O) -> Self
     where
         D: PropagationDirection,
         M: NewMethod<FixedMethodParams<f64>>,

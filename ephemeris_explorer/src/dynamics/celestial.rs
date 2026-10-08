@@ -236,7 +236,7 @@ impl InterpolationTolerance<QuinticHermiteSample> for MidDistance {
 }
 
 pub type Vector = DoubleDVec3;
-pub type ForceModel = ephemeris::CachedNewtonianGravity<PointMass>;
+pub type ForceModel = ephemeris::NewtonianGravity<PointMass>;
 pub type NBodyProblem = ephemeris::NBodyProblem<Vector, ForceModel>;
 pub type SplineInterpolators<D> =
     ephemeris::SplineInterpolators<D, QuinticHermiteSample, Vector, MidDistance>;
@@ -263,7 +263,9 @@ where
         mut problem: NBodyProblem,
     ) -> PredictionPropagator<Self> {
         let solout = SplineInterpolators::new(&mut problem, MidDistance::new(tolerance));
-        PredictionPropagator(NBodyPropagator::new_solout::<D>(delta, problem, solout))
+        PredictionPropagator(NBodyPropagator::new_with_solout::<D>(
+            delta, problem, solout,
+        ))
     }
 
     #[inline]

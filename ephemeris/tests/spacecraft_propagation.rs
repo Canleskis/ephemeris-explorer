@@ -135,7 +135,7 @@ impl InterpolationTolerance<QuinticHermiteSample> for MidDistance {
 }
 
 type StateVector = ephemeris::StateVector<DVec3>;
-type ForceModel = ephemeris::CachedNewtonianGravity<PointMass>;
+type ForceModel = ephemeris::NewtonianGravity<PointMass>;
 type NBodyProblem = ephemeris::NBodyProblem<DVec3, ForceModel>;
 type SplineInterpolators<D> =
     ephemeris::SplineInterpolators<D, QuinticHermiteSample, DVec3, MidDistance>;
@@ -162,11 +162,11 @@ where
         system.epoch.as_offset_seconds(),
         f64::INFINITY,
         SecondOrderState::new(positions, velocities),
-        GravityModel::new(ForceModel::new(mus)),
+        GravityModel::new(ForceModel::new(mus)).cache_evaluations(true),
     );
 
     let solout = SplineInterpolators::new(&mut problem, MidDistance::new(1e-3));
-    let mut propagator = NBodyPropagator::<M>::new_solout(Forward::from(h), problem, solout);
+    let mut propagator = NBodyPropagator::<M>::new_with_solout::<Forward>(h, problem, solout);
 
     propagator.propagate(end)
 }

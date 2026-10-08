@@ -399,7 +399,7 @@ fn spawn_loaded_bodies(
         system.epoch.as_offset_seconds(),
         f64::INFINITY,
         state,
-        GravityModel::new(ForceModel::new(mus)),
+        GravityModel::new(ForceModel::new(mus)).cache_evaluations(true),
     );
     let bw_problem = NBodyProblem {
         bound: -fw_problem.bound,
