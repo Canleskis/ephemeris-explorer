@@ -327,7 +327,7 @@ fn add_to_global_context(
     mut global: ResMut<GlobalBodies>,
 ) {
     if let Ok((trajectory, mu, radius, soi)) = query.get(trigger.entity) {
-        global.0.0.insert(
+        global.0.insert(
             trigger.entity,
             GravitationalBody::new(trajectory.clone(), *mu, *radius, *soi),
         );
@@ -335,7 +335,7 @@ fn add_to_global_context(
 }
 
 fn remove_from_global_context(trigger: On<Remove, Trajectory>, mut global: ResMut<GlobalBodies>) {
-    global.0.0.remove(&trigger.entity);
+    global.0.remove(trigger.entity);
 }
 
 #[derive(Component)]
@@ -350,7 +350,7 @@ pub struct FlightPlanPlugin;
 
 impl Plugin for FlightPlanPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(GlobalBodies(Bodies(Default::default())))
+        app.insert_resource(GlobalBodies(Bodies::default()))
             .add_observer(add_to_global_context)
             .add_observer(remove_from_global_context)
             .add_observer(apply_flight_plan)

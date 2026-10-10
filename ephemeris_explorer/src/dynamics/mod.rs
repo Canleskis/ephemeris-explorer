@@ -159,6 +159,14 @@ impl Trajectory {
     {
         Some(self.position(at)?.distance(other.position(at)?))
     }
+
+    #[inline]
+    pub fn quintic_segment_at(&self, at: Epoch) -> Option<QuinticHermiteSegment> {
+        match &*self.read() {
+            PredictionTrajectory::QuinticHermiteSpline(spline) => spline.segment_at(at),
+            _ => None,
+        }
+    }
 }
 
 impl BoundedTrajectory for Trajectory {

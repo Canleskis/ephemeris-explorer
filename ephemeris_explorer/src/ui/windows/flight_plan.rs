@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use bevy::{platform::collections::hash_map::Entry, prelude::*};
+use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
 use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
@@ -351,19 +351,17 @@ impl FlightPlanWindow {
                                                         .selectable_label(checked, name.as_str())
                                                         .clicked()
                                                     {
-                                                        match fp.context.0.entry(entity) {
-                                                            Entry::Occupied(entry) => {
-                                                                entry.remove();
-                                                            }
-                                                            Entry::Vacant(entry) => {
-                                                                entry.insert(
-                                                                    global
-                                                                        .bodies()
-                                                                        .get(entity)
-                                                                        .unwrap()
-                                                                        .clone(),
-                                                                );
-                                                            }
+                                                        if checked {
+                                                            fp.context.remove(entity);
+                                                        } else {
+                                                            fp.context.insert(
+                                                                entity,
+                                                                global
+                                                                    .bodies()
+                                                                    .get(entity)
+                                                                    .unwrap()
+                                                                    .clone(),
+                                                            );
                                                         }
 
                                                         fp_changed = true
@@ -651,7 +649,7 @@ impl FlightPlanWindow {
                             .show_ui(ui, |ui| {
                                 let first_in_context = query_orbited_by
                                     .iter_descendants(root)
-                                    .find(|e| context.0.contains_key(e));
+                                    .find(|e| context.contains(*e));
 
                                 let Some(first_in_context) = first_in_context else {
                                     return;
@@ -685,7 +683,7 @@ impl FlightPlanWindow {
                                         children.map(|c| {
                                             query_hierarchy
                                                 .iter_many(c)
-                                                .filter(|(e, ..)| context.0.contains_key(e))
+                                                .filter(|(e, ..)| context.contains(*e))
                                         })
                                     },
                                 );

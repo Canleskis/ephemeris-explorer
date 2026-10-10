@@ -10,7 +10,8 @@ use integration::prelude::*;
 pub trait AccelerationModel {
     type Vector;
 
-    fn acceleration(&self, t: Epoch, state: &StateVector<Self::Vector>) -> Option<Self::Vector>;
+    fn acceleration(&mut self, t: Epoch, state: &StateVector<Self::Vector>)
+    -> Option<Self::Vector>;
 }
 
 pub trait PropagationContext {
@@ -24,7 +25,7 @@ pub trait Transform<V> {
 pub trait Frame<V, C> {
     type Transform;
 
-    fn transform(&self, t: Epoch, sv: &StateVector<V>, context: &C) -> Option<Self::Transform>;
+    fn transform(&self, t: Epoch, sv: &StateVector<V>, context: &mut C) -> Option<Self::Transform>;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -43,7 +44,7 @@ impl<V, F> ConstantThrust<V, F> {
     }
 
     #[inline]
-    fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, context: &C) -> Option<V>
+    fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, context: &mut C) -> Option<V>
     where
         F: Frame<V, C>,
         F::Transform: Transform<V>,
@@ -103,7 +104,7 @@ impl<V, F> Segment<V, F> {
     }
 
     #[inline]
-    pub fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, context: &C) -> Option<V>
+    pub fn acceleration<C>(&self, t: Epoch, sv: &StateVector<V>, context: &mut C) -> Option<V>
     where
         V: Default,
         F: Frame<V, C>,
@@ -261,7 +262,7 @@ impl<V, F, C> SpacecraftModel<V, F, C> {
     }
 
     #[inline]
-    pub fn context_acceleration(&self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
+    pub fn context_acceleration(&mut self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
     where
         C: AccelerationModel<Vector = V>,
     {
@@ -269,20 +270,25 @@ impl<V, F, C> SpacecraftModel<V, F, C> {
     }
 
     #[inline]
-    pub fn manoeuvre_acceleration(&self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
+    pub fn manoeuvre_acceleration(&mut self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
     where
         V: Default,
         F: Frame<V, C>,
         F::Transform: Transform<V>,
     {
-        self.current_segment()
-            .acceleration(t, sv, &self.context)
+        self.timeline.0[self.current_segment]
+            .acceleration(t, sv, &mut self.context)
             .ok_or(EvalFailed)
     }
 
     #[inline]
     pub fn context(&self) -> &C {
         &self.context
+    }
+
+    #[inline]
+    pub fn context_mut(&mut self) -> &mut C {
+        &mut self.context
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    dynamics::{PredictionTrajectory, StateVector, Trajectory},
+    dynamics::{PredictionTrajectory, QuinticHermiteSegment, StateVector, Trajectory},
     prediction::{PredictionPropagator, PredictionTarget},
 };
 
@@ -55,10 +55,10 @@ pub struct Event {
 
 #[derive(Clone)]
 pub struct GravitationalBody {
-    pub trajectory: Trajectory,
-    pub mu: Mu,
-    pub radius: Radius,
-    pub soi: SphereOfInfluence,
+    trajectory: Trajectory,
+    mu: Mu,
+    radius: Radius,
+    soi: SphereOfInfluence,
 }
 
 impl GravitationalBody {
@@ -73,7 +73,37 @@ impl GravitationalBody {
     }
 
     #[inline]
-    fn acceleration_at(&self, t: Epoch, position: &DVec3) -> Option<DVec3> {
+    pub fn trajectory(&self) -> &Trajectory {
+        &self.trajectory
+    }
+
+    #[inline]
+    pub fn mu(&self) -> Mu {
+        self.mu
+    }
+
+    #[inline]
+    pub fn radius(&self) -> Radius {
+        self.radius
+    }
+
+    #[inline]
+    pub fn soi(&self) -> SphereOfInfluence {
+        self.soi
+    }
+
+    #[inline]
+    pub fn position(&self, t: Epoch) -> Option<DVec3> {
+        self.trajectory.position(t)
+    }
+
+    #[inline]
+    pub fn state_vector(&self, t: Epoch) -> Option<StateVector> {
+        self.trajectory.state_vector(t)
+    }
+
+    #[inline]
+    pub fn acceleration_at(&self, t: Epoch, position: &DVec3) -> Option<DVec3> {
         let body_position = self.trajectory.position(t)?;
         Some((body_position, *self.mu).acceleration_at::<false>(position, &0.0))
     }
@@ -119,6 +149,114 @@ impl GravitationalBody {
 
     #[inline]
     pub fn find_collision<T>(&self, traj: &T, t0: Epoch, t1: Epoch) -> Option<Event>
+    where
+        T: EvaluateTrajectory<Vector = DVec3>,
+    {
+        find_zero_crossing(t0, t1, |t| {
+            self.radius_distance_squared_at(t, traj.position(t)?)
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct CachedGravitationalBody {
+    body: GravitationalBody,
+    segment: Option<QuinticHermiteSegment>,
+}
+
+impl From<GravitationalBody> for CachedGravitationalBody {
+    #[inline]
+    fn from(body: GravitationalBody) -> Self {
+        Self {
+            body,
+            segment: None,
+        }
+    }
+}
+
+impl CachedGravitationalBody {
+    #[inline]
+    pub fn trajectory(&self) -> &Trajectory {
+        self.body.trajectory()
+    }
+
+    #[inline]
+    pub fn mu(&self) -> Mu {
+        self.body.mu()
+    }
+
+    #[inline]
+    pub fn radius(&self) -> Radius {
+        self.body.radius()
+    }
+
+    #[inline]
+    pub fn soi(&self) -> SphereOfInfluence {
+        self.body.soi()
+    }
+
+    #[inline]
+    fn segment_at(&mut self, t: Epoch) -> Option<&QuinticHermiteSegment> {
+        if !self.segment.as_ref().is_some_and(|s| s.contains(t)) {
+            self.segment = self.body.trajectory.quintic_segment_at(t);
+        }
+        self.segment.as_ref()
+    }
+
+    #[inline]
+    pub fn position(&mut self, t: Epoch) -> Option<DVec3> {
+        self.segment_at(t)?.position(t)
+    }
+
+    #[inline]
+    pub fn state_vector(&mut self, t: Epoch) -> Option<StateVector> {
+        self.segment_at(t)?.state_vector(t)
+    }
+
+    #[inline]
+    pub fn acceleration_at(&mut self, t: Epoch, position: &DVec3) -> Option<DVec3> {
+        let body_position = self.position(t)?;
+        Some((body_position, *self.mu()).acceleration_at::<false>(position, &0.0))
+    }
+
+    #[inline]
+    fn radius_distance_squared_at(&mut self, t: Epoch, position: DVec3) -> Option<f64> {
+        Some(position.distance_squared(self.position(t)?) - *self.radius() * *self.radius())
+    }
+
+    #[inline]
+    fn soi_distance_squared_at(&mut self, t: Epoch, position: DVec3) -> Option<f64> {
+        Some(position.distance_squared(self.position(t)?) - self.soi().radius * self.soi().radius)
+    }
+
+    #[inline]
+    fn radial_velocity_at(&mut self, t: Epoch, sv: StateVector) -> Option<f64> {
+        let relative_sv = sv - self.state_vector(t)?;
+        Some(relative_sv.position.dot(relative_sv.velocity))
+    }
+
+    #[inline]
+    pub fn find_soi_crossing<T>(&mut self, traj: &T, t0: Epoch, t1: Epoch) -> Option<Event>
+    where
+        T: EvaluateTrajectory<Vector = DVec3>,
+    {
+        find_zero_crossing(t0, t1, |t| {
+            self.soi_distance_squared_at(t, traj.position(t)?)
+        })
+    }
+
+    #[inline]
+    pub fn find_apsis<T>(&mut self, traj: &T, t0: Epoch, t1: Epoch) -> Option<Event>
+    where
+        T: EvaluateTrajectory<Vector = DVec3>,
+    {
+        find_zero_crossing(t0, t1, |t| {
+            self.radial_velocity_at(t, traj.state_vector(t)?)
+        })
+    }
+
+    #[inline]
+    pub fn find_collision<T>(&mut self, traj: &T, t0: Epoch, t1: Epoch) -> Option<Event>
     where
         T: EvaluateTrajectory<Vector = DVec3>,
     {
@@ -181,19 +319,51 @@ where
     })
 }
 
-#[derive(Clone)]
-pub struct Bodies(pub bevy::ecs::entity::EntityHashMap<GravitationalBody>);
+pub type ContextBody = CachedGravitationalBody;
+
+#[derive(Clone, Default)]
+pub struct Bodies(bevy::ecs::entity::EntityIndexMap<ContextBody>);
+
+#[inline]
+fn canonical_order(
+    (a_entity, a): (&Entity, &ContextBody),
+    (b_entity, b): (&Entity, &ContextBody),
+) -> std::cmp::Ordering {
+    a.mu()
+        .total_cmp(&b.mu())
+        .then(a.radius().total_cmp(&b.radius()))
+        .then(a.soi().radius.total_cmp(&b.soi().radius))
+        .then(a_entity.cmp(b_entity))
+}
+
+impl FromIterator<(Entity, ContextBody)> for Bodies {
+    #[inline]
+    fn from_iter<I: IntoIterator<Item = (Entity, ContextBody)>>(iter: I) -> Self {
+        let mut bodies = Self(iter.into_iter().collect());
+        bodies.sort();
+        bodies
+    }
+}
 
 impl Bodies {
     #[inline]
-    pub fn iter(
-        &self,
-    ) -> bevy::platform::collections::hash_map::Iter<'_, Entity, GravitationalBody> {
+    fn sort(&mut self) {
+        self.0
+            .sort_by(|a_entity, a, b_entity, b| canonical_order((a_entity, a), (b_entity, b)));
+    }
+
+    #[inline]
+    pub fn iter(&self) -> bevy::ecs::entity::index_map::Iter<'_, ContextBody> {
         self.0.iter()
     }
 
     #[inline]
-    pub fn keys(&self) -> bevy::ecs::entity::hash_map::Keys<'_, GravitationalBody> {
+    pub fn iter_mut(&mut self) -> bevy::ecs::entity::index_map::IterMut<'_, ContextBody> {
+        self.0.iter_mut()
+    }
+
+    #[inline]
+    pub fn keys(&self) -> bevy::ecs::entity::index_map::Keys<'_, ContextBody> {
         self.0.keys()
     }
 
@@ -204,7 +374,7 @@ impl Bodies {
                 .iter()
                 .filter(|(entity, _)| !except.contains(entity))
                 .filter_map(|(entity, body)| {
-                    Some((*entity, body.trajectory.position(t)?, body.soi.radius))
+                    Some((*entity, body.trajectory().position(t)?, body.soi().radius))
                 }),
             position,
         )
@@ -216,8 +386,13 @@ impl Bodies {
     }
 
     #[inline]
-    pub fn get(&self, entity: Entity) -> Option<&GravitationalBody> {
+    pub fn get(&self, entity: Entity) -> Option<&ContextBody> {
         self.0.get(&entity)
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, entity: Entity) -> Option<&mut ContextBody> {
+        self.0.get_mut(&entity)
     }
 
     #[inline]
@@ -226,18 +401,20 @@ impl Bodies {
     }
 
     #[inline]
-    pub fn insert(&mut self, entity: Entity, body: GravitationalBody) -> Option<GravitationalBody> {
-        self.0.insert(entity, body)
+    pub fn insert(&mut self, entity: Entity, body: impl Into<ContextBody>) -> Option<ContextBody> {
+        let previous = self.0.insert(entity, body.into());
+        self.sort();
+        previous
     }
 
     #[inline]
-    pub fn remove(&mut self, entity: Entity) -> Option<GravitationalBody> {
-        self.0.remove(&entity)
+    pub fn remove(&mut self, entity: Entity) -> Option<ContextBody> {
+        self.0.shift_remove(&entity)
     }
 
     #[inline]
     pub fn is_valid_at(&self, t: Epoch) -> bool {
-        self.0.values().all(|body| body.trajectory.contains(t))
+        self.0.values().all(|body| body.trajectory().contains(t))
     }
 }
 
@@ -259,9 +436,9 @@ impl AccelerationModel for Bodies {
     type Vector = DVec3;
 
     #[inline]
-    fn acceleration(&self, t: Epoch, state: &StateVector) -> Option<Self::Vector> {
+    fn acceleration(&mut self, t: Epoch, state: &StateVector) -> Option<Self::Vector> {
         let mut acc = DVec3::ZERO;
-        for body in self.0.values() {
+        for body in self.0.values_mut() {
             acc += body.acceleration_at(t, &state.position)?;
         }
         Some(acc)
@@ -273,7 +450,7 @@ impl PropagationContext for Bodies {
     fn max_time(&self) -> Epoch {
         self.0
             .values()
-            .fold(Epoch::MAX, |end, body| end.min(body.trajectory.end()))
+            .fold(Epoch::MAX, |end, body| end.min(body.trajectory().end()))
     }
 }
 
@@ -316,19 +493,31 @@ impl ReferenceFrame {
     pub fn inertial() -> Self {
         Self::Inertial
     }
+
+    #[inline]
+    fn tnb_with(
+        &self,
+        sv: &StateVector,
+        reference_sv: impl FnOnce(Entity) -> Option<StateVector>,
+    ) -> Option<TNB> {
+        match self {
+            ReferenceFrame::Relative(reference) => TNB::try_new(*sv - reference_sv(*reference)?),
+            ReferenceFrame::Inertial => Some(TNB::IDENTITY),
+        }
+    }
+
+    #[inline]
+    pub fn tnb_at(&self, t: Epoch, sv: &StateVector, bodies: &Bodies) -> Option<TNB> {
+        self.tnb_with(sv, |e| bodies.get(e)?.trajectory().state_vector(t))
+    }
 }
 
 impl Frame<DVec3, Bodies> for ReferenceFrame {
     type Transform = TNB;
 
     #[inline]
-    fn transform(&self, t: Epoch, sv: &StateVector, bodies: &Bodies) -> Option<Self::Transform> {
-        match &self {
-            ReferenceFrame::Relative(reference) => Some(TNB::try_new(
-                *sv - bodies.get(*reference)?.trajectory.state_vector(t)?,
-            )?),
-            ReferenceFrame::Inertial => Some(TNB::IDENTITY),
-        }
+    fn transform(&self, t: Epoch, sv: &StateVector, bodies: &mut Bodies) -> Option<TNB> {
+        self.tnb_with(sv, |e| bodies.get_mut(e)?.state_vector(t))
     }
 }
 
@@ -536,13 +725,13 @@ where
 
     #[inline]
     fn solout(&mut self, problem: &mut SpacecraftProblem<T>, s: &mut Self::Solution) -> bool {
-        let bodies = problem.ode.context();
-
         let &(t0, sv0) = s.trajectory.points().last().unwrap();
 
         let time = Epoch::from_offset_seconds(problem.time);
         let pos = *problem.state.position();
         let vel = *problem.state.velocity();
+
+        let bodies = problem.ode.context_mut();
 
         let step_traj = &CubicHermite::new(
             (t0.as_offset_seconds(), time.as_offset_seconds()),
@@ -550,15 +739,19 @@ where
             (sv0.velocity, vel),
         );
 
-        for (entity, body) in bodies.iter() {
+        let mut crossings = smallvec::SmallVec::<[_; 4]>::new();
+        for (entity, body) in bodies.iter_mut() {
             if let Some(ev) = body.find_soi_crossing(step_traj, t0, time) {
-                if matches!(ev.direction, CrossingDirection::Descending) {
-                    s.transitions.insert(ev.time, *entity);
-                } else if let Some(pos) = step_traj.position(ev.time)
-                    && let Some(entered) = bodies.soi_at_except(ev.time, pos, &[*entity])
-                {
-                    s.transitions.insert(ev.time, entered);
-                }
+                crossings.push((*entity, ev));
+            }
+        }
+        for (entity, ev) in crossings {
+            if matches!(ev.direction, CrossingDirection::Descending) {
+                s.transitions.insert(ev.time, entity);
+            } else if let Some(pos) = step_traj.position(ev.time)
+                && let Some(entered) = bodies.soi_at_except(ev.time, pos, &[entity])
+            {
+                s.transitions.insert(ev.time, entered);
             }
         }
 
@@ -566,9 +759,9 @@ where
         for (i, &(t, soi)) in crossed_in_step.iter().enumerate() {
             let t0 = t.max(t0);
             let t1 = crossed_in_step.get(i + 1).map(|(t, _)| *t).unwrap_or(time);
-            if let Some(body) = bodies.get(soi) {
+            if let Some(body) = bodies.get_mut(soi) {
                 if let Some(ev) = body.find_apsis(step_traj, t0, t1)
-                    && let Some(distance) = body.trajectory.distance_at(step_traj, ev.time)
+                    && let Some(distance) = body.trajectory().distance_at(step_traj, ev.time)
                 {
                     s.apsides.insert(Apsis::from_event(ev, distance), soi);
                 }

@@ -3,8 +3,9 @@ mod common;
 use ephemeris::{
     AccelerationModel, AccelerationPairedAssign, BoundedPropagator, BoundedTrajectory,
     CubicHermiteSplineSolout, EvaluateTrajectory, ExtendSpline, Forward, Frame, GravityModel,
-    GravitySource, InterpolationSample, InterpolationTolerance, NBodyPropagatorError,
-    PropagationContext, QuinticHermite, QuinticHermiteSpline, Transform,
+    GravitySource, InterpolationSample, InterpolationTolerance, KinematicState,
+    NBodyPropagatorError, PropagationContext, QuinticHermiteSegment, QuinticHermiteSpline,
+    Transform,
 };
 use ftime::{Duration, Epoch};
 use glam::{DMat3, DVec3};
@@ -112,25 +113,19 @@ impl InterpolationTolerance<QuinticHermiteSample> for MidDistance {
             return true;
         }
 
-        let first = samples[0];
-        let last = samples[len - 1];
-        let hermite = QuinticHermite::new(
-            (
-                first.time.as_offset_seconds(),
-                last.time.as_offset_seconds(),
-            ),
-            (first.position, last.position),
-            (first.velocity, last.velocity),
-            (first.acceleration, last.acceleration),
+        let first = &samples[0];
+        let last = &samples[len - 1];
+        let segment = QuinticHermiteSegment::new_unordered(
+            first.time,
+            KinematicState::new(first.position, first.velocity, first.acceleration),
+            last.time,
+            KinematicState::new(last.position, last.velocity, last.acceleration),
         );
+        let mid_sample = &samples[len / 2];
 
-        let mid = len / 2;
-        let mid_sample = &samples[mid];
-
-        hermite
-            .eval(mid_sample.time.as_offset_seconds())
-            .distance_squared(mid_sample.position)
-            <= self.0
+        segment
+            .position(mid_sample.time)
+            .is_some_and(|position| position.distance_squared(mid_sample.position) <= self.0)
     }
 }
 
@@ -224,7 +219,7 @@ impl AccelerationModel for &CelestialBodies {
     type Vector = DVec3;
 
     #[inline]
-    fn acceleration(&self, t: Epoch, state: &StateVector) -> Option<Self::Vector> {
+    fn acceleration(&mut self, t: Epoch, state: &StateVector) -> Option<Self::Vector> {
         let mut acc = DVec3::ZERO;
         for body in self.bodies.values() {
             acc += body.acceleration_at(t, &state.position)?;
@@ -309,7 +304,7 @@ impl Frame<DVec3, &CelestialBodies> for ReferenceFrame {
         &self,
         t: Epoch,
         sv: &StateVector,
-        context: &&CelestialBodies,
+        context: &mut &CelestialBodies,
     ) -> Option<Self::Transform> {
         match self {
             ReferenceFrame::Relative(reference) => Some(TNB::new(

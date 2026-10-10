@@ -128,6 +128,17 @@ pub struct KinematicState<V> {
     pub acceleration: V,
 }
 
+/// **Addition:** the position and velocity of a kinematic state, dropping its acceleration.
+impl<V> From<KinematicState<V>> for StateVector<V> {
+    #[inline]
+    fn from(value: KinematicState<V>) -> Self {
+        StateVector {
+            position: value.position,
+            velocity: value.velocity,
+        }
+    }
+}
+
 impl<V> KinematicState<V> {
     #[inline]
     pub const fn new(position: V, velocity: V, acceleration: V) -> Self {
@@ -994,7 +1005,7 @@ impl<V> CubicHermiteSpline<V> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct QuinticHermite<V> {
+pub struct QuinticHermiteSegment<V> {
     bounds: (f64, f64),
     a0: V,
     a1: V,
@@ -1004,14 +1015,9 @@ pub struct QuinticHermite<V> {
     a5: V,
 }
 
-impl<V> QuinticHermite<V> {
+impl<V> QuinticHermiteSegment<V> {
     #[inline]
-    pub fn new(
-        bounds: (f64, f64),
-        values: (V, V),
-        derivatives: (V, V),
-        accelerations: (V, V),
-    ) -> Self
+    pub fn new(t1: Epoch, s1: KinematicState<V>, t2: Epoch, s2: KinematicState<V>) -> Self
     where
         V: std::ops::Add<Output = V>
             + std::ops::Sub<Output = V>
@@ -1020,15 +1026,18 @@ impl<V> QuinticHermite<V> {
             + Default
             + Copy,
     {
-        let a0 = values.0;
-        let a1 = derivatives.0;
-        let a2 = accelerations.0 * 0.5;
+        debug_assert!(t1 <= t2, "segment start {t1} is after its end {t2}");
+
+        let bounds = (t1.as_offset_seconds(), t2.as_offset_seconds());
+        let a0 = s1.position;
+        let a1 = s1.velocity;
+        let a2 = s1.acceleration * 0.5;
         let dt = bounds.1 - bounds.0;
 
         let (a3, a4, a5) = if dt == 0.0
-            && values.0 == values.1
-            && derivatives.0 == derivatives.1
-            && accelerations.0 == accelerations.1
+            && s1.position == s2.position
+            && s1.velocity == s2.velocity
+            && s1.acceleration == s2.acceleration
         {
             (V::default(), V::default(), V::default())
         } else {
@@ -1038,11 +1047,11 @@ impl<V> QuinticHermite<V> {
             let dt_recip_4 = dt_recip * dt_recip_3;
             let dt_recip_5 = dt_recip * dt_recip_4;
 
-            let dp = values.1 - values.0;
-            let dv0 = derivatives.0;
-            let dv1 = derivatives.1;
-            let da0 = accelerations.0;
-            let da1 = accelerations.1;
+            let dp = s2.position - s1.position;
+            let dv0 = s1.velocity;
+            let dv1 = s2.velocity;
+            let da0 = s1.acceleration;
+            let da1 = s2.acceleration;
 
             let c0 = dp * 10.0 - (dv0 * 6.0 + dv1 * 4.0) * dt + (da1 * 0.5 - da0 * 1.5) * (dt * dt);
             let c1 = dp * -15.0 + (dv0 * 8.0 + dv1 * 7.0) * dt + (da0 * 1.5 - da1) * (dt * dt);
@@ -1051,7 +1060,7 @@ impl<V> QuinticHermite<V> {
             (c0 * dt_recip_3, c1 * dt_recip_4, c2 * dt_recip_5)
         };
 
-        QuinticHermite {
+        Self {
             bounds,
             a0,
             a1,
@@ -1063,7 +1072,24 @@ impl<V> QuinticHermite<V> {
     }
 
     #[inline]
-    pub fn eval(&self, t: f64) -> V
+    pub fn new_unordered(t1: Epoch, s1: KinematicState<V>, t2: Epoch, s2: KinematicState<V>) -> Self
+    where
+        V: std::ops::Add<Output = V>
+            + std::ops::Sub<Output = V>
+            + std::ops::Mul<f64, Output = V>
+            + PartialEq
+            + Default
+            + Copy,
+    {
+        if t1 <= t2 {
+            Self::new(t1, s1, t2, s2)
+        } else {
+            Self::new(t2, s2, t1, s1)
+        }
+    }
+
+    #[inline]
+    fn eval(&self, t: f64) -> V
     where
         V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
     {
@@ -1072,7 +1098,7 @@ impl<V> QuinticHermite<V> {
     }
 
     #[inline]
-    pub fn eval_derivative(&self, t: f64) -> V
+    fn eval_derivative(&self, t: f64) -> V
     where
         V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
     {
@@ -1080,34 +1106,48 @@ impl<V> QuinticHermite<V> {
         ((((self.a5 * dt * 5.0 + self.a4 * 4.0) * dt) + self.a3 * 3.0) * dt + self.a2 * 2.0) * dt
             + self.a1
     }
+}
+
+impl<V> BoundedTrajectory for QuinticHermiteSegment<V> {
+    #[inline]
+    fn start(&self) -> Epoch {
+        Epoch::from_offset_seconds(self.bounds.0)
+    }
 
     #[inline]
-    pub fn eval_derivative2(&self, t: f64) -> V
-    where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
-    {
-        let dt = t - self.bounds.0;
-        (((self.a5 * dt * 20.0 + self.a4 * 12.0) * dt) + self.a3 * 6.0) * dt + self.a2 * 2.0
+    fn end(&self) -> Epoch {
+        Epoch::from_offset_seconds(self.bounds.1)
+    }
+
+    #[inline]
+    fn contains(&self, time: Epoch) -> bool {
+        let t = time.as_offset_seconds();
+        let (start, end) = self.bounds;
+        t == start || (start < t && t < end)
+    }
+
+    #[inline]
+    fn segment_count(&self) -> usize {
+        1
     }
 }
 
-impl<V> EvaluateTrajectory for QuinticHermite<V>
+impl<V> EvaluateTrajectory for QuinticHermiteSegment<V>
 where
     V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
 {
     type Vector = V;
 
     #[inline]
-    fn position(&self, at: Epoch) -> Option<Self::Vector> {
-        Some(self.eval(at.as_offset_seconds()))
+    fn position(&self, at: Epoch) -> Option<V> {
+        self.contains(at).then(|| self.eval(at.as_offset_seconds()))
     }
 
     #[inline]
-    fn state_vector(&self, at: Epoch) -> Option<StateVector<Self::Vector>> {
-        Some(StateVector::new(
-            self.eval(at.as_offset_seconds()),
-            self.eval_derivative(at.as_offset_seconds()),
-        ))
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<V>> {
+        let t = at.as_offset_seconds();
+        self.contains(at)
+            .then(|| StateVector::new(self.eval(t), self.eval_derivative(t)))
     }
 }
 
@@ -1158,21 +1198,12 @@ where
 
     #[inline]
     fn position(&self, at: Epoch) -> Option<V> {
-        match self.binary_search(at) {
-            Ok(i) => Some(self.0[i].1.position),
-            Err(i) => self.hermite5(i.checked_sub(1)?)?.position(at),
-        }
+        self.segment_at(at)?.position(at)
     }
 
     #[inline]
     fn state_vector(&self, at: Epoch) -> Option<StateVector<V>> {
-        match self.binary_search(at) {
-            Ok(i) => {
-                let (_, state) = self.0[i];
-                Some(StateVector::new(state.position, state.velocity))
-            }
-            Err(i) => self.hermite5(i.checked_sub(1)?)?.state_vector(at),
-        }
+        self.segment_at(at)?.state_vector(at)
     }
 }
 
@@ -1200,7 +1231,27 @@ impl<V> QuinticHermiteSpline<V> {
     }
 
     #[inline]
-    pub fn hermite5(&self, i: usize) -> Option<QuinticHermite<V>>
+    fn binary_search_first(&self, at: Epoch) -> Result<usize, usize> {
+        self.binary_search(at).map(|mut i| {
+            while i > 0 && self.0[i - 1].0 == at {
+                i -= 1;
+            }
+            i
+        })
+    }
+
+    #[inline]
+    fn binary_search_last(&self, at: Epoch) -> Result<usize, usize> {
+        self.binary_search(at).map(|mut i| {
+            while i + 1 < self.0.len() && self.0[i + 1].0 == at {
+                i += 1;
+            }
+            i
+        })
+    }
+
+    #[inline]
+    pub fn segment_at(&self, at: Epoch) -> Option<QuinticHermiteSegment<V>>
     where
         V: std::ops::Add<Output = V>
             + std::ops::Sub<Output = V>
@@ -1209,19 +1260,21 @@ impl<V> QuinticHermiteSpline<V> {
             + Default
             + Copy,
     {
-        let (t1, s1) = self.0.get(i)?;
-        let (t2, s2) = self.0.get(i + 1)?;
-        Some(QuinticHermite::new(
-            (t1.as_offset_seconds(), t2.as_offset_seconds()),
-            (s1.position, s2.position),
-            (s1.velocity, s2.velocity),
-            (s1.acceleration, s2.acceleration),
-        ))
+        let i = match self.binary_search_last(at) {
+            Ok(i) => i,
+            Err(i) if i == 0 || i == self.0.len() => return None,
+            Err(i) => i - 1,
+        };
+        let (t1, s1) = &self.0[i];
+        let (t2, s2) = self.0.get(i + 1).unwrap_or(&self.0[i]);
+        let segment = QuinticHermiteSegment::new(*t1, *s1, *t2, *s2);
+
+        Some(segment)
     }
 
     #[inline]
     pub fn clear_before(&mut self, at: Epoch) {
-        let i = match self.binary_search(at) {
+        let i = match self.binary_search_last(at) {
             Ok(i) => i + 1,
             Err(i) => i,
         };
@@ -1230,7 +1283,7 @@ impl<V> QuinticHermiteSpline<V> {
 
     #[inline]
     pub fn clear_after(&mut self, at: Epoch) {
-        let i = match self.binary_search(at) {
+        let i = match self.binary_search_first(at) {
             Ok(i) | Err(i) => i,
         };
         self.0.drain(i..);

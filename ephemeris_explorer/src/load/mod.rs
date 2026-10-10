@@ -10,8 +10,8 @@ use crate::{
     analysis::{OrbitPlotConfig, OrbitPlotReference, OrbitTarget, SoiTransitionsAnalysis},
     camera::{CameraController, FollowParameters, Followed, OrbitCamera},
     dynamics::{
-        AbsTol, Backward, Bodies, CelestialTrajectory, DoubleDVec3, ForceModel, Forward, Mu,
-        NBodyProblem, Radius, SoiTransitions, SpacecraftTrajectory, SphereOfInfluence, StateVector,
+        AbsTol, Backward, CelestialTrajectory, DoubleDVec3, ForceModel, Forward, Mu, NBodyProblem,
+        Radius, SoiTransitions, SpacecraftTrajectory, SphereOfInfluence, StateVector,
     },
     flight_plan::{
         Burn, BurnFrame, FlightPlan, FlightPlanChanged, FlightPlanDependency, GlobalBodies,
@@ -546,7 +546,7 @@ fn spawn_ship(
     });
 
     let context = match mapped_context {
-        Some(Ok(context)) => Bodies(context),
+        Some(Ok(context)) => context,
         Some(Err(missing)) => {
             errors.push(LoadingError::MissingReference {
                 ship: ship.name.to_string(),

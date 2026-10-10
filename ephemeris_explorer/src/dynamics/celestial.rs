@@ -10,8 +10,8 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use double_double as dd;
 use ephemeris::{
-    AccelerationPairedAssign, BoundedTrajectory, ExtendSpline, GravitySource, InterpolationSample,
-    InterpolationTolerance, PropagationDirection, QuinticHermite,
+    AccelerationPairedAssign, BoundedTrajectory, EvaluateTrajectory, ExtendSpline, GravitySource,
+    InterpolationSample, InterpolationTolerance, KinematicState, PropagationDirection,
 };
 pub use ephemeris::{Backward, Forward};
 use ftime::{Duration, Epoch};
@@ -23,6 +23,7 @@ use particular::{
 
 pub type UniformSpline = ephemeris::UniformSpline<DVec3>;
 pub type QuinticHermiteSpline = ephemeris::QuinticHermiteSpline<DVec3>;
+pub type QuinticHermiteSegment = ephemeris::QuinticHermiteSegment<DVec3>;
 
 // We use the less accurate operations here, since the difference is acceptable (at most a couple
 // kilometers for some major moons after 100 years), whilst the performance is nearly doubled.
@@ -150,6 +151,15 @@ impl QuinticHermiteSample {
             acceleration,
         }
     }
+
+    #[inline]
+    pub fn kinematic_state(&self) -> KinematicState<DVec3> {
+        KinematicState {
+            position: self.position,
+            velocity: self.velocity,
+            acceleration: self.acceleration,
+        }
+    }
 }
 
 impl InterpolationSample<DoubleDVec3> for QuinticHermiteSample {
@@ -213,25 +223,19 @@ impl InterpolationTolerance<QuinticHermiteSample> for MidDistance {
             return true;
         }
 
-        let first = samples[0];
-        let last = samples[len - 1];
-        let hermite = QuinticHermite::new(
-            (
-                first.time.as_offset_seconds(),
-                last.time.as_offset_seconds(),
-            ),
-            (first.position, last.position),
-            (first.velocity, last.velocity),
-            (first.acceleration, last.acceleration),
+        let first = &samples[0];
+        let last = &samples[len - 1];
+        let segment = QuinticHermiteSegment::new_unordered(
+            first.time,
+            first.kinematic_state(),
+            last.time,
+            last.kinematic_state(),
         );
+        let mid_sample = &samples[len / 2];
 
-        let mid = len / 2;
-        let mid_sample = &samples[mid];
-
-        hermite
-            .eval(mid_sample.time.as_offset_seconds())
-            .distance_squared(mid_sample.position)
-            <= self.0
+        segment
+            .position(mid_sample.time)
+            .is_some_and(|position| position.distance_squared(mid_sample.position) <= self.0)
     }
 }
 
