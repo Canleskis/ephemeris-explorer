@@ -141,50 +141,51 @@ fn setup_egui_visuals(trigger: On<Insert, EguiContext>, mut query: Query<&mut Eg
         ctx.style_mut(|style| {
             use egui::{Color32, CornerRadius, Shadow, Stroke};
             style.visuals.selection.bg_fill = Color32::from_rgb(0, 65, 165);
-            style.visuals.window_fill = Color32::from_rgba_premultiplied(20, 20, 20, 240);
+            style.visuals.window_fill = Color32::from_rgba_unmultiplied(15, 15, 15, 250);
             style.visuals.window_shadow = Shadow::NONE;
-            style.visuals.window_corner_radius = CornerRadius::same(8);
-            style.visuals.window_stroke = Stroke::new(1.0, Color32::from_gray(60));
-            style.visuals.panel_fill = Color32::from_rgba_premultiplied(20, 20, 20, 240);
+            style.visuals.window_corner_radius = CornerRadius::same(4);
+            style.visuals.window_stroke = Stroke::new(1f32, Color32::from_gray(60));
+            style.visuals.panel_fill = Color32::from_rgba_unmultiplied(15, 15, 15, 250);
+            style.visuals.window_highlight_topmost = false;
             style.visuals.widgets = egui::style::Widgets {
                 noninteractive: egui::style::WidgetVisuals {
                     weak_bg_fill: Color32::from_gray(20),
                     bg_fill: Color32::from_gray(20),
-                    bg_stroke: Stroke::new(1.5, Color32::from_gray(60)), // separators, indentation lines
-                    fg_stroke: Stroke::new(1.0, Color32::from_gray(140)), // normal text color
-                    corner_radius: CornerRadius::same(4),
+                    bg_stroke: Stroke::new(1f32, Color32::from_gray(60)), // separators, indentation lines
+                    fg_stroke: Stroke::new(1f32, Color32::from_gray(140)), // normal text color
+                    corner_radius: CornerRadius::same(2),
                     expansion: 0.0,
                 },
                 inactive: egui::style::WidgetVisuals {
                     weak_bg_fill: Color32::from_gray(50), // button background
                     bg_fill: Color32::from_gray(50),      // checkbox background
                     bg_stroke: Default::default(),
-                    fg_stroke: Stroke::new(1.0, Color32::from_gray(140)), // button text
-                    corner_radius: CornerRadius::same(4),
+                    fg_stroke: Stroke::new(1f32, Color32::from_gray(140)), // button text
+                    corner_radius: CornerRadius::same(2),
                     expansion: 0.0,
                 },
                 hovered: egui::style::WidgetVisuals {
                     weak_bg_fill: Color32::from_gray(60),
                     bg_fill: Color32::from_gray(60),
-                    bg_stroke: Stroke::new(1.0, Color32::from_gray(150)), // e.g. hover over window edge or button
-                    fg_stroke: Stroke::new(1.5, Color32::from_gray(180)),
-                    corner_radius: CornerRadius::same(4),
+                    bg_stroke: Stroke::new(1f32, Color32::from_gray(150)), // e.g. hover over window edge or button
+                    fg_stroke: Stroke::new(1.5f32, Color32::from_gray(180)),
+                    corner_radius: CornerRadius::same(2),
                     expansion: 1.0,
                 },
                 active: egui::style::WidgetVisuals {
                     weak_bg_fill: Color32::from_gray(45),
                     bg_fill: Color32::from_gray(45),
-                    bg_stroke: Stroke::new(1.0, Color32::WHITE),
-                    fg_stroke: Stroke::new(2.0, Color32::WHITE),
-                    corner_radius: CornerRadius::same(4),
+                    bg_stroke: Stroke::new(1f32, Color32::WHITE),
+                    fg_stroke: Stroke::new(2f32, Color32::WHITE),
+                    corner_radius: CornerRadius::same(2),
                     expansion: 1.0,
                 },
                 open: egui::style::WidgetVisuals {
                     weak_bg_fill: Color32::from_gray(35),
                     bg_fill: Color32::from_gray(20),
-                    bg_stroke: Stroke::new(1.0, Color32::from_gray(60)),
-                    fg_stroke: Stroke::new(1.0, Color32::from_gray(150)),
-                    corner_radius: CornerRadius::same(4),
+                    bg_stroke: Stroke::new(1f32, Color32::from_gray(60)),
+                    fg_stroke: Stroke::new(1f32, Color32::from_gray(150)),
+                    corner_radius: CornerRadius::same(2),
                     expansion: 0.0,
                 },
             }
@@ -227,6 +228,7 @@ fn top_menu(
     let Ok(ctx) = contexts.ctx_mut() else { return };
 
     egui::TopBottomPanel::top("Menu")
+        .show_separator_line(true)
         .exact_height(23.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {

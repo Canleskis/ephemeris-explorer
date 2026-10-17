@@ -25,6 +25,7 @@ pub fn solar_system_hierarchy(
     let Ok(ctx) = contexts.ctx_mut() else { return };
 
     egui::SidePanel::left("Hierarchy")
+        .show_separator_line(true)
         .min_width(250.0)
         .max_width(400.0)
         .show(ctx, |ui| {

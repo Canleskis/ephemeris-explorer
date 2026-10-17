@@ -97,7 +97,7 @@ pub fn time_controls(
     computed_time_scale.add(sim_time.real_time_scale());
 
     egui::TopBottomPanel::bottom("Time")
-        .show_separator_line(false)
+        .show_separator_line(true)
         .show(ctx, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().text_edit_width = 240.0;
