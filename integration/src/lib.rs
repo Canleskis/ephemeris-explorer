@@ -607,7 +607,7 @@ pub mod prelude {
         ratio::Ratio,
         runge_kutta::{
             AdaptiveRKState, AdaptiveRungeKutta, AdaptiveRungeKuttaIntegrator, FixedRungeKutta,
-            FixedRungeKuttaIntegrator, Tolerance,
+            FixedRungeKuttaIntegrator, PIController, Tolerance,
         },
     };
 }

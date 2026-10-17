@@ -1,5 +1,5 @@
 use crate::{
-    dynamics::{PredictionTrajectory, Trajectory},
+    dynamics::Trajectory,
     prediction::{PredictionControllerOf, PredictionPropagator, PredictionTarget},
 };
 
@@ -21,9 +21,9 @@ use particular::{
     prelude::{Mass, Position},
 };
 
-pub type UniformSpline = ephemeris::UniformSpline<DVec3>;
 pub type QuinticHermiteSpline = ephemeris::QuinticHermiteSpline<DVec3>;
 pub type QuinticHermiteSegment = ephemeris::QuinticHermiteSegment<DVec3>;
+pub type ClosedSegment = ephemeris::ClosedQuinticHermiteSegment<DVec3>;
 
 // We use the less accurate operations here, since the difference is acceptable (at most a couple
 // kilometers for some major moons after 100 years), whilst the performance is nearly doubled.
@@ -283,22 +283,15 @@ impl PredictionTarget for CelestialTrajectory<Forward> {
 
     #[inline]
     fn merge(item: &mut Self::Item<'_, '_>, propagated: QuinticHermiteSpline) {
-        let PredictionTrajectory::QuinticHermiteSpline(world_traj) = &mut *item.trajectory.write()
-        else {
-            unreachable!()
-        };
-        world_traj.clear_after(propagated.start());
+        let mut world_traj = item.trajectory.write();
+        world_traj.clear_after_inclusive(propagated.start());
         world_traj.append(propagated);
     }
 
     #[inline]
     fn overwrite(item: &mut Self::Item<'_, '_>, propagated: QuinticHermiteSpline) {
         // Should we keep the previous allocation?
-        let PredictionTrajectory::QuinticHermiteSpline(world_traj) = &mut *item.trajectory.write()
-        else {
-            unreachable!()
-        };
-        *world_traj = propagated;
+        *item.trajectory.write() = propagated;
     }
 
     #[inline]
@@ -312,21 +305,14 @@ impl PredictionTarget for CelestialTrajectory<Backward> {
 
     #[inline]
     fn merge(item: &mut Self::Item<'_, '_>, propagated: QuinticHermiteSpline) {
-        let PredictionTrajectory::QuinticHermiteSpline(world_traj) = &mut *item.trajectory.write()
-        else {
-            unreachable!()
-        };
-        world_traj.clear_before(propagated.end());
+        let mut world_traj = item.trajectory.write();
+        world_traj.clear_before_inclusive(propagated.end());
         world_traj.prepend(propagated);
     }
 
     #[inline]
     fn overwrite(item: &mut Self::Item<'_, '_>, propagated: QuinticHermiteSpline) {
-        let PredictionTrajectory::QuinticHermiteSpline(world_traj) = &mut *item.trajectory.write()
-        else {
-            unreachable!()
-        };
-        *world_traj = propagated;
+        *item.trajectory.write() = propagated;
     }
 
     #[inline]

@@ -1,6 +1,6 @@
 use crate::{
     MainState,
-    dynamics::{PredictionTrajectory, StateVector, Trajectory},
+    dynamics::{StateVector, Trajectory},
     floating_origin::{Grid, GridExt},
     load::SystemRoot,
     simulation::SimulationTime,
@@ -415,23 +415,10 @@ fn plot_knots(
         let Ok(trajectory) = query_trajectory.get(source.entity) else {
             continue;
         };
-        let traj = trajectory.read();
 
-        match &*trajectory.read() {
-            PredictionTrajectory::UniformSpline(traj) => {
-                let knots =
-                    (0..traj.segment_count()).map(|i| traj.start() + traj.interval() * i as f64);
-                plot_knots(&mut gizmos, *camera, knots, points);
-            }
-            PredictionTrajectory::CubicHermiteSpline(traj) => {
-                let knots = traj.points().iter().map(|(t, ..)| *t);
-                plot_knots(&mut gizmos, *camera, knots, points);
-            }
-            PredictionTrajectory::QuinticHermiteSpline(traj) => {
-                let knots = traj.points().iter().map(|(t, ..)| *t);
-                plot_knots(&mut gizmos, *camera, knots, points);
-            }
-        }
+        let traj = trajectory.read();
+        let knots = traj.knots().iter().map(|(t, ..)| *t);
+        plot_knots(&mut gizmos, *camera, knots, points);
     }
 }
 

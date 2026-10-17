@@ -20,7 +20,7 @@ use crate::{
 use bevy::picking::backend::ray::RayMap;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
-use ephemeris::{BoundedTrajectory, EvaluateTrajectory, Frame};
+use ephemeris::{BoundedTrajectory, EvaluateTrajectory};
 use ftime::{Duration, Epoch};
 
 #[derive(Clone, Copy, Debug, Default, Resource)]
@@ -104,7 +104,7 @@ fn plot_manoeuvre_markers(
                     && let Some(distance) = relative.position(burn.start).map(|p| p.length())
                     && let Some(transform) = trajectory.state_vector(burn.start).and_then(|sv| {
                         burn.reference_frame()
-                            .transform(burn.start, &sv, &flight_plan.context)
+                            .tnb_at(burn.start, &sv, &flight_plan.context)
                     })
                 {
                     let prograde = root.to_global_vector(transform.0.x_axis).as_vec3();

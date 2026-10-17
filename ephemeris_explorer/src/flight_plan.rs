@@ -1,9 +1,8 @@
 use crate::{
     dynamics::{
-        AbsTol, BaseSpacecraftPropagator, Bodies, ConstantThrust, CubicHermiteSpline,
-        GravitationalBody, Mu, PredictionTrajectory, Radius, ReferenceFrame, SpacecraftPropagator,
-        SpacecraftSolout, SpacecraftTrajectory, SphereOfInfluence, StateVector, Timeline,
-        Trajectory,
+        AbsTol, Bodies, ConstantThrust, GravitationalBody, Mu, QuinticHermiteSpline, Radius,
+        ReferenceFrame, SpacecraftModel, SpacecraftProblem, SpacecraftPropagator, SpacecraftSolout,
+        SpacecraftTrajectory, SphereOfInfluence, StateVector, Timeline, Trajectory,
     },
     prediction::{
         InPredictionWith, PredictionPropagator, PredictionSystems, PredictionTarget,
@@ -13,9 +12,9 @@ use crate::{
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use ephemeris::BoundedTrajectory;
+use ephemeris::{BoundedTrajectory, SpacecraftState};
 use ftime::{Duration, Epoch};
-use integration::AdaptiveMethodParams;
+use integration::{AdaptiveMethodParams, problem::EvalFailed};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BurnFrame {
@@ -140,14 +139,25 @@ macro_rules! integration_methods {
                 &self,
                 time: Epoch,
                 sv: StateVector,
+                end: Epoch,
                 parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
                 context: Bodies,
                 timeline: Timeline,
-            ) -> SpacecraftPropagator {
+            ) -> Result<SpacecraftPropagator, EvalFailed> {
                 match self {
-                    $(IntegrationMethod::$variant => SpacecraftPropagator::$variant(
-                        BaseSpacecraftPropagator::new(time, sv, parameters, timeline, context, SpacecraftSolout)
-                    )),+
+                    $(IntegrationMethod::$variant => {
+                        let mut problem = SpacecraftProblem::new(
+                            time.as_offset_seconds(),
+                            end.as_offset_seconds(),
+                            SpacecraftState::new(sv),
+                            SpacecraftModel::new(time, timeline, context),
+                        );
+                        let solout = SpacecraftSolout::new(&mut problem)?;
+                        Ok(SpacecraftPropagator::$variant(
+                            ephemeris::SpacecraftPropagator::new(parameters, problem)
+                                .with_solout(solout),
+                        ))
+                    }),+
                 }
             }
         }
@@ -255,10 +265,15 @@ impl FlightPlan {
     }
 
     #[inline]
-    pub fn build_propagator_at(&self, time: Epoch, sv: StateVector) -> SpacecraftPropagator {
+    pub fn build_propagator_at(
+        &self,
+        time: Epoch,
+        sv: StateVector,
+    ) -> Result<SpacecraftPropagator, EvalFailed> {
         self.method.as_propagator(
             time,
             sv,
+            self.end,
             self.parameters,
             self.context.clone(),
             self.generate_timeline(),
@@ -269,7 +284,7 @@ impl FlightPlan {
     pub fn restart_propagator(
         &self,
         previous: &SpacecraftPropagator,
-        trajectory: &CubicHermiteSpline,
+        trajectory: &QuinticHermiteSpline,
     ) -> Option<SpacecraftPropagator> {
         let timeline = self.generate_timeline();
 
@@ -298,15 +313,21 @@ impl FlightPlan {
                 .max(trajectory.start())
         };
 
-        trajectory.get(restart_epoch).map(|&restart_sv| {
-            self.method.as_propagator(
-                restart_epoch,
-                restart_sv,
-                self.parameters,
-                self.context.clone(),
-                timeline,
-            )
-        })
+        // At a manoeuvre change, both knots have the same position and velocity.
+        trajectory
+            .knot_ending_at(restart_epoch)
+            .and_then(|&restart_state| {
+                self.method
+                    .as_propagator(
+                        restart_epoch,
+                        restart_state.into(),
+                        self.end,
+                        self.parameters,
+                        self.context.clone(),
+                        timeline,
+                    )
+                    .ok()
+            })
     }
 }
 
@@ -374,9 +395,7 @@ fn apply_flight_plan(
     let Ok((mut flight_plan, propagator, trajectory)) = query.get_mut(entity) else {
         return;
     };
-    let PredictionTrajectory::CubicHermiteSpline(trajectory) = &*trajectory.read() else {
-        unreachable!()
-    };
+    let trajectory = &*trajectory.read();
 
     if !propagator.context().is_valid_at(trajectory.start()) {
         return;

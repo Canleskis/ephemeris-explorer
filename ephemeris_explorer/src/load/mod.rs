@@ -207,6 +207,7 @@ fn ships_loaded(folder: Res<ShipsHandles>, asset_server: Res<AssetServer>) -> bo
 pub enum LoadingError {
     AssetLoadError(bevy::asset::AssetLoadError),
     MissingReference { ship: String, reference: String },
+    InvalidInitialState { ship: String, start: Epoch },
 }
 impl std::fmt::Display for LoadingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -214,6 +215,12 @@ impl std::fmt::Display for LoadingError {
             Self::AssetLoadError(err) => write!(f, "Asset load error: {err}"),
             Self::MissingReference { ship, reference } => {
                 write!(f, "Reference \"{reference}\" for \"{ship}\" does not exist")
+            }
+            Self::InvalidInitialState { ship, start } => {
+                write!(
+                    f,
+                    "Initial state of \"{ship}\" cannot be evaluated at {start}"
+                )
             }
         }
     }
@@ -580,9 +587,16 @@ fn spawn_ship(
         context,
     );
 
-    let propagator = PredictionPropagator::<SpacecraftTrajectory>(
-        flight_plan.build_propagator_at(ship.start, StateVector::new(ship.position, ship.velocity)),
-    );
+    let Ok(propagator) =
+        flight_plan.build_propagator_at(ship.start, StateVector::new(ship.position, ship.velocity))
+    else {
+        errors.push(LoadingError::InvalidInitialState {
+            ship: ship.name.to_string(),
+            start: ship.start,
+        });
+        return;
+    };
+    let propagator = PredictionPropagator::<SpacecraftTrajectory>(propagator);
 
     entity.insert((
         // No state scope needed as this is always a child of the root.

@@ -12,85 +12,8 @@ use ftime::Epoch;
 
 pub type StateVector = ephemeris::StateVector<DVec3>;
 
-pub enum PredictionTrajectory {
-    UniformSpline(UniformSpline),
-    CubicHermiteSpline(CubicHermiteSpline),
-    QuinticHermiteSpline(QuinticHermiteSpline),
-}
-
-impl DeepSizeOf for PredictionTrajectory {
-    #[inline]
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        match self {
-            Self::UniformSpline(traj) => traj.deep_size_of_children(context),
-            Self::CubicHermiteSpline(traj) => traj.deep_size_of_children(context),
-            Self::QuinticHermiteSpline(traj) => traj.deep_size_of_children(context),
-        }
-    }
-}
-
-impl BoundedTrajectory for PredictionTrajectory {
-    #[inline]
-    fn start(&self) -> Epoch {
-        match self {
-            Self::UniformSpline(traj) => traj.start(),
-            Self::CubicHermiteSpline(traj) => traj.start(),
-            Self::QuinticHermiteSpline(traj) => traj.start(),
-        }
-    }
-
-    #[inline]
-    fn end(&self) -> Epoch {
-        match self {
-            Self::UniformSpline(traj) => traj.end(),
-            Self::CubicHermiteSpline(traj) => traj.end(),
-            Self::QuinticHermiteSpline(traj) => traj.end(),
-        }
-    }
-
-    #[inline]
-    fn contains(&self, time: Epoch) -> bool {
-        match self {
-            Self::UniformSpline(traj) => traj.contains(time),
-            Self::CubicHermiteSpline(traj) => traj.contains(time),
-            Self::QuinticHermiteSpline(traj) => traj.contains(time),
-        }
-    }
-
-    #[inline]
-    fn segment_count(&self) -> usize {
-        match self {
-            Self::UniformSpline(traj) => traj.segment_count(),
-            Self::CubicHermiteSpline(traj) => traj.segment_count(),
-            Self::QuinticHermiteSpline(traj) => traj.segment_count(),
-        }
-    }
-}
-
-impl EvaluateTrajectory for PredictionTrajectory {
-    type Vector = DVec3;
-
-    #[inline]
-    fn position(&self, at: Epoch) -> Option<Self::Vector> {
-        match self {
-            Self::UniformSpline(traj) => traj.position(at),
-            Self::CubicHermiteSpline(traj) => traj.position(at),
-            Self::QuinticHermiteSpline(traj) => traj.position(at),
-        }
-    }
-
-    #[inline]
-    fn state_vector(&self, at: Epoch) -> Option<StateVector> {
-        match self {
-            Self::UniformSpline(traj) => traj.state_vector(at),
-            Self::CubicHermiteSpline(traj) => traj.state_vector(at),
-            Self::QuinticHermiteSpline(traj) => traj.state_vector(at),
-        }
-    }
-}
-
 #[derive(Component, Clone)]
-pub struct Trajectory(std::sync::Arc<std::sync::RwLock<PredictionTrajectory>>);
+pub struct Trajectory(std::sync::Arc<std::sync::RwLock<QuinticHermiteSpline>>);
 
 impl std::fmt::Debug for Trajectory {
     #[inline]
@@ -102,40 +25,26 @@ impl std::fmt::Debug for Trajectory {
     }
 }
 
-impl From<UniformSpline> for Trajectory {
-    #[inline]
-    fn from(trajectory: UniformSpline) -> Self {
-        Self::new(PredictionTrajectory::UniformSpline(trajectory))
-    }
-}
-
-impl From<CubicHermiteSpline> for Trajectory {
-    #[inline]
-    fn from(trajectory: CubicHermiteSpline) -> Self {
-        Self::new(PredictionTrajectory::CubicHermiteSpline(trajectory))
-    }
-}
-
 impl From<QuinticHermiteSpline> for Trajectory {
     #[inline]
     fn from(trajectory: QuinticHermiteSpline) -> Self {
-        Self::new(PredictionTrajectory::QuinticHermiteSpline(trajectory))
+        Self::new(trajectory)
     }
 }
 
 impl Trajectory {
     #[inline]
-    pub fn new(trajectory: PredictionTrajectory) -> Self {
+    pub fn new(trajectory: QuinticHermiteSpline) -> Self {
         Self(std::sync::Arc::new(std::sync::RwLock::new(trajectory)))
     }
 
     #[inline]
-    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, PredictionTrajectory> {
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, QuinticHermiteSpline> {
         self.0.read().unwrap()
     }
 
     #[inline]
-    pub fn write(&mut self) -> std::sync::RwLockWriteGuard<'_, PredictionTrajectory> {
+    pub fn write(&mut self) -> std::sync::RwLockWriteGuard<'_, QuinticHermiteSpline> {
         self.0.write().unwrap()
     }
 
@@ -162,10 +71,7 @@ impl Trajectory {
 
     #[inline]
     pub fn quintic_segment_at(&self, at: Epoch) -> Option<QuinticHermiteSegment> {
-        match &*self.read() {
-            PredictionTrajectory::QuinticHermiteSpline(spline) => spline.segment_at(at),
-            _ => None,
-        }
+        self.read().segment_at(at)
     }
 }
 

@@ -2,10 +2,7 @@ use crate::{
     MainState,
     analysis::{OrbitPlotConfig, OrbitPlotReference, Satellites, SoiTransitionsAnalysis},
     camera::Followed,
-    dynamics::{
-        Apsides, CubicHermiteSpline, SpacecraftPropagator, SpacecraftTrajectory, Timeline,
-        Trajectory,
-    },
+    dynamics::{Apsides, SpacecraftPropagator, SpacecraftTrajectory, Timeline, Trajectory},
     flight_plan::{GlobalBodies, IntegrationMethod},
     floating_origin::BigGridBundle,
     load::{INITIAL_ADAPTIVE_PARAMS, Ship, SpawnShip, SystemRoot},
@@ -127,6 +124,22 @@ impl ShipSpawnerWindow {
 
             let radius = 0.01;
             let sv = data.global_state_vector(data.start, &query_trajectory);
+            let Ok(propagator) = SpacecraftPropagator::verner87(
+                data.start,
+                sv,
+                Epoch::MAX,
+                INITIAL_ADAPTIVE_PARAMS,
+                global.bodies().clone(),
+                Timeline::default(),
+            ) else {
+                error!(
+                    "Closed ship spawner: initial state cannot be evaluated at {}",
+                    data.start
+                );
+                commands.remove_resource::<Self>();
+                return;
+            };
+            let trajectory = Trajectory::from(propagator.solution().trajectory.clone());
 
             commands.entity(entity).insert((
                 Name::new(data.name.to_string()),
@@ -140,18 +153,8 @@ impl ShipSpawnerWindow {
                     offset: Vec2::new(0.0, radius) * 1.1,
                     index: 99,
                 },
-                Trajectory::from(CubicHermiteSpline::new(
-                    data.start,
-                    sv.position,
-                    sv.velocity,
-                )),
-                SpacecraftTrajectory::new_propagator(
-                    data.start,
-                    sv,
-                    INITIAL_ADAPTIVE_PARAMS,
-                    global.bodies().clone(),
-                    Timeline::default(),
-                ),
+                trajectory,
+                PredictionPropagator::<SpacecraftTrajectory>(propagator),
                 PredictionController::<SpacecraftTrajectory>::new(entity),
                 PredictionControllerOf::<SpacecraftTrajectory>::new(vec![entity]),
                 SoiTransitionsAnalysis::Dynamic,
@@ -401,19 +404,26 @@ impl ShipSpawnerWindow {
         if !window.valid_preview {
             let sv = data.global_state_vector(data.start, &query_trajectory);
 
-            commands.trigger(SpacecraftTrajectory::new(
-                preview,
-                SpacecraftPropagator::verner87(
-                    data.start,
-                    sv,
-                    INITIAL_ADAPTIVE_PARAMS,
-                    propagator.context().clone(),
-                    Timeline::default(),
+            match SpacecraftPropagator::verner87(
+                data.start,
+                sv,
+                Epoch::MAX,
+                INITIAL_ADAPTIVE_PARAMS,
+                propagator.context().clone(),
+                Timeline::default(),
+            ) {
+                Ok(propagator) => commands.trigger(SpacecraftTrajectory::new(
+                    preview,
+                    propagator,
+                    data.preview_duration,
+                    Synchronisation::hertz(1000),
+                    true,
+                )),
+                Err(_) => warn!(
+                    "Kept previous ship preview: initial state cannot be evaluated at {}",
+                    data.start
                 ),
-                data.preview_duration,
-                Synchronisation::hertz(1000),
-                true,
-            ));
+            }
 
             window.valid_preview = true;
         }

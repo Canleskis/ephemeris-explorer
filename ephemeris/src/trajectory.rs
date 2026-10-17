@@ -1,6 +1,8 @@
-use deepsize::DeepSizeOf;
-use ftime::{Duration, Epoch};
 use std::collections::VecDeque;
+use std::ops::{Add, Mul, Sub};
+
+use deepsize::DeepSizeOf;
+use ftime::Epoch;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, PartialOrd)]
 pub struct StateVector<V> {
@@ -128,7 +130,6 @@ pub struct KinematicState<V> {
     pub acceleration: V,
 }
 
-/// **Addition:** the position and velocity of a kinematic state, dropping its acceleration.
 impl<V> From<KinematicState<V>> for StateVector<V> {
     #[inline]
     fn from(value: KinematicState<V>) -> Self {
@@ -477,533 +478,6 @@ where
     }
 }
 
-pub const DIV: usize = 8;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Polynomial<T>(smallvec::SmallVec<[T; DIV]>);
-
-impl<T> DeepSizeOf for Polynomial<T> {
-    #[inline]
-    fn deep_size_of_children(&self, _: &mut deepsize::Context) -> usize {
-        self.0.capacity() * std::mem::size_of::<T>()
-    }
-}
-
-impl<T> Polynomial<T> {
-    #[inline]
-    pub fn new(coeffs: smallvec::SmallVec<[T; DIV]>) -> Self {
-        Self(coeffs)
-    }
-
-    #[inline]
-    pub fn coeffs(&self) -> &smallvec::SmallVec<[T; DIV]> {
-        &self.0
-    }
-
-    #[inline]
-    pub fn eval(&self, t: f64) -> T
-    where
-        T: std::ops::Add<Output = T> + std::ops::Mul<f64, Output = T> + Default + Copy,
-    {
-        eval_slice_horner(&self.0, t)
-    }
-
-    #[inline]
-    pub fn eval_and_deriv(&self, t: f64) -> (T, T)
-    where
-        T: std::ops::Add<Output = T> + std::ops::Mul<f64, Output = T> + Default + Copy,
-    {
-        let first = self.0.first().copied().unwrap_or_default();
-        let last = self.0.last().copied().unwrap_or_default();
-
-        let mut eval = last;
-        let mut deriv = last;
-        for ci in self.0.iter().skip(1).rev().skip(1) {
-            eval = eval * t + *ci;
-            deriv = deriv * t + eval;
-        }
-        eval = eval * t + first;
-
-        (eval, deriv)
-    }
-
-    #[inline]
-    pub fn trim(&mut self)
-    where
-        T: Default + PartialEq,
-    {
-        while let Some(true) = self.0.as_slice().last().map(|c| c == &T::default()) {
-            let _ = self.0.pop();
-        }
-    }
-}
-
-#[inline]
-pub fn eval_slice_horner<T, U>(coeffs: &[T], t: U) -> T
-where
-    T: std::ops::Add<Output = T> + std::ops::Mul<U, Output = T> + Default + Copy,
-    U: Copy,
-{
-    let mut result = T::default();
-    for ci in coeffs.iter().rev() {
-        result = result * t + *ci;
-    }
-
-    result
-}
-
-#[derive(Clone, Debug)]
-pub struct UniformSpline<V> {
-    start: Epoch,
-    interval: Duration,
-    polynomials: VecDeque<Polynomial<V>>,
-}
-
-impl<V> DeepSizeOf for UniformSpline<V> {
-    #[inline]
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        self.polynomials.deep_size_of_children(context)
-    }
-}
-
-impl<V> BoundedTrajectory for UniformSpline<V> {
-    #[inline]
-    fn start(&self) -> Epoch {
-        self.start
-    }
-
-    #[inline]
-    fn end(&self) -> Epoch {
-        self.start + self.span()
-    }
-
-    #[inline]
-    fn contains(&self, time: Epoch) -> bool {
-        let local = time - self.start;
-        local.is_positive() && local <= self.span()
-    }
-
-    #[inline]
-    fn segment_count(&self) -> usize {
-        self.polynomials.len()
-    }
-}
-
-impl<V> EvaluateTrajectory for UniformSpline<V>
-where
-    V: std::ops::Add<Output = V>
-        + std::ops::Mul<f64, Output = V>
-        + std::ops::Div<f64, Output = V>
-        + Default
-        + Copy,
-{
-    type Vector = V;
-
-    #[inline]
-    fn position(&self, at: Epoch) -> Option<Self::Vector> {
-        self.evaluate(at, Polynomial::eval)
-    }
-
-    #[inline]
-    fn state_vector(&self, at: Epoch) -> Option<StateVector<Self::Vector>> {
-        let (pos, vel) = self.evaluate(at, Polynomial::eval_and_deriv)?;
-        // Polynomials are normalised to τ = t / interval so the derivative is dx/dτ.
-        // As such, dx/dt = dx/dτ * dτ/dt = dx/dτ * d(t / interval)/dt = dx/dτ / interval.
-        Some(StateVector::new(pos, vel / self.interval.as_seconds()))
-    }
-}
-
-impl<V> UniformSpline<V> {
-    #[inline]
-    pub fn new(start: Epoch, interval: Duration) -> Self {
-        Self {
-            start,
-            interval,
-            polynomials: VecDeque::new(),
-        }
-    }
-
-    #[inline]
-    pub fn between(&self, start: Epoch, end: Epoch) -> Option<Self>
-    where
-        V: Clone,
-    {
-        if self.polynomials.is_empty() {
-            return None;
-        }
-
-        let start = self.get_index_local_exclusive(start - self.start)?;
-        let end = self.get_index_local_exclusive(end - self.start)?;
-
-        Some(Self {
-            start: self.start + self.interval * start as f64,
-            interval: self.interval,
-            polynomials: (start..end + 1)
-                .filter_map(|i| self.polynomials.get(i).cloned())
-                .collect(),
-        })
-    }
-
-    #[inline]
-    pub fn push_front(&mut self, polynomial: Polynomial<V>) {
-        self.polynomials.push_front(polynomial);
-        self.start -= self.interval;
-    }
-
-    #[inline]
-    pub fn push_back(&mut self, polynomial: Polynomial<V>) {
-        self.polynomials.push_back(polynomial);
-    }
-
-    #[inline]
-    pub fn prepend(&mut self, trajectory: Self) {
-        assert_eq!(self.start, trajectory.start + trajectory.span());
-        assert_eq!(self.interval, trajectory.interval);
-
-        self.start = trajectory.start;
-
-        self.polynomials.reserve(trajectory.polynomials.len());
-        for polynomial in trajectory.polynomials.into_iter().rev() {
-            self.polynomials.push_front(polynomial);
-        }
-    }
-
-    #[inline]
-    pub fn append(&mut self, trajectory: Self) {
-        assert_eq!(self.start + self.span(), trajectory.start);
-        assert_eq!(self.interval, trajectory.interval);
-
-        self.polynomials.extend(trajectory.polynomials);
-    }
-
-    #[inline]
-    pub fn clear_before(&mut self, at: Epoch) {
-        if let Some(idx) = self.get_index_exclusive(at + self.interval) {
-            self.start += self.interval.scaled(idx as f64);
-            self.polynomials.drain(0..idx);
-        }
-    }
-
-    #[inline]
-    pub fn clear_after(&mut self, at: Epoch) {
-        if let Some(idx) = self.get_index(at) {
-            self.polynomials.truncate(idx);
-        }
-    }
-
-    #[inline]
-    pub fn evaluate<F, T>(&self, at: Epoch, eval: F) -> Option<T>
-    where
-        F: Fn(&Polynomial<V>, f64) -> T,
-    {
-        let (polynomial, t) = self.get_polynomial(at)?;
-        Some(eval(polynomial, t))
-    }
-
-    #[inline]
-    pub fn get_polynomial(&self, at: Epoch) -> Option<(&Polynomial<V>, f64)> {
-        let local = at - self.start;
-        // Return "previous" polynomial when at a knot, ensuring `self.end()` can be evaluated.
-        let local_index = self.get_index_local_exclusive(local)?;
-        let local_polynomial = local - self.interval * local_index as f64;
-        let normalised = local_polynomial.as_seconds() / self.interval.as_seconds();
-
-        Some((self.polynomials.get(local_index)?, normalised))
-    }
-
-    #[inline]
-    pub fn get_index(&self, at: Epoch) -> Option<usize> {
-        self.get_index_local(at - self.start)
-    }
-
-    #[inline]
-    pub fn get_index_exclusive(&self, at: Epoch) -> Option<usize> {
-        self.get_index_local_exclusive(at - self.start)
-    }
-
-    #[inline]
-    pub fn index(&self, at: Epoch) -> usize {
-        self.index_local(at - self.start)
-    }
-
-    #[inline]
-    pub fn index_exclusive(&self, at: Epoch) -> usize {
-        self.index_local_exclusive(at - self.start)
-    }
-
-    #[inline]
-    fn get_index_local(&self, time: Duration) -> Option<usize> {
-        if time.is_negative() || time >= self.span() {
-            return None;
-        }
-
-        Some(self.index_local(time))
-    }
-
-    #[inline]
-    fn get_index_local_exclusive(&self, time: Duration) -> Option<usize> {
-        if time.is_negative() || time > self.span() {
-            return None;
-        }
-
-        Some(self.index_local_exclusive(time))
-    }
-
-    #[inline]
-    fn index_local(&self, time: Duration) -> usize {
-        (time.as_seconds() / self.interval.as_seconds()) as usize
-    }
-
-    #[inline]
-    fn index_local_exclusive(&self, time: Duration) -> usize {
-        ((time.as_seconds() / self.interval.as_seconds()).ceil() as usize).saturating_sub(1)
-    }
-
-    #[inline]
-    pub fn interval(&self) -> Duration {
-        self.interval
-    }
-
-    #[inline]
-    pub fn span(&self) -> Duration {
-        self.interval.scaled(self.polynomials.len() as f64)
-    }
-
-    #[inline]
-    pub fn polynomials(&self) -> &VecDeque<Polynomial<V>> {
-        &self.polynomials
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct CubicHermite<V> {
-    bounds: (f64, f64),
-    a0: V,
-    a1: V,
-    a2: V,
-    a3: V,
-}
-
-impl<V> CubicHermite<V> {
-    #[inline]
-    pub fn new(bounds: (f64, f64), values: (V, V), derivatives: (V, V)) -> Self
-    where
-        V: std::ops::Add<Output = V>
-            + std::ops::Sub<Output = V>
-            + std::ops::Mul<f64, Output = V>
-            + PartialEq
-            + Default
-            + Copy,
-    {
-        let a0 = values.0;
-        let a1 = derivatives.0;
-        let dt = bounds.1 - bounds.0;
-
-        let (a2, a3) = if dt == 0.0 && values.0 == values.1 && derivatives.0 == derivatives.1 {
-            (V::default(), V::default())
-        } else {
-            let dt_recip = 1.0 / dt;
-            let dt_recip_2 = dt_recip * dt_recip;
-            let dt_recip_3 = dt_recip * dt_recip_2;
-            let dt_val = values.1 - values.0;
-            let a2 = dt_val * dt_recip_2 * 3.0 - (derivatives.0 * 2.0 + derivatives.1) * dt_recip;
-            let a3 = dt_val * dt_recip_3 * -2.0 + (derivatives.0 + derivatives.1) * dt_recip_2;
-            (a2, a3)
-        };
-
-        CubicHermite {
-            bounds,
-            a0,
-            a1,
-            a2,
-            a3,
-        }
-    }
-
-    #[inline]
-    pub fn eval(&self, t: f64) -> V
-    where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
-    {
-        let dt = t - self.bounds.0;
-        (((self.a3 * dt + self.a2) * dt) + self.a1) * dt + self.a0
-    }
-
-    #[inline]
-    pub fn eval_derivative(&self, t: f64) -> V
-    where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
-    {
-        let dt = t - self.bounds.0;
-        ((self.a3 * dt * 3.0 + self.a2 * 2.0) * dt) + self.a1
-    }
-
-    #[inline]
-    pub fn eval_derivative2(&self, t: f64) -> V
-    where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
-    {
-        let dt = t - self.bounds.0;
-        self.a3 * dt * 6.0 + self.a2 * 2.0
-    }
-}
-
-impl<V> EvaluateTrajectory for CubicHermite<V>
-where
-    V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
-{
-    type Vector = V;
-
-    #[inline]
-    fn position(&self, at: Epoch) -> Option<Self::Vector> {
-        Some(self.eval(at.as_offset_seconds()))
-    }
-
-    #[inline]
-    fn state_vector(&self, at: Epoch) -> Option<StateVector<Self::Vector>> {
-        Some(StateVector::new(
-            self.eval(at.as_offset_seconds()),
-            self.eval_derivative(at.as_offset_seconds()),
-        ))
-    }
-}
-
-impl<V> BoundedTrajectory for CubicHermite<V> {
-    #[inline]
-    fn start(&self) -> Epoch {
-        Epoch::from_offset_seconds(self.bounds.0)
-    }
-
-    #[inline]
-    fn end(&self) -> Epoch {
-        Epoch::from_offset_seconds(self.bounds.1)
-    }
-
-    #[inline]
-    fn segment_count(&self) -> usize {
-        1
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct CubicHermiteSpline<V>(Vec<(Epoch, StateVector<V>)>);
-
-impl<V> Default for CubicHermiteSpline<V> {
-    #[inline]
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
-
-impl<V> DeepSizeOf for CubicHermiteSpline<V> {
-    #[inline]
-    fn deep_size_of_children(&self, _: &mut deepsize::Context) -> usize {
-        self.0.capacity() * size_of::<(Epoch, StateVector<V>)>()
-    }
-}
-
-impl<V> BoundedTrajectory for CubicHermiteSpline<V> {
-    #[inline]
-    fn start(&self) -> Epoch {
-        self.0.first().map(|i| i.0).unwrap_or(Epoch::MIN)
-    }
-
-    #[inline]
-    fn end(&self) -> Epoch {
-        self.0.last().map(|i| i.0).unwrap_or(Epoch::MAX)
-    }
-
-    #[inline]
-    fn segment_count(&self) -> usize {
-        self.0.len().saturating_sub(1)
-    }
-}
-
-impl<V> EvaluateTrajectory for CubicHermiteSpline<V>
-where
-    V: std::ops::Add<Output = V>
-        + std::ops::Sub<Output = V>
-        + std::ops::Mul<f64, Output = V>
-        + PartialEq
-        + Default
-        + Copy,
-{
-    type Vector = V;
-
-    #[inline]
-    fn position(&self, at: Epoch) -> Option<V> {
-        match self.binary_search(at) {
-            Ok(i) => Some(self.0[i].1.position),
-            Err(i) => self.hermite3(i.checked_sub(1)?)?.position(at),
-        }
-    }
-
-    #[inline]
-    fn state_vector(&self, at: Epoch) -> Option<StateVector<V>> {
-        match self.binary_search(at) {
-            Ok(i) => Some(self.0[i].1),
-            Err(i) => self.hermite3(i.checked_sub(1)?)?.state_vector(at),
-        }
-    }
-}
-
-impl<V> CubicHermiteSpline<V> {
-    #[inline]
-    pub fn new(start: Epoch, position: V, velocity: V) -> Self {
-        Self(vec![(start, StateVector::new(position, velocity))])
-    }
-
-    #[inline]
-    pub fn push(&mut self, at: Epoch, position: V, velocity: V) {
-        self.0.push((at, StateVector::new(position, velocity)));
-    }
-
-    #[inline]
-    pub fn binary_search(&self, at: Epoch) -> Result<usize, usize> {
-        self.0.binary_search_by(|(t, _)| t.cmp(&at))
-    }
-
-    #[inline]
-    pub fn hermite3(&self, i: usize) -> Option<CubicHermite<V>>
-    where
-        V: std::ops::Add<Output = V>
-            + std::ops::Sub<Output = V>
-            + std::ops::Mul<f64, Output = V>
-            + PartialEq
-            + Default
-            + Copy,
-    {
-        let (t1, sv1) = self.0.get(i)?;
-        let (t2, sv2) = self.0.get(i + 1)?;
-        Some(CubicHermite::new(
-            (t1.as_offset_seconds(), t2.as_offset_seconds()),
-            (sv1.position, sv2.position),
-            (sv1.velocity, sv2.velocity),
-        ))
-    }
-
-    #[inline]
-    pub fn clear_after(&mut self, at: Epoch) {
-        // TODO: Use binary search
-        self.0.retain(|(k, _)| &at > k);
-    }
-
-    #[inline]
-    pub fn append(&mut self, rhs: CubicHermiteSpline<V>) {
-        self.0.extend(rhs.0);
-    }
-
-    #[inline]
-    pub fn get(&self, at: Epoch) -> Option<&StateVector<V>> {
-        self.binary_search(at).ok().map(|i| &self.0[i].1)
-    }
-
-    #[inline]
-    pub fn points(&self) -> &[(Epoch, StateVector<V>)] {
-        &self.0
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct QuinticHermiteSegment<V> {
     bounds: (f64, f64),
@@ -1106,6 +580,41 @@ impl<V> QuinticHermiteSegment<V> {
         ((((self.a5 * dt * 5.0 + self.a4 * 4.0) * dt) + self.a3 * 3.0) * dt + self.a2 * 2.0) * dt
             + self.a1
     }
+
+    #[inline]
+    fn eval_second_derivative(&self, t: f64) -> V
+    where
+        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    {
+        let dt = t - self.bounds.0;
+        (((self.a5 * dt * 20.0 + self.a4 * 12.0) * dt) + self.a3 * 6.0) * dt + self.a2 * 2.0
+    }
+
+    /// The acceleration at `at`, if the segment contains it.
+    #[inline]
+    pub fn acceleration(&self, at: Epoch) -> Option<V>
+    where
+        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    {
+        self.contains(at)
+            .then(|| self.eval_second_derivative(at.as_offset_seconds()))
+    }
+
+    /// The position, velocity and acceleration at `at`, if the segment contains it.
+    #[inline]
+    pub fn kinematic_state(&self, at: Epoch) -> Option<KinematicState<V>>
+    where
+        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    {
+        self.contains(at).then(|| {
+            let t = at.as_offset_seconds();
+            KinematicState::new(
+                self.eval(t),
+                self.eval_derivative(t),
+                self.eval_second_derivative(t),
+            )
+        })
+    }
 }
 
 impl<V> BoundedTrajectory for QuinticHermiteSegment<V> {
@@ -1151,48 +660,140 @@ where
     }
 }
 
+// A segment alone excludes its end (it belongs to the next segment of a spline).
+#[derive(Clone, Copy, Debug)]
+pub struct ClosedQuinticHermiteSegment<V> {
+    segment: QuinticHermiteSegment<V>,
+    end: (Epoch, KinematicState<V>),
+}
+
+impl<V> ClosedQuinticHermiteSegment<V> {
+    #[inline]
+    pub fn new(t1: Epoch, s1: KinematicState<V>, t2: Epoch, s2: KinematicState<V>) -> Self
+    where
+        V: std::ops::Add<Output = V>
+            + std::ops::Sub<Output = V>
+            + std::ops::Mul<f64, Output = V>
+            + PartialEq
+            + Default
+            + Copy,
+    {
+        Self {
+            segment: QuinticHermiteSegment::new(t1, s1, t2, s2),
+            end: (t2, s2),
+        }
+    }
+
+    #[inline]
+    pub fn acceleration(&self, at: Epoch) -> Option<V>
+    where
+        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    {
+        if at == self.end.0 {
+            Some(self.end.1.acceleration)
+        } else {
+            self.segment.acceleration(at)
+        }
+    }
+
+    #[inline]
+    pub fn kinematic_state(&self, at: Epoch) -> Option<KinematicState<V>>
+    where
+        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    {
+        if at == self.end.0 {
+            Some(self.end.1)
+        } else {
+            self.segment.kinematic_state(at)
+        }
+    }
+}
+
+impl<V> BoundedTrajectory for ClosedQuinticHermiteSegment<V> {
+    #[inline]
+    fn start(&self) -> Epoch {
+        self.segment.start()
+    }
+
+    #[inline]
+    fn end(&self) -> Epoch {
+        self.end.0
+    }
+
+    #[inline]
+    fn segment_count(&self) -> usize {
+        1
+    }
+}
+
+impl<V> EvaluateTrajectory for ClosedQuinticHermiteSegment<V>
+where
+    V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+{
+    type Vector = V;
+
+    #[inline]
+    fn position(&self, at: Epoch) -> Option<V> {
+        if at == self.end.0 {
+            Some(self.end.1.position)
+        } else {
+            self.segment.position(at)
+        }
+    }
+
+    #[inline]
+    fn state_vector(&self, at: Epoch) -> Option<StateVector<V>> {
+        if at == self.end.0 {
+            Some(self.end.1.into())
+        } else {
+            self.segment.state_vector(at)
+        }
+    }
+}
+
+pub type Knot<V> = (Epoch, KinematicState<V>);
+
 #[derive(Clone, Debug)]
-pub struct QuinticHermiteSpline<V>(VecDeque<(Epoch, KinematicState<V>)>);
+pub struct QuinticHermiteSpline<V> {
+    knots: VecDeque<Knot<V>>,
+}
 
 impl<V> Default for QuinticHermiteSpline<V> {
     #[inline]
     fn default() -> Self {
-        Self(Default::default())
+        Self {
+            knots: VecDeque::new(),
+        }
     }
 }
 
 impl<V> DeepSizeOf for QuinticHermiteSpline<V> {
     #[inline]
     fn deep_size_of_children(&self, _: &mut deepsize::Context) -> usize {
-        self.0.capacity() * size_of::<(Epoch, KinematicState<V>)>()
+        self.knots.capacity() * size_of::<Knot<V>>()
     }
 }
 
 impl<V> BoundedTrajectory for QuinticHermiteSpline<V> {
     #[inline]
     fn start(&self) -> Epoch {
-        self.0.front().map(|i| i.0).unwrap_or(Epoch::MIN)
+        self.knots.front().map_or(Epoch::MIN, |(t, _)| *t)
     }
 
     #[inline]
     fn end(&self) -> Epoch {
-        self.0.back().map(|i| i.0).unwrap_or(Epoch::MAX)
+        self.knots.back().map_or(Epoch::MAX, |(t, _)| *t)
     }
 
     #[inline]
     fn segment_count(&self) -> usize {
-        self.0.len().saturating_sub(1)
+        self.knots.len().saturating_sub(1)
     }
 }
 
 impl<V> EvaluateTrajectory for QuinticHermiteSpline<V>
 where
-    V: std::ops::Add<Output = V>
-        + std::ops::Sub<Output = V>
-        + std::ops::Mul<f64, Output = V>
-        + PartialEq
-        + Default
-        + Copy,
+    V: Add<Output = V> + Sub<Output = V> + Mul<f64, Output = V> + PartialEq + Default + Copy,
 {
     type Vector = V;
 
@@ -1210,105 +811,162 @@ where
 impl<V> QuinticHermiteSpline<V> {
     #[inline]
     pub fn new(start: Epoch, position: V, velocity: V, acceleration: V) -> Self {
-        Self([(start, KinematicState::new(position, velocity, acceleration))].into())
+        Self {
+            knots: [(start, KinematicState::new(position, velocity, acceleration))].into(),
+        }
+    }
+
+    #[inline]
+    pub fn knots(&self) -> &VecDeque<Knot<V>> {
+        &self.knots
     }
 
     #[inline]
     pub fn push_front(&mut self, at: Epoch, position: V, velocity: V, acceleration: V) {
-        self.0
+        self.knots
             .push_front((at, KinematicState::new(position, velocity, acceleration)));
     }
 
     #[inline]
     pub fn push_back(&mut self, at: Epoch, position: V, velocity: V, acceleration: V) {
-        self.0
+        self.knots
             .push_back((at, KinematicState::new(position, velocity, acceleration)));
     }
 
     #[inline]
-    pub fn binary_search(&self, at: Epoch) -> Result<usize, usize> {
-        self.0.binary_search_by(|(t, ..)| t.cmp(&at))
-    }
-
-    #[inline]
-    fn binary_search_first(&self, at: Epoch) -> Result<usize, usize> {
-        self.binary_search(at).map(|mut i| {
-            while i > 0 && self.0[i - 1].0 == at {
-                i -= 1;
-            }
-            i
-        })
-    }
-
-    #[inline]
-    fn binary_search_last(&self, at: Epoch) -> Result<usize, usize> {
-        self.binary_search(at).map(|mut i| {
-            while i + 1 < self.0.len() && self.0[i + 1].0 == at {
-                i += 1;
-            }
-            i
-        })
-    }
-
-    #[inline]
-    pub fn segment_at(&self, at: Epoch) -> Option<QuinticHermiteSegment<V>>
-    where
-        V: std::ops::Add<Output = V>
-            + std::ops::Sub<Output = V>
-            + std::ops::Mul<f64, Output = V>
-            + PartialEq
-            + Default
-            + Copy,
+    pub fn push_back_after_change(
+        &mut self,
+        change_acceleration: V,
+        at: Epoch,
+        position: V,
+        velocity: V,
+        acceleration: V,
+    ) where
+        V: Copy,
     {
-        let i = match self.binary_search_last(at) {
-            Ok(i) => i,
-            Err(i) if i == 0 || i == self.0.len() => return None,
-            Err(i) => i - 1,
-        };
-        let (t1, s1) = &self.0[i];
-        let (t2, s2) = self.0.get(i + 1).unwrap_or(&self.0[i]);
-        let segment = QuinticHermiteSegment::new(*t1, *s1, *t2, *s2);
-
-        Some(segment)
-    }
-
-    #[inline]
-    pub fn clear_before(&mut self, at: Epoch) {
-        let i = match self.binary_search_last(at) {
-            Ok(i) => i + 1,
-            Err(i) => i,
-        };
-        self.0.drain(..i);
-    }
-
-    #[inline]
-    pub fn clear_after(&mut self, at: Epoch) {
-        let i = match self.binary_search_first(at) {
-            Ok(i) | Err(i) => i,
-        };
-        self.0.drain(i..);
-    }
-
-    #[inline]
-    pub fn append(&mut self, trajectory: QuinticHermiteSpline<V>) {
-        self.0.extend(trajectory.0);
-    }
-
-    #[inline]
-    pub fn prepend(&mut self, trajectory: QuinticHermiteSpline<V>) {
-        self.0.reserve(trajectory.0.len());
-        for item in trajectory.0.into_iter().rev() {
-            self.0.push_front(item);
+        if let Some(&(t, k)) = self.knots.back() {
+            self.push_back(t, k.position, k.velocity, change_acceleration);
+            self.push_back(at, position, velocity, acceleration);
         }
     }
 
     #[inline]
-    pub fn get(&self, at: Epoch) -> Option<&KinematicState<V>> {
-        self.binary_search(at).ok().map(|i| &self.0[i].1)
+    pub fn knot_ending_at(&self, at: Epoch) -> Option<&KinematicState<V>> {
+        let i = self.knots.partition_point(|(t, _)| *t < at);
+        self.knots.get(i).filter(|(t, _)| *t == at).map(|(_, k)| k)
     }
 
     #[inline]
-    pub fn points(&self) -> &VecDeque<(Epoch, KinematicState<V>)> {
-        &self.0
+    pub fn knot_starting_at(&self, at: Epoch) -> Option<&KinematicState<V>> {
+        let i = self
+            .knots
+            .partition_point(|(t, _)| *t <= at)
+            .checked_sub(1)?;
+        self.knots.get(i).filter(|(t, _)| *t == at).map(|(_, k)| k)
+    }
+
+    #[inline]
+    pub fn clear_after(&mut self, at: Epoch) {
+        self.knots
+            .truncate(self.knots.partition_point(|(t, _)| *t <= at));
+        self.remove_change_at_end();
+    }
+
+    #[inline]
+    pub fn clear_after_inclusive(&mut self, at: Epoch) {
+        self.knots
+            .truncate(self.knots.partition_point(|(t, _)| *t < at));
+        self.remove_change_at_end();
+    }
+
+    #[inline]
+    pub fn clear_before(&mut self, at: Epoch) {
+        self.knots
+            .drain(..self.knots.partition_point(|(t, _)| *t < at));
+        if self.knots.get(1).is_some_and(|(t, _)| *t == at) {
+            self.knots.pop_front();
+        }
+    }
+
+    #[inline]
+    pub fn clear_before_inclusive(&mut self, at: Epoch) {
+        self.knots
+            .drain(..self.knots.partition_point(|(t, _)| *t <= at));
+    }
+
+    #[inline]
+    pub fn append(&mut self, other: QuinticHermiteSpline<V>) {
+        self.knots.extend(other.knots);
+    }
+
+    #[inline]
+    pub fn prepend(&mut self, other: QuinticHermiteSpline<V>) {
+        self.knots.reserve(other.knots.len());
+        for knot in other.knots.into_iter().rev() {
+            self.knots.push_front(knot);
+        }
+    }
+
+    #[inline]
+    pub fn join(&mut self, other: QuinticHermiteSpline<V>) {
+        let start = other.start();
+        let i = self.knots.partition_point(|(t, _)| *t < start);
+        let change_at_start = self.knots.get(i + 1).is_some_and(|(t, _)| *t == start);
+        self.knots.truncate(i + usize::from(change_at_start));
+        self.knots.extend(other.knots);
+        // A single knot after a change leaves the change at the end.
+        self.remove_change_at_end();
+    }
+
+    #[inline]
+    fn remove_change_at_end(&mut self) {
+        let n = self.knots.len();
+        if n >= 2 && self.knots[n - 2].0 == self.knots[n - 1].0 {
+            self.knots.pop_back();
+        }
+    }
+}
+
+impl<V> QuinticHermiteSpline<V>
+where
+    V: Add<Output = V> + Sub<Output = V> + Mul<f64, Output = V> + PartialEq + Default + Copy,
+{
+    #[inline]
+    pub fn segment_at(&self, at: Epoch) -> Option<QuinticHermiteSegment<V>> {
+        let i = self
+            .knots
+            .partition_point(|(t, _)| *t <= at)
+            .checked_sub(1)?;
+        let (t1, k1) = self.knots[i];
+        let (t2, k2) = match self.knots.get(i + 1) {
+            Some(&next) => next,
+            None if t1 == at => (t1, k1),
+            None => return None,
+        };
+        Some(QuinticHermiteSegment::new(t1, k1, t2, k2))
+    }
+
+    #[inline]
+    pub fn last_closed_segment(&self) -> Option<ClosedQuinticHermiteSegment<V>> {
+        let i = self.knots.len().checked_sub(2)?;
+        let (t1, k1) = self.knots[i];
+        let (t2, k2) = self.knots[i + 1];
+        Some(ClosedQuinticHermiteSegment::new(t1, k1, t2, k2))
+    }
+
+    #[inline]
+    pub fn end_at(&mut self, at: Epoch) {
+        let interpolated = self
+            .segment_at(at)
+            .filter(|segment| segment.start() < at)
+            .and_then(|segment| segment.kinematic_state(at));
+        match interpolated {
+            Some(knot) => {
+                self.knots
+                    .truncate(self.knots.partition_point(|(t, _)| *t <= at));
+                self.knots.push_back((at, knot));
+            }
+            None => self.clear_after(at),
+        }
     }
 }

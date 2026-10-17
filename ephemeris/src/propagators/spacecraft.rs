@@ -1,7 +1,7 @@
 use crate::{
     DirectionalPropagator, DirectionalSolout, Forward, IncrementalPropagator, PropagationDirection,
     Propagator,
-    trajectory::{BoundedTrajectory, CubicHermiteSpline, StateVector},
+    trajectory::{BoundedTrajectory, KinematicState, QuinticHermiteSpline, StateVector},
 };
 
 use ftime::{Duration, Epoch};
@@ -262,6 +262,17 @@ impl<V, F, C> SpacecraftModel<V, F, C> {
     }
 
     #[inline]
+    pub fn acceleration(&mut self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
+    where
+        C: AccelerationModel<Vector = V>,
+        V: std::ops::Add<Output = V> + Default,
+        F: Frame<V, C>,
+        F::Transform: Transform<V>,
+    {
+        Ok(self.context_acceleration(t, sv)? + self.manoeuvre_acceleration(t, sv)?)
+    }
+
+    #[inline]
     pub fn context_acceleration(&mut self, t: Epoch, sv: &StateVector<V>) -> Result<V, EvalFailed>
     where
         C: AccelerationModel<Vector = V>,
@@ -306,8 +317,7 @@ where
         [y]: &[StateVector<V>; 1],
         [dy]: &mut [StateVector<V>; 1],
     ) -> Result<(), EvalFailed> {
-        let t = Epoch::from_offset_seconds(t);
-        dy.velocity = self.context_acceleration(t, y)? + self.manoeuvre_acceleration(t, y)?;
+        dy.velocity = self.acceleration(Epoch::from_offset_seconds(t), y)?;
         dy.position = y.velocity;
 
         Ok(())
@@ -329,9 +339,7 @@ where
         [dy]: &[V; 1],
         [ddy]: &mut [V; 1],
     ) -> Result<(), EvalFailed> {
-        let t = Epoch::from_offset_seconds(t);
-        let sv = &StateVector::new(*y, *dy);
-        *ddy = self.context_acceleration(t, sv)? + self.manoeuvre_acceleration(t, sv)?;
+        *ddy = self.acceleration(Epoch::from_offset_seconds(t), &StateVector::new(*y, *dy))?;
 
         Ok(())
     }
@@ -426,6 +434,7 @@ pub struct SpacecraftPropagator<
     O: Solout<SpacecraftProblem<T, F, C>>,
 > {
     method: M,
+    bound: f64,
     integration: Integration<SpacecraftProblem<T, F, C>, M, O>,
 }
 
@@ -444,7 +453,44 @@ where
     fn clone(&self) -> Self {
         Self {
             method: self.method.clone(),
+            bound: self.bound,
             integration: self.integration.clone(),
+        }
+    }
+}
+
+impl<T, F, C, M> SpacecraftPropagator<T, F, C, M, ()>
+where
+    T: SpacecraftState,
+    M: Method<SpacecraftProblem<T, F, C>>,
+{
+    #[inline]
+    pub fn new<Params>(params: Params, mut problem: SpacecraftProblem<T, F, C>) -> Self
+    where
+        Params: Clone,
+        M: NewMethod<Params>,
+        M::Integrator: Integrator<SpacecraftProblem<T, F, C>>,
+    {
+        let bound = problem.bound;
+        let segment_bound = problem.ode.current_segment().end().as_offset_seconds();
+        problem.bound = segment_bound.min(bound);
+
+        Self {
+            method: M::new(params.clone()),
+            bound,
+            integration: M::new(params).integrate(problem),
+        }
+    }
+
+    #[inline]
+    pub fn with_solout<O>(self, solout: O) -> SpacecraftPropagator<T, F, C, M, O>
+    where
+        O: Solout<SpacecraftProblem<T, F, C>>,
+    {
+        SpacecraftPropagator {
+            method: self.method,
+            bound: self.bound,
+            integration: self.integration.with_solout(solout),
         }
     }
 }
@@ -455,33 +501,6 @@ where
     M: Method<SpacecraftProblem<T, F, C>>,
     O: Solout<SpacecraftProblem<T, F, C>>,
 {
-    #[inline]
-    pub fn new<Params>(
-        initial_time: Epoch,
-        initial_state: StateVector<T::Vector>,
-        params: Params,
-        timeline: Timeline<T::Vector, F>,
-        context: C,
-        solout: O,
-    ) -> Self
-    where
-        Params: Clone,
-        M: NewMethod<Params>,
-        M::Integrator: Integrator<SpacecraftProblem<T, F, C>>,
-    {
-        Self {
-            method: M::new(params.clone()),
-            integration: M::new(params)
-                .integrate(SpacecraftProblem {
-                    time: initial_time.as_offset_seconds(),
-                    bound: timeline.segment_at(initial_time).end().as_offset_seconds(),
-                    state: T::new(initial_state),
-                    ode: SpacecraftModel::new(initial_time, timeline, context),
-                })
-                .with_solout(solout),
-        }
-    }
-
     #[inline]
     pub fn reset_integrator(&mut self)
     where
@@ -512,8 +531,18 @@ where
     }
 
     #[inline]
+    pub fn problem(&self) -> &SpacecraftProblem<T, F, C> {
+        &self.integration.problem
+    }
+
+    #[inline]
     pub fn time(&self) -> Epoch {
         Epoch::from_offset_seconds(self.integration.problem.time)
+    }
+
+    #[inline]
+    pub fn bound(&self) -> Epoch {
+        Epoch::from_offset_seconds(self.bound)
     }
 
     #[inline]
@@ -561,14 +590,8 @@ where
     }
 
     #[inline]
-    pub fn join(lhs: &mut CubicHermiteSpline<T::Vector>, rhs: CubicHermiteSpline<T::Vector>) {
-        lhs.clear_after(rhs.start());
-        lhs.append(rhs);
-    }
-
-    #[inline]
-    fn set_bound(&mut self, bound: Epoch) {
-        self.integration.problem.bound = bound.as_offset_seconds();
+    fn set_integration_bound(&mut self, bound: Epoch) {
+        self.integration.problem.bound = bound.as_offset_seconds().min(self.bound);
     }
 }
 
@@ -610,7 +633,7 @@ where
         // context, restarting means creating a new integrator from the current problem and
         // expecting the same subsequent steps).
         if let Some(new_end) = self.integration.problem.ode.advance_timeline(self.time()) {
-            self.set_bound(new_end);
+            self.set_integration_bound(new_end);
             self.reset_integrator();
         }
         if !self.integration.advance()? {
@@ -648,21 +671,81 @@ where
     }
 }
 
-pub struct CubicHermiteSplineSolout;
+#[derive(Clone, Copy, Debug)]
+pub struct QuinticHermiteSplineSolout<V> {
+    manoeuvre: usize,
+    time: Epoch,
+    state: KinematicState<V>,
+}
 
-impl<T, F, C> Solout<SpacecraftProblem<T, F, C>> for CubicHermiteSplineSolout
+impl<V> QuinticHermiteSplineSolout<V> {
+    #[inline]
+    pub fn new<T, F, C>(problem: &mut SpacecraftProblem<T, F, C>) -> Result<Self, EvalFailed>
+    where
+        T: SpacecraftState<Vector = V>,
+        V: std::ops::Add<Output = V> + Default + Copy,
+        C: AccelerationModel<Vector = V>,
+        F: Frame<V, C>,
+        F::Transform: Transform<V>,
+    {
+        let time = Epoch::from_offset_seconds(problem.time);
+        let sv = StateVector::new(*problem.state.position(), *problem.state.velocity());
+        let acceleration = problem.ode.acceleration(time, &sv)?;
+
+        Ok(Self {
+            time,
+            state: KinematicState::new(sv.position, sv.velocity, acceleration),
+            manoeuvre: problem.ode.current_segment,
+        })
+    }
+ 
+    #[inline]
+    fn push_step<T, F, C>(
+        &mut self,
+        problem: &mut SpacecraftProblem<T, F, C>,
+        solution: &mut QuinticHermiteSpline<V>,
+    ) -> Result<(), EvalFailed>
+    where
+        T: SpacecraftState<Vector = V>,
+        V: std::ops::Add<Output = V> + Default + Copy,
+        C: AccelerationModel<Vector = V>,
+        F: Frame<V, C>,
+        F::Transform: Transform<V>,
+    {
+        let change_acceleration = (problem.ode.current_segment != self.manoeuvre)
+            .then(|| problem.ode.acceleration(self.time, &self.state.into()))
+            .transpose()?;
+
+        *self = Self::new(problem)?;
+        let (at, k) = (self.time, self.state);
+        match change_acceleration {
+            Some(change) => {
+                solution.push_back_after_change(change, at, k.position, k.velocity, k.acceleration)
+            }
+            None => solution.push_back(at, k.position, k.velocity, k.acceleration),
+        }
+
+        Ok(())
+    }
+}
+
+impl<V, T, F, C> Solout<SpacecraftProblem<T, F, C>> for QuinticHermiteSplineSolout<V>
 where
-    T: SpacecraftState,
-    T::Vector: Clone,
+    T: SpacecraftState<Vector = V>,
+    V: std::ops::Add<Output = V> + Default + Copy,
+    C: AccelerationModel<Vector = V>,
+    F: Frame<V, C>,
+    F::Transform: Transform<V>,
 {
-    type Solution = CubicHermiteSpline<T::Vector>;
+    type Solution = QuinticHermiteSpline<V>;
 
     #[inline]
-    fn new_solution(&self, problem: &SpacecraftProblem<T, F, C>) -> Self::Solution {
-        CubicHermiteSpline::new(
-            Epoch::from_offset_seconds(problem.time),
-            problem.state.position().clone(),
-            problem.state.velocity().clone(),
+    fn new_solution(&self, _: &SpacecraftProblem<T, F, C>) -> Self::Solution {
+        QuinticHermiteSpline::new(
+            self.time,
+            self.state.position,
+            self.state.velocity,
+            self.state.acceleration,
         )
     }
 
@@ -672,20 +755,17 @@ where
         problem: &mut SpacecraftProblem<T, F, C>,
         solution: &mut Self::Solution,
     ) -> bool {
-        solution.push(
-            Epoch::from_offset_seconds(problem.time),
-            problem.state.position().clone(),
-            problem.state.velocity().clone(),
-        );
-
-        true
+        self.push_step(problem, solution).is_ok()
     }
 }
 
-impl<T, F, C> DirectionalSolout<SpacecraftProblem<T, F, C>> for CubicHermiteSplineSolout
+impl<V, T, F, C> DirectionalSolout<SpacecraftProblem<T, F, C>> for QuinticHermiteSplineSolout<V>
 where
-    T: SpacecraftState,
-    T::Vector: Clone,
+    T: SpacecraftState<Vector = V>,
+    V: std::ops::Add<Output = V> + Default + Copy,
+    C: AccelerationModel<Vector = V>,
+    F: Frame<V, C>,
+    F::Transform: Transform<V>,
 {
     type Direction = Forward;
 

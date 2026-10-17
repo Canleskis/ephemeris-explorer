@@ -185,44 +185,50 @@ where
     }
 }
 
-/// Used for adaptive step size control
 #[derive(Clone, Copy, Debug)]
-pub struct IController<T, U> {
+pub struct PIController<T, U> {
     fac_min: U,
     fac_max: U,
     fac: U,
     h_max: T,
+    err_old: U,
+    rejected: bool,
 }
 
-impl<T, U> Default for IController<T, U>
+impl<T, U> Default for PIController<T, U>
 where
     T: UpperBounded,
-    U: Div<Output = U> + From<u16>,
+    U: Div<Output = U> + Inv<Output = U> + From<u16>,
 {
     #[inline]
     fn default() -> Self {
-        Self {
-            fac_min: U::from(2) / U::from(10),
-            fac_max: U::from(5),
-            fac: U::from(9) / U::from(10),
-            h_max: T::max_value(),
-        }
+        Self::new(
+            U::from(2) / U::from(10),
+            U::from(5),
+            U::from(9) / U::from(10),
+            T::max_value(),
+        )
     }
 }
 
-impl<T, U> IController<T, U> {
+impl<T, U> PIController<T, U> {
     #[inline]
-    pub fn new(fac_min: U, fac_max: U, safety_factor: U, h_max: T) -> Self {
+    pub fn new(fac_min: U, fac_max: U, safety_factor: U, h_max: T) -> Self
+    where
+        U: Inv<Output = U> + From<u16>,
+    {
         Self {
             fac_min,
             fac_max,
             fac: safety_factor,
             h_max,
+            err_old: U::from(10_000).inv(),
+            rejected: false,
         }
     }
 
     #[inline]
-    pub fn step(&self, err: U, h: &mut T, order: u16) -> bool
+    pub fn step(&mut self, err: U, h: &mut T, order: u16) -> bool
     where
         U: Pow<U, Output = U>
             + Mul<Output = U>
@@ -234,17 +240,34 @@ impl<T, U> IController<T, U> {
             + Copy,
         T: Mul<U, Output = T> + Neg<Output = T> + PartialOrd + Default + Copy,
     {
-        let k = U::from(order);
-        let m = self.fac * err.pow(-k.inv());
-        let nh = *h * clamp(m, self.fac_min, self.fac_max);
+        let k = U::from(order + 1);
+        let accepted = err <= U::one();
+        let factor = if accepted {
+            let tenth_k_inv = (U::from(10) * k).inv();
+            let m = self.fac
+                * err.pow(-(U::from(7) * tenth_k_inv))
+                * self.err_old.pow(U::from(4) * tenth_k_inv);
+            let fac_max = if self.rejected {
+                U::one()
+            } else {
+                self.fac_max
+            };
+            let err_old_min = U::from(10_000).inv();
+            self.err_old = if err > err_old_min { err } else { err_old_min };
+            clamp(m, self.fac_min, fac_max)
+        } else {
+            clamp(self.fac * err.pow(-k.inv()), self.fac_min, U::one())
+        };
+        self.rejected = !accepted;
 
+        let nh = *h * factor;
         *h = if nh >= T::default() {
             clamp_max(nh, self.h_max)
         } else {
             clamp_min(nh, -self.h_max)
         };
 
-        err <= U::one()
+        accepted
     }
 }
 
@@ -296,7 +319,7 @@ pub struct AdaptiveRungeKuttaIntegrator<R, T, Tol, U, V = <R as RKEmbedded<T>>::
     error: V,
     prev: PreviousStep<R, T, V, Tol>,
     tol: Tol,
-    controller: IController<T, U>,
+    controller: PIController<T, U>,
     n: u32,
     pub n_max: u32,
 }
@@ -319,6 +342,7 @@ where
     C: RKCoefficients<P>,
     C::Instance: RKInstance<P> + RKEmbedded<P::Time, State = P::State>,
     Tol: Clone,
+    U: Inv<Output = U> + From<u16>,
 {
     type Integrator = AdaptiveRungeKuttaIntegrator<C::Instance, P::Time, Tol, U>;
 
@@ -335,7 +359,7 @@ where
                 tol: self.tolerance.clone(),
             },
             tol: self.tolerance.clone(),
-            controller: IController::new(self.fac_min, self.fac_max, self.fac, self.h_max),
+            controller: PIController::new(self.fac_min, self.fac_max, self.fac, self.h_max),
             n: 0,
             n_max: self.n_max,
         }
