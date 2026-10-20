@@ -25,7 +25,7 @@ use crate::{
     selection::Selectable,
     simulation::{BoundsTime, SimulationTime},
     starlight::Star,
-    ui::{Id, Labelled, PlotBound},
+    ui::{Id, Labelled, PlotBound, PlotBoundMode},
 };
 
 use bevy::{
@@ -353,10 +353,9 @@ fn spawn_loaded_bodies(
             SoiTransitions::default(),
             OrbitPlotConfig {
                 enabled: depth <= 1,
-                start: Epoch::MIN,
-                end: Epoch::MAX,
+                start: PlotBound::new(PlotBoundMode::Current, system.epoch),
+                end: PlotBound::new(PlotBoundMode::Unbounded, system.epoch),
                 color: visual.orbit.color,
-                bound: PlotBound::Start,
                 resolution: 0.5,
                 max_points_per_segment: 10_000,
                 reference: OrbitPlotReference::Primary,
@@ -575,6 +574,7 @@ fn spawn_ship(
 
     let flight_plan = FlightPlan::new(
         ship.end,
+        ship.unbounded_end,
         ship.integrator,
         AdaptiveMethodParams {
             tol: AbsTol {
@@ -624,10 +624,9 @@ fn spawn_ship(
         SoiTransitionsAnalysis::Dynamic,
         OrbitPlotConfig {
             enabled: true,
-            start: Epoch::MIN,
-            end: Epoch::MAX,
+            start: PlotBound::new(PlotBoundMode::Current, ship.start),
+            end: PlotBound::new(PlotBoundMode::Unbounded, ship.start),
             color,
-            bound: PlotBound::Start,
             resolution: 0.5,
             max_points_per_segment: 10_000,
             reference: OrbitPlotReference::Primary,

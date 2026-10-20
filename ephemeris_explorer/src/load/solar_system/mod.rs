@@ -213,6 +213,9 @@ pub struct Ship {
     pub tolerance: f64,
     pub start: Epoch,
     pub end: Epoch,
+    /// Whether the flight plan follows the ephemerides as they extend rather than ending at `end`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unbounded_end: bool,
     pub position: DVec3,
     pub velocity: DVec3,
     pub burns: Vec<BurnDe>,
@@ -226,6 +229,7 @@ impl Ship {
         tolerance: f64,
         start: Epoch,
         end: Epoch,
+        unbounded_end: bool,
         position: DVec3,
         velocity: DVec3,
         burns: Vec<BurnDe>,
@@ -237,6 +241,7 @@ impl Ship {
             tolerance,
             start,
             end,
+            unbounded_end,
             position,
             velocity,
             burns,

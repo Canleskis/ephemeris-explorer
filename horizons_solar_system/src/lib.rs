@@ -33,14 +33,17 @@ fn to_iso(date_str: Epoch) -> String {
     date_str.to_string().replace(' ', "T")
 }
 
-const TT_OFFSET: Duration = Duration::from_seconds(32.184);
+// TT - TAI = 32.184 s, as whole seconds and the fraction of a second parsed from `.184`, so that
+// whole milliseconds of either scale convert exactly.
+const TT_OFFSET_SECONDS: Duration = Duration::from_seconds(32.0);
+const TT_OFFSET_FRACTION: Duration = Duration::from_milliseconds(184.0);
 
 fn to_tai(epoch: Epoch) -> Epoch {
-    epoch - TT_OFFSET
+    epoch - TT_OFFSET_SECONDS - TT_OFFSET_FRACTION
 }
 
 fn to_tt(epoch: Epoch) -> Epoch {
-    epoch + TT_OFFSET
+    epoch + TT_OFFSET_SECONDS + TT_OFFSET_FRACTION
 }
 
 #[inline]

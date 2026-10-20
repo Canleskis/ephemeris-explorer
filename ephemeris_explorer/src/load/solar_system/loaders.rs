@@ -250,7 +250,7 @@ impl bevy::asset::AssetLoader for SolarSystemStateLoader {
                         mu: body.mu * DISTANCE_SCALE * DISTANCE_SCALE * DISTANCE_SCALE,
                         position: body.position * DISTANCE_SCALE,
                         velocity: body.velocity * DISTANCE_SCALE,
-                        visuals: ctx.load(format!("visuals/{}.visuals.toml", &label)),
+                        visuals: ctx.load(format!("visuals/{}.visuals.toml", label)),
                     },
                 );
             }

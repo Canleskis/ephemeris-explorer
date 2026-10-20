@@ -14,10 +14,6 @@ pub trait AccelerationModel {
     -> Option<Self::Vector>;
 }
 
-pub trait PropagationContext {
-    fn max_time(&self) -> Epoch;
-}
-
 pub trait Transform<V> {
     fn to_inertial(&self, v: &V) -> V;
 }
@@ -224,6 +220,8 @@ impl<V, F> Timeline<V, F> {
 
 #[derive(Clone)]
 pub struct SpacecraftModel<V, F, C> {
+    reference: Epoch,
+    end: Epoch,
     current_segment: usize,
     timeline: Timeline<V, F>,
     context: C,
@@ -231,29 +229,54 @@ pub struct SpacecraftModel<V, F, C> {
 
 impl<V, F, C> SpacecraftModel<V, F, C> {
     #[inline]
-    pub fn new(time: Epoch, timeline: Timeline<V, F>, context: C) -> Self {
+    pub fn new(start: Epoch, end: Epoch, timeline: Timeline<V, F>, context: C) -> Self {
         Self {
-            current_segment: timeline.segment_idx_at(time),
+            reference: start,
+            end,
+            current_segment: timeline.segment_idx_at(start),
             timeline,
             context,
         }
     }
 
+    /// The problem of propagating `state` with this model.
     #[inline]
-    pub fn update_index(&mut self, time: Epoch) -> bool {
-        let old_index = self.current_segment;
-        self.current_segment = self.timeline.segment_idx_at(time);
-
-        old_index != self.current_segment
+    pub fn into_problem<T>(self, state: T) -> SpacecraftProblem<T, F, C, V> {
+        ODEProblem::new(0.0, self.offset(self.bound()), state, self)
     }
 
     #[inline]
-    pub fn advance_timeline(&mut self, time: Epoch) -> Option<Epoch> {
-        if time >= self.current_segment().end() {
-            self.current_segment += 1;
-            return Some(self.current_segment().end());
+    pub fn epoch(&self, t: f64) -> Epoch {
+        self.reference + Duration::from_seconds(t)
+    }
+
+    #[inline]
+    pub fn offset(&self, epoch: Epoch) -> f64 {
+        (epoch - self.reference).as_seconds()
+    }
+
+    #[inline]
+    pub fn reference(&self) -> Epoch {
+        self.reference
+    }
+
+    #[inline]
+    pub fn end(&self) -> Epoch {
+        self.end
+    }
+
+    #[inline]
+    pub fn bound(&self) -> Epoch {
+        self.current_segment().end().min(self.end)
+    }
+
+    #[inline]
+    pub fn advance_timeline(&mut self) -> bool {
+        if self.reference < self.current_segment().end() {
+            return false;
         }
-        None
+        self.current_segment = self.timeline.segment_idx_at(self.reference);
+        true
     }
 
     #[inline]
@@ -317,7 +340,7 @@ where
         [y]: &[StateVector<V>; 1],
         [dy]: &mut [StateVector<V>; 1],
     ) -> Result<(), EvalFailed> {
-        dy.velocity = self.acceleration(Epoch::from_offset_seconds(t), y)?;
+        dy.velocity = self.acceleration(self.epoch(t), y)?;
         dy.position = y.velocity;
 
         Ok(())
@@ -339,7 +362,7 @@ where
         [dy]: &[V; 1],
         [ddy]: &mut [V; 1],
     ) -> Result<(), EvalFailed> {
-        *ddy = self.acceleration(Epoch::from_offset_seconds(t), &StateVector::new(*y, *dy))?;
+        *ddy = self.acceleration(self.epoch(t), &StateVector::new(*y, *dy))?;
 
         Ok(())
     }
@@ -434,8 +457,10 @@ pub struct SpacecraftPropagator<
     O: Solout<SpacecraftProblem<T, F, C>>,
 > {
     method: M,
-    bound: f64,
-    integration: Integration<SpacecraftProblem<T, F, C>, M, O>,
+    integrator: M::Integrator,
+    problem: SpacecraftProblem<T, F, C>,
+    solout: O,
+    solution: O::Solution,
 }
 
 impl<T, F, C, M, O> Clone for SpacecraftPropagator<T, F, C, M, O>
@@ -453,8 +478,10 @@ where
     fn clone(&self) -> Self {
         Self {
             method: self.method.clone(),
-            bound: self.bound,
-            integration: self.integration.clone(),
+            integrator: self.integrator.clone(),
+            problem: self.problem.clone(),
+            solout: self.solout.clone(),
+            solution: self.solution.clone(),
         }
     }
 }
@@ -465,21 +492,21 @@ where
     M: Method<SpacecraftProblem<T, F, C>>,
 {
     #[inline]
-    pub fn new<Params>(params: Params, mut problem: SpacecraftProblem<T, F, C>) -> Self
+    pub fn new<Params>(params: Params, problem: SpacecraftProblem<T, F, C>) -> Self
     where
         Params: Clone,
         M: NewMethod<Params>,
         M::Integrator: Integrator<SpacecraftProblem<T, F, C>>,
     {
-        let bound = problem.bound;
-        let segment_bound = problem.ode.current_segment().end().as_offset_seconds();
-        problem.bound = segment_bound.min(bound);
-
-        Self {
-            method: M::new(params.clone()),
-            bound,
-            integration: M::new(params).integrate(problem),
-        }
+        let mut propagator = Self {
+            integrator: M::new(params.clone()).init(&problem),
+            method: M::new(params),
+            problem,
+            solout: (),
+            solution: (),
+        };
+        propagator.update_bound();
+        propagator
     }
 
     #[inline]
@@ -488,9 +515,11 @@ where
         O: Solout<SpacecraftProblem<T, F, C>>,
     {
         SpacecraftPropagator {
+            solution: solout.new_solution(&self.problem),
             method: self.method,
-            bound: self.bound,
-            integration: self.integration.with_solout(solout),
+            integrator: self.integrator,
+            problem: self.problem,
+            solout,
         }
     }
 }
@@ -506,12 +535,41 @@ where
     where
         M: Clone,
     {
-        self.integration.integrator = self.method.clone().init(&self.integration.problem);
+        self.integrator = self.method.clone().init(&self.problem);
     }
 
     #[inline]
-    pub fn integration(&self) -> &Integration<SpacecraftProblem<T, F, C>, M, O> {
-        &self.integration
+    fn rebase(&mut self) -> Result<(), StepError> {
+        let reference = self.time();
+        let previous = std::mem::replace(&mut self.problem.ode.reference, reference);
+        self.problem.time = 0.0;
+        self.update_bound();
+        match reference != previous {
+            true => Ok(()),
+            false => Err(StepError::StepSizeUnderflow),
+        }
+    }
+
+    #[inline]
+    fn update_bound(&mut self) {
+        self.problem.bound = self.problem.ode.offset(self.problem.ode.bound());
+    }
+
+    #[inline]
+    fn update_segment(&mut self)
+    where
+        M: Clone,
+    {
+        // A manoeuvre change essentially means the problem definition has changed; we reset the
+        // integrator to re-initialise it with the new problem definition so that potentially cached
+        // information is forgotten. This also means that depending on the specific details of the
+        // integrator used, propagation may only be restarted at these manoeuvre changes (in this
+        // context, restarting means creating a new integrator from the current problem and expecting
+        // the same subsequent steps).
+        if self.problem.ode.advance_timeline() {
+            self.update_bound();
+            self.reset_integrator();
+        }
     }
 
     #[inline]
@@ -519,7 +577,7 @@ where
     where
         M::Integrator: AdaptiveRKState,
     {
-        self.integration.integrator.n_max() as usize
+        self.integrator.n_max() as usize
     }
 
     #[inline]
@@ -527,22 +585,27 @@ where
     where
         M::Integrator: AdaptiveRKState,
     {
-        self.integration.integrator.tolerance()
+        self.integrator.tolerance()
     }
 
     #[inline]
     pub fn problem(&self) -> &SpacecraftProblem<T, F, C> {
-        &self.integration.problem
+        &self.problem
     }
 
     #[inline]
     pub fn time(&self) -> Epoch {
-        Epoch::from_offset_seconds(self.integration.problem.time)
+        // `reference + time` could miss by a rounding.
+        if self.problem.time == self.problem.bound {
+            self.problem.ode.bound()
+        } else {
+            self.problem.ode.epoch(self.problem.time)
+        }
     }
 
     #[inline]
     pub fn bound(&self) -> Epoch {
-        Epoch::from_offset_seconds(self.bound)
+        self.problem.ode.end()
     }
 
     #[inline]
@@ -550,7 +613,7 @@ where
     where
         M::Integrator: IntegratorState<Time = f64>,
     {
-        Duration::from_seconds(self.integration.step_size())
+        Duration::from_seconds(self.integrator.step_size())
     }
 
     #[inline]
@@ -558,7 +621,7 @@ where
     where
         T::Vector: Clone,
     {
-        self.integration.problem.state.position().clone()
+        self.problem.state.position().clone()
     }
 
     #[inline]
@@ -566,32 +629,27 @@ where
     where
         T::Vector: Clone,
     {
-        self.integration.problem.state.velocity().clone()
+        self.problem.state.velocity().clone()
     }
 
     #[inline]
     pub fn context(&self) -> &C {
-        &self.integration.problem.ode.context
+        &self.problem.ode.context
     }
 
     #[inline]
     pub fn timeline(&self) -> &Timeline<T::Vector, F> {
-        &self.integration.problem.ode.timeline
+        &self.problem.ode.timeline
     }
 
     #[inline]
     pub fn solout(&self) -> &O {
-        &self.integration.solout
+        &self.solout
     }
 
     #[inline]
     pub fn solution(&self) -> &O::Solution {
-        &self.integration.solution
-    }
-
-    #[inline]
-    fn set_integration_bound(&mut self, bound: Epoch) {
-        self.integration.problem.bound = bound.as_offset_seconds().min(self.bound);
+        &self.solution
     }
 }
 
@@ -605,12 +663,7 @@ where
 
     #[inline]
     fn take_solution(&mut self) -> Self::Solution {
-        std::mem::replace(
-            &mut self.integration.solution,
-            self.integration
-                .solout
-                .new_solution(&self.integration.problem),
-        )
+        std::mem::replace(&mut self.solution, self.solout.new_solution(&self.problem))
     }
 }
 
@@ -626,17 +679,11 @@ where
 
     #[inline]
     fn step(&mut self) -> Result<(), Self::Error> {
-        // A manoeuvre change essentially means the problem definition has changed; we reset the
-        // integrator to re-initialise it with the new problem definition so that potentially cached
-        // information is forgotten. This also means that depending on the specific details of the
-        // integrator used, propagation may only be restarted at these manoeuvre changes (in this
-        // context, restarting means creating a new integrator from the current problem and
-        // expecting the same subsequent steps).
-        if let Some(new_end) = self.integration.problem.ode.advance_timeline(self.time()) {
-            self.set_integration_bound(new_end);
-            self.reset_integrator();
-        }
-        if !self.integration.advance()? {
+        self.update_segment();
+        self.integrator.advance(&mut self.problem)?;
+        self.rebase()?;
+
+        if !self.solout.solout(&mut self.problem, &mut self.solution) {
             return Err(SpacecraftPropagatorError::Solout);
         }
 
@@ -662,18 +709,18 @@ where
 
     #[inline]
     fn time(&self) -> Epoch {
-        O::solution_time(&self.integration.solution)
+        O::solution_time(&self.solution)
     }
 
     #[inline]
     fn has_reached(&self, time: Epoch) -> bool {
-        O::has_reached(&self.integration.solution, time)
+        O::has_reached(&self.solution, time)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct QuinticHermiteSplineSolout<V> {
-    manoeuvre: usize,
+    segment: usize,
     time: Epoch,
     state: KinematicState<V>,
 }
@@ -688,17 +735,17 @@ impl<V> QuinticHermiteSplineSolout<V> {
         F: Frame<V, C>,
         F::Transform: Transform<V>,
     {
-        let time = Epoch::from_offset_seconds(problem.time);
+        let time = problem.ode.epoch(problem.time);
         let sv = StateVector::new(*problem.state.position(), *problem.state.velocity());
         let acceleration = problem.ode.acceleration(time, &sv)?;
 
         Ok(Self {
             time,
             state: KinematicState::new(sv.position, sv.velocity, acceleration),
-            manoeuvre: problem.ode.current_segment,
+            segment: problem.ode.current_segment,
         })
     }
- 
+
     #[inline]
     fn push_step<T, F, C>(
         &mut self,
@@ -712,12 +759,13 @@ impl<V> QuinticHermiteSplineSolout<V> {
         F: Frame<V, C>,
         F::Transform: Transform<V>,
     {
-        let change_acceleration = (problem.ode.current_segment != self.manoeuvre)
+        let change_acceleration = (problem.ode.current_segment != self.segment)
             .then(|| problem.ode.acceleration(self.time, &self.state.into()))
             .transpose()?;
 
         *self = Self::new(problem)?;
         let (at, k) = (self.time, self.state);
+
         match change_acceleration {
             Some(change) => {
                 solution.push_back_after_change(change, at, k.position, k.velocity, k.acceleration)

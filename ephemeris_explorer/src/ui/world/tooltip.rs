@@ -202,7 +202,7 @@ fn plot_apsis_markers(
 
 fn plot_bounds_markers(
     mut gizmos: Gizmos<MarkerGizmoConfigGroup>,
-    query_plot: Query<(&PlotPoints, &PlotSource, &PlotConfig)>,
+    query_plot: Query<(&Name, &PlotPoints, &PlotSource, &PlotConfig)>,
     query_trajectory: Query<&Trajectory>,
     camera: Single<(&GlobalTransform, &Projection)>,
 ) {
@@ -210,7 +210,7 @@ fn plot_bounds_markers(
         unreachable!("Camera is not perspective");
     };
 
-    for (points, source, plot) in query_plot {
+    for (name, points, source, plot) in query_plot {
         if let Ok(relative) = source.get_relative_trajectory(&query_trajectory) {
             let start = relative.start();
             let end = relative.end();
@@ -225,6 +225,9 @@ fn plot_bounds_markers(
                     .looking_to(direction, camera_transform.up());
                 transform.rotate_local_z(std::f32::consts::FRAC_PI_4);
                 gizmos.rect(transform.to_isometry(), Vec2::splat(size), plot.color);
+            }
+            if &**name == "Ship" {
+                dbg!(points.evaluate(end));
             }
             if let Some(world_pos) = points.evaluate(end)
                 && let Some(distance) = relative.position(end).map(|p| p.length())

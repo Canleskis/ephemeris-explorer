@@ -12,8 +12,8 @@ use crate::{
     },
     simulation::SimulationTime,
     ui::{
-        IdentedInfo, Labelled, PlotBound, PlotSourceOf, WindowsUiSet, duration_formatter,
-        duration_parser, epoch_formatter, get_name, length_formatter, length_parser, show_tree,
+        CalendarDragValue, DurationDragValue, IdentedInfo, Labelled, PlotBound, PlotBoundMode,
+        PlotSourceOf, WindowsUiSet, get_name, length_formatter, length_parser, show_tree,
         velocity_formatter, velocity_parser,
     },
 };
@@ -24,7 +24,6 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
 use ephemeris::{EvaluateTrajectory, StateVector};
 use ftime::{Duration, Epoch};
-use std::str::FromStr;
 
 pub struct ShipSpawnerPlugin;
 
@@ -162,9 +161,8 @@ impl ShipSpawnerWindow {
                 OrbitPlotConfig {
                     enabled: true,
                     color: bevy::color::palettes::css::FUCHSIA.into(),
-                    start: Epoch::MIN,
-                    end: Epoch::MAX,
-                    bound: PlotBound::None,
+                    start: PlotBound::new(PlotBoundMode::Unbounded, data.start),
+                    end: PlotBound::new(PlotBoundMode::Unbounded, data.start),
                     resolution: 0.5,
                     max_points_per_segment: 10_000,
                     reference: OrbitPlotReference::Primary,
@@ -188,23 +186,13 @@ impl ShipSpawnerWindow {
 
                 ui.horizontal(|ui| {
                     ui.label("At:");
-                    let mut start = data.start.as_offset_seconds();
                     if ui
                         .add(
-                            egui::DragValue::new(&mut start)
-                                .custom_formatter(epoch_formatter)
-                                .custom_parser(|text| {
-                                    Epoch::from_str(text).ok().map(|t| {
-                                        t.clamp(sim_time.start(), sim_time.end())
-                                            .floor(Duration::from_seconds(1.0))
-                                            .as_offset_seconds()
-                                    })
-                                })
-                                .speed(Duration::from_hours(1.0).as_seconds()),
+                            CalendarDragValue::new(&mut data.start)
+                                .range(sim_time.start()..=sim_time.end()),
                         )
                         .changed()
                     {
-                        data.start = Epoch::from_offset_seconds(start);
                         window.valid_preview = false;
                     }
                 });
@@ -368,6 +356,7 @@ impl ShipSpawnerWindow {
                         data.tolerance,
                         data.start,
                         data.start + data.preview_duration,
+                        false,
                         sv.position,
                         sv.velocity,
                         Vec::new(),
@@ -380,24 +369,16 @@ impl ShipSpawnerWindow {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().interact_size.x = 150.0;
 
-                    let mut duration = data.preview_duration.as_seconds();
-                    let speed = 1e-1f64.max(duration * 1e-3);
-
                     ui.label("Preview length:");
                     if ui
                         .add(
-                            egui::DragValue::new(&mut duration)
-                                .speed(speed)
-                                .range(0.0..=f64::INFINITY)
-                                .custom_formatter(duration_formatter)
-                                .custom_parser(duration_parser),
+                            DurationDragValue::new(&mut data.preview_duration)
+                                .range(Duration::from_seconds(1.0)..),
                         )
                         .changed()
                     {
                         window.valid_preview = false;
                     }
-                    data.preview_duration =
-                        Duration::from_seconds(duration).max(Duration::from_seconds(1.0));
                 });
             });
 

@@ -8,9 +8,8 @@ use bevy::math::{DMat3, DVec3};
 use bevy::prelude::*;
 use ephemeris::{
     AccelerationModel, BoundedTrajectory, DirectionalPropagator, DirectionalSolout,
-    EvaluateTrajectory, Forward, Frame, IncrementalPropagator, PropagationContext,
-    PropagationDirection, Propagator, QuinticHermiteSplineSolout, SpacecraftPropagatorError,
-    SpacecraftState, Transform,
+    EvaluateTrajectory, Forward, Frame, IncrementalPropagator, PropagationDirection, Propagator,
+    QuinticHermiteSplineSolout, SpacecraftPropagatorError, SpacecraftState, Transform,
 };
 use ftime::{Duration, Epoch};
 use integration::prelude::*;
@@ -245,11 +244,12 @@ impl CachedGravitationalBody {
         let apsis = find_zero_crossing(t0, t1, |t| Some(radial_velocity(relative_at(t)?)));
         let intervals: &[(Epoch, Epoch)] = match apsis {
             Some(event) => {
-                let apsis =
-                    Apsis::from_event(event, relative_at(event.time).unwrap().position.length());
                 events.push(BodyEvent::Apsis {
                     body: entity,
-                    apsis,
+                    apsis: Apsis::from_event(
+                        event,
+                        relative_at(event.time).unwrap().position.length(),
+                    ),
                 });
 
                 &[(t0, event.time), (event.time, t1)]
@@ -436,6 +436,13 @@ impl Bodies {
     pub fn is_valid_at(&self, t: Epoch) -> bool {
         self.0.values().all(|body| body.trajectory().contains(t))
     }
+
+    #[inline]
+    pub fn max_time(&self) -> Epoch {
+        self.0
+            .values()
+            .fold(Epoch::MAX, |end, body| end.min(body.trajectory().end()))
+    }
 }
 
 #[inline]
@@ -462,15 +469,6 @@ impl AccelerationModel for Bodies {
             acc += body.acceleration_at(t, &state.position)?;
         }
         Some(acc)
-    }
-}
-
-impl PropagationContext for Bodies {
-    #[inline]
-    fn max_time(&self) -> Epoch {
-        self.0
-            .values()
-            .fold(Epoch::MAX, |end, body| end.min(body.trajectory().end()))
     }
 }
 
@@ -528,7 +526,7 @@ impl ReferenceFrame {
 
     #[inline]
     pub fn tnb_at(&self, t: Epoch, sv: &StateVector, bodies: &Bodies) -> Option<TNB> {
-        self.tnb_with(sv, |e| bodies.get(e)?.trajectory().state_vector(t))
+        self.tnb_with(sv, |e| bodies.get(e)?.body.state_vector(t))
     }
 }
 
@@ -722,7 +720,7 @@ impl SpacecraftSolout {
     where
         T: SpacecraftState<Vector = DVec3>,
     {
-        let time = Epoch::from_offset_seconds(problem.time);
+        let time = problem.ode.epoch(problem.time);
         let soi = problem
             .ode
             .context()
@@ -924,12 +922,8 @@ macro_rules! spacecraft_propagator {
                 context: Bodies,
                 timeline: Timeline,
             ) -> Result<Self, EvalFailed> {
-                let mut problem = SpacecraftProblem::new(
-                    initial_time.as_offset_seconds(),
-                    end.as_offset_seconds(),
-                    [initial_state],
-                    SpacecraftModel::new(initial_time, timeline, context),
-                );
+                let mut problem = SpacecraftModel::new(initial_time, end, timeline, context)
+                    .into_problem([initial_state]);
                 let solout = SpacecraftSolout::new(&mut problem)?;
                 Ok(Self::Verner87(ephemeris::SpacecraftPropagator::new(params, problem).with_solout(solout)))
             }

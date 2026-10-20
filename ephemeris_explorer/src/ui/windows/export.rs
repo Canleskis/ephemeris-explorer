@@ -5,7 +5,7 @@ use crate::{
     flight_plan::FlightPlan,
     load::SystemRoot,
     simulation::SimulationTime,
-    ui::{Id, WindowsUiSet, epoch_formatter, epoch_parser_clamped, show_tree},
+    ui::{CalendarDragValue, Id, WindowsUiSet, show_tree},
 };
 
 use bevy::prelude::*;
@@ -97,13 +97,7 @@ impl ExportWindow {
                     ui.horizontal(|ui| {
                         ui.label("Epoch:");
                         ui.add(
-                            egui::DragValue::new(epoch.mut_offset().mut_seconds())
-                                .custom_formatter(epoch_formatter)
-                                .custom_parser(|text| {
-                                    epoch_parser_clamped(sim_time.start(), sim_time.end())(text)
-                                        .map(|t| t.as_offset_seconds())
-                                })
-                                .speed(Duration::from_hours(1.0).as_seconds()),
+                            CalendarDragValue::new(epoch).range(sim_time.start()..=sim_time.end()),
                         )
                     });
                 }

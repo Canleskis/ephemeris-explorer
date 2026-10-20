@@ -1,7 +1,9 @@
+mod field_drag_value;
 mod fixed;
 mod windows;
 mod world;
 
+pub use field_drag_value::{CalendarDragValue, DurationDragValue, epoch_placeholder};
 pub use fixed::*;
 pub use windows::*;
 pub use world::*;
@@ -11,7 +13,7 @@ use crate::{MainState, analysis::Satellites, load::LoadSolarSystem};
 use bevy::{ecs::query::QueryFilter, prelude::*};
 use bevy_egui::{EguiContext, EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_file_dialog::prelude::*;
-use ftime::{Duration, Epoch};
+use ftime::Epoch;
 use std::str::FromStr;
 
 pub fn using_pointer(
@@ -650,28 +652,8 @@ impl std::str::FromStr for Acceleration {
     }
 }
 
-pub fn duration_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
-    Duration::from_seconds(value).to_string()
-}
-
-pub fn duration_parser(text: &str) -> Option<f64> {
-    Duration::from_str(text).ok().map(|d| d.as_seconds())
-}
-
-pub fn epoch_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {
-    match value {
-        f64::MAX | f64::INFINITY => "∞".to_string(),
-        f64::MIN | f64::NEG_INFINITY => "-∞".to_string(),
-        _ => Epoch::from_offset_seconds(value).to_string(),
-    }
-}
-
-pub fn epoch_parser(text: &str) -> Option<f64> {
-    Epoch::from_str(text).ok().map(|t| t.as_offset_seconds())
-}
-
-fn epoch_parser_clamped(min: Epoch, max: Epoch) -> impl Fn(&str) -> Option<Epoch> {
-    move |buf| Epoch::from_str(buf).ok().filter(|t| *t >= min && *t <= max)
+pub fn epoch_parser(text: &str) -> Option<Epoch> {
+    Epoch::from_str(text).ok()
 }
 
 pub fn length_formatter(value: f64, _: std::ops::RangeInclusive<usize>) -> String {

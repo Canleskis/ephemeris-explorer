@@ -45,26 +45,35 @@ impl PlotSource {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlotBound {
-    None,
-    Start,
-    End,
+pub enum PlotBoundMode {
+    Epoch,
+    Current,
+    Unbounded,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlotBound {
+    pub mode: PlotBoundMode,
+    pub epoch: Epoch,
 }
 
 impl PlotBound {
     #[inline]
-    pub fn is_start(&self) -> bool {
-        matches!(self, Self::Start)
+    pub const fn new(mode: PlotBoundMode, epoch: Epoch) -> Self {
+        Self { mode, epoch }
     }
 
     #[inline]
-    pub fn is_end(&self) -> bool {
-        matches!(self, Self::End)
+    pub fn fixed_or(self, unbounded: Epoch) -> Epoch {
+        match self.mode {
+            PlotBoundMode::Epoch => self.epoch,
+            PlotBoundMode::Current | PlotBoundMode::Unbounded => unbounded,
+        }
     }
 
     #[inline]
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
+    pub fn follows_current(self) -> bool {
+        self.mode == PlotBoundMode::Current
     }
 }
 
@@ -74,7 +83,8 @@ pub struct PlotConfig {
     pub enabled: bool,
     pub start: Epoch,
     pub end: Epoch,
-    pub bound: PlotBound,
+    pub start_follows_current: bool,
+    pub end_follows_current: bool,
     pub color: Color,
     pub threshold: f32,
     pub max_points: usize,
@@ -327,10 +337,14 @@ pub fn compute_plot_points_parallel(
 
                 let mut min = plot.start.clamp(start, end);
                 let mut max = plot.end.clamp(start, end);
-                match plot.bound {
-                    PlotBound::Start => min = min.max(current_clamped),
-                    PlotBound::End => max = max.min(current_clamped),
-                    PlotBound::None => (),
+                if plot.start_follows_current {
+                    min = min.max(current_clamped);
+                }
+                if plot.end_follows_current {
+                    max = max.min(current_clamped);
+                }
+                if min >= max {
+                    return;
                 }
 
                 let translation = StateVector::from_position(

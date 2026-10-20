@@ -1,11 +1,10 @@
 mod common;
 
 use ephemeris::{
-    AccelerationModel, AccelerationPairedAssign, BoundedPropagator, BoundedTrajectory,
-    CubicHermiteSplineSolout, EvaluateTrajectory, ExtendSpline, Forward, Frame, GravityModel,
-    GravitySource, InterpolationSample, InterpolationTolerance, KinematicState,
-    NBodyPropagatorError, PropagationContext, QuinticHermiteSegment, QuinticHermiteSpline,
-    Transform,
+    AccelerationModel, AccelerationPairedAssign, BoundedPropagator, EvaluateTrajectory,
+    ExtendSpline, Forward, Frame, GravityModel, GravitySource, InterpolationSample,
+    InterpolationTolerance, KinematicState, NBodyPropagatorError, QuinticHermiteSegment,
+    QuinticHermiteSpline, QuinticHermiteSplineSolout, SpacecraftModel, Transform,
 };
 use ftime::{Duration, Epoch};
 use glam::{DMat3, DVec3};
@@ -228,15 +227,6 @@ impl AccelerationModel for &CelestialBodies {
     }
 }
 
-impl PropagationContext for &CelestialBodies {
-    #[inline]
-    fn max_time(&self) -> Epoch {
-        self.bodies
-            .values()
-            .fold(Epoch::MAX, |end, body| end.min(body.trajectory.end()))
-    }
-}
-
 #[derive(Clone, Copy, Default)]
 pub struct AbsTol(pub StateVector);
 
@@ -322,7 +312,7 @@ type SpacecraftPropagator<'a> = ephemeris::SpacecraftPropagator<
     ReferenceFrame,
     &'a CelestialBodies,
     Verner87<f64, AbsTol, f64>,
-    CubicHermiteSplineSolout,
+    QuinticHermiteSplineSolout<DVec3>,
 >;
 
 #[rustfmt::skip]
@@ -420,14 +410,11 @@ fn spacecraft_propagation() -> Result<(), Box<dyn std::error::Error>> {
             ),
         ),
     ]);
-    let mut propagator = SpacecraftPropagator::new(
-        initial_time,
-        initial_state,
-        ADAPTIVE_PARAMETERS,
-        timeline,
-        &celestial_bodies,
-        CubicHermiteSplineSolout,
-    );
+    let mut problem = SpacecraftModel::new(initial_time, Epoch::MAX, timeline, &celestial_bodies)
+        .into_problem([initial_state]);
+    let solout = QuinticHermiteSplineSolout::new(&mut problem).expect("initial acceleration");
+    let mut propagator: SpacecraftPropagator<'_> =
+        ephemeris::SpacecraftPropagator::new(ADAPTIVE_PARAMETERS, problem).with_solout(solout);
 
     let end = "1951-01-01 00:00:00".parse()?;
     let spacecraft_trajectory = propagator.propagate(end)?;

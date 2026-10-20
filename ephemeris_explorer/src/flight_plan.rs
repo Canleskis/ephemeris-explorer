@@ -1,7 +1,7 @@
 use crate::{
     dynamics::{
         AbsTol, Bodies, ConstantThrust, GravitationalBody, Mu, QuinticHermiteSpline, Radius,
-        ReferenceFrame, SpacecraftModel, SpacecraftProblem, SpacecraftPropagator, SpacecraftSolout,
+        ReferenceFrame, SpacecraftModel, SpacecraftPropagator, SpacecraftSolout,
         SpacecraftTrajectory, SphereOfInfluence, StateVector, Timeline, Trajectory,
     },
     prediction::{
@@ -146,12 +146,9 @@ macro_rules! integration_methods {
             ) -> Result<SpacecraftPropagator, EvalFailed> {
                 match self {
                     $(IntegrationMethod::$variant => {
-                        let mut problem = SpacecraftProblem::new(
-                            time.as_offset_seconds(),
-                            end.as_offset_seconds(),
-                            SpacecraftState::new(sv),
-                            SpacecraftModel::new(time, timeline, context),
-                        );
+                        let mut problem =
+                            SpacecraftModel::new(time, end, timeline, context)
+                                .into_problem(SpacecraftState::new(sv));
                         let solout = SpacecraftSolout::new(&mut problem)?;
                         Ok(SpacecraftPropagator::$variant(
                             ephemeris::SpacecraftPropagator::new(parameters, problem)
@@ -194,13 +191,13 @@ integration_methods! {
     Fine45 => "Fine 4(5)",
 }
 
-// TODO: Add context to flight plan.
 #[derive(Component, Clone)]
 pub struct FlightPlan {
     pub method: IntegrationMethod,
     pub parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
     pub synchronisation: Synchronisation,
     pub end: Epoch,
+    pub unbounded_end: bool,
     pub burns: indexmap::IndexMap<uuid::Uuid, Burn>,
     pub context: Bodies,
 }
@@ -209,6 +206,7 @@ impl FlightPlan {
     #[inline]
     pub fn new(
         end: Epoch,
+        unbounded_end: bool,
         method: IntegrationMethod,
         parameters: AdaptiveMethodParams<f64, AbsTol, f64>,
         burns: Vec<Burn>,
@@ -221,6 +219,7 @@ impl FlightPlan {
             // synchronisation: Synchronisation::steps(1),
             // synchronisation: Synchronisation::completed(),
             end,
+            unbounded_end,
             burns: burns
                 .into_iter()
                 .map(|burn| (uuid::Uuid::new_v4(), burn))
@@ -265,6 +264,14 @@ impl FlightPlan {
     }
 
     #[inline]
+    pub fn propagation_end(&self) -> Epoch {
+        match self.unbounded_end {
+            true => self.context.max_time(),
+            false => self.end.min(self.context.max_time()),
+        }
+    }
+
+    #[inline]
     pub fn build_propagator_at(
         &self,
         time: Epoch,
@@ -273,7 +280,7 @@ impl FlightPlan {
         self.method.as_propagator(
             time,
             sv,
-            self.end,
+            self.propagation_end(),
             self.parameters,
             self.context.clone(),
             self.generate_timeline(),
@@ -309,11 +316,13 @@ impl FlightPlan {
             trajectory.start()
         } else {
             timeline
-                .divergence_time_before(previous.timeline(), self.end.min(trajectory.end()))
+                .divergence_time_before(
+                    previous.timeline(),
+                    self.propagation_end().min(trajectory.end()),
+                )
                 .max(trajectory.start())
         };
 
-        // At a manoeuvre change, both knots have the same position and velocity.
         trajectory
             .knot_ending_at(restart_epoch)
             .and_then(|&restart_state| {
@@ -321,7 +330,7 @@ impl FlightPlan {
                     .as_propagator(
                         restart_epoch,
                         restart_state.into(),
-                        self.end,
+                        self.propagation_end(),
                         self.parameters,
                         self.context.clone(),
                         timeline,
@@ -410,7 +419,7 @@ fn apply_flight_plan(
     commands.trigger(
         SpacecraftTrajectory::extend(
             entity,
-            flight_plan.end - propagator.time(),
+            flight_plan.propagation_end() - propagator.time(),
             flight_plan.synchronisation,
         )
         .with_propagator(propagator),
@@ -436,14 +445,14 @@ fn trigger_on_trajectory_updates(
     }
 
     for (entity, traj, flight_plan, propagator) in query_flight_plan.iter() {
-        // Only trigger if the trajectory hasn't previously reached the end of the flight plan and
-        // if the context allows for the prediction to start being computed.
-        if traj.end() < flight_plan.end && propagator.context().is_valid_at(traj.start()) {
-            // TODO: Remove this guard once we can restart the prediction from the end.
-            if !propagator.context().is_valid_at(flight_plan.end) {
-                continue;
-            }
-
+        // Only trigger if the trajectory hasn't previously reached as far as the flight plan can be
+        // propagated and if the context allows for the prediction to start being computed.
+        if traj.end() < flight_plan.propagation_end()
+            && propagator.context().is_valid_at(traj.start())
+        {
+            // Flight plans ending beyond the ephemerides follow them as they extend, recomputing
+            // from the last manoeuvre.
+            // TODO: Restart the prediction from the end instead.
             commands.trigger(FlightPlanChanged(entity));
         }
     }

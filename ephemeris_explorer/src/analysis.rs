@@ -131,13 +131,22 @@ pub enum OrbitPlotReference {
 #[derive(Clone, Copy, Debug, PartialEq, Component)]
 pub struct OrbitPlotConfig {
     pub enabled: bool,
-    pub start: Epoch,
-    pub end: Epoch,
-    pub bound: PlotBound,
+    pub start: PlotBound,
+    pub end: PlotBound,
     pub color: Color,
     pub resolution: f32,
     pub max_points_per_segment: usize,
     pub reference: OrbitPlotReference,
+}
+
+impl OrbitPlotConfig {
+    #[inline]
+    pub fn fixed_bounds(&self) -> (Epoch, Epoch) {
+        (
+            self.start.fixed_or(Epoch::MIN),
+            self.end.fixed_or(Epoch::MAX),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Component)]
@@ -179,12 +188,14 @@ fn setup_segment_plotting(
 ) {
     for (e, transitions, config, propagator) in query.iter() {
         commands.entity(e).despawn_related::<PlotSourceOf>();
+        let (config_start, config_end) = config.fixed_bounds();
         commands.entity(e).with_children(|cmds| {
             let plot = PlotConfig {
                 enabled: config.enabled,
-                start: config.start,
-                end: config.end,
-                bound: config.bound,
+                start: config_start,
+                end: config_end,
+                start_follows_current: config.start.follows_current(),
+                end_follows_current: config.end.follows_current(),
                 color: config.color,
                 threshold: config.resolution,
                 max_points: config.max_points_per_segment,
@@ -204,7 +215,7 @@ fn setup_segment_plotting(
                 // Plot relative to the entered SOI until the next transition, if any.
                 let next = transitions.get(i + 1);
 
-                if start > config.end || next.is_some_and(|&(end, _)| end < config.start) {
+                if start > config_end || next.is_some_and(|&(end, _)| end < config_start) {
                     continue;
                 }
 
@@ -216,8 +227,8 @@ fn setup_segment_plotting(
                     .unwrap_or(*root);
                 let previous = i.checked_sub(1).and_then(|j| transitions.get(j));
 
-                let start = start.max(config.start);
-                let end = next.map_or(config.end, |&(end, _)| end.min(config.end));
+                let start = start.max(config_start);
+                let end = next.map_or(config_end, |&(end, _)| end.min(config_end));
 
                 let segments = propagator
                     .map(|p| p.timeline().segments_between(start, end))
@@ -341,8 +352,9 @@ fn setup_target_plotting(
         };
 
         let relative = RelativeTrajectory::new(&*trajectory, Some(&*target_trajectory));
+        let (start, end) = plot.fixed_bounds();
         if let Some(time) =
-            relative.closest_separation_between(plot.start, plot.end, 0.001, 1000, |t1, t2, at| {
+            relative.closest_separation_between(start, end, 0.001, 1000, |t1, t2, at| {
                 t1.distance_squared_at(t2, at).unwrap()
             })
         {

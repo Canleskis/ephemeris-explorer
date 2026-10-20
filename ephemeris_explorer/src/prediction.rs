@@ -553,6 +553,7 @@ fn remove_prediction_markers<T>(
 
         for entity in controller_of.iter() {
             if let Ok(mut in_prediction) = query_in_prediction.get_mut(entity) {
+                commands.entity(entity).remove::<InPredictionWith<T>>();
                 **in_prediction = in_prediction.saturating_sub(1);
                 if **in_prediction == 0 {
                     commands.entity(entity).remove::<InPrediction>();

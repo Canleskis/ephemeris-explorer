@@ -6,15 +6,15 @@ use crate::{
     selection::Selected,
     simulation::SimulationTime,
     ui::{
-        IdentedInfo, Length, PlotBound, Velocity, WindowsUiSet, epoch_formatter, epoch_parser,
-        get_name, show_tree,
+        CalendarDragValue, IdentedInfo, Length, PlotBound, PlotBoundMode, Velocity, WindowsUiSet,
+        epoch_placeholder, get_name, show_tree,
     },
 };
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use ephemeris::{EvaluateTrajectory, RelativeTrajectory};
-use ftime::Duration;
+use ftime::Epoch;
 
 pub struct BodyInfoPlugin;
 
@@ -204,57 +204,15 @@ impl BodyInfoWindow {
 
                     ui.add_space(5.0);
 
-                    ui.horizontal(|ui| {
-                        let label = ui
-                            .selectable_label(plot_config.bound.is_start(), "Start:")
-                            .on_hover_text("Click to toggle overwrite with current time");
-                        if label.clicked() {
-                            match plot_config.bound {
-                                PlotBound::Start => plot_config.bound = PlotBound::None,
-                                _ => plot_config.bound = PlotBound::Start,
-                            }
-                        }
-                        ui.add_enabled_ui(!plot_config.bound.is_start(), |ui| {
-                            let start = match plot_config.bound {
-                                PlotBound::Start => &mut sim_time.current().as_offset_seconds(),
-                                _ => plot_config.start.mut_offset().mut_seconds(),
-                            };
-                            ui.add(
-                                egui::DragValue::new(start)
-                                    .speed(Duration::from_hours(1.0).as_seconds())
-                                    .custom_formatter(epoch_formatter)
-                                    .custom_parser(epoch_parser),
-                            )
-                        })
-                        .response
-                        .on_disabled_hover_text("Overwritten with current time");
-                    });
+                    plot_bound(
+                        ui,
+                        "Start:",
+                        &mut plot_config.start,
+                        sim_time.current(),
+                        "-∞",
+                    );
                     ui.add_space(5.0);
-                    ui.horizontal(|ui| {
-                        let label = ui
-                            .selectable_label(plot_config.bound.is_end(), "End:")
-                            .on_hover_text("Click to toggle overwrite with current time");
-                        if label.clicked() {
-                            match plot_config.bound {
-                                PlotBound::End => plot_config.bound = PlotBound::None,
-                                _ => plot_config.bound = PlotBound::End,
-                            }
-                        }
-                        ui.add_enabled_ui(!plot_config.bound.is_end(), |ui| {
-                            let end = match plot_config.bound {
-                                PlotBound::End => &mut sim_time.current().as_offset_seconds(),
-                                _ => plot_config.end.mut_offset().mut_seconds(),
-                            };
-                            ui.add(
-                                egui::DragValue::new(end)
-                                    .speed(Duration::from_hours(1.0).as_seconds())
-                                    .custom_formatter(epoch_formatter)
-                                    .custom_parser(epoch_parser),
-                            )
-                        })
-                        .response
-                        .on_disabled_hover_text("Overwritten with current time");
-                    });
+                    plot_bound(ui, "End:  ", &mut plot_config.end, sim_time.current(), "∞");
 
                     ui.add_space(5.0);
 
@@ -282,4 +240,50 @@ impl BodyInfoWindow {
             **selected = None;
         }
     }
+}
+
+fn plot_bound(
+    ui: &mut egui::Ui,
+    label: &str,
+    bound: &mut PlotBound,
+    mut current: Epoch,
+    unbounded: &str,
+) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.spacing_mut().interact_size.x = 200.0;
+        match bound.mode {
+            PlotBoundMode::Epoch => ui.add(CalendarDragValue::new(&mut bound.epoch)),
+            PlotBoundMode::Current => ui
+                .add_enabled(false, CalendarDragValue::new(&mut current))
+                .on_disabled_hover_text("Follows the current time"),
+            PlotBoundMode::Unbounded => {
+                epoch_placeholder(ui, unbounded).on_disabled_hover_text("Unbounded")
+            }
+        };
+        mode_toggle(ui, &mut bound.mode, PlotBoundMode::Current, "Now", 0.0);
+        mode_toggle(
+            ui,
+            &mut bound.mode,
+            PlotBoundMode::Unbounded,
+            unbounded,
+            24.0,
+        );
+    });
+}
+
+fn mode_toggle(
+    ui: &mut egui::Ui,
+    current: &mut PlotBoundMode,
+    mode: PlotBoundMode,
+    text: &str,
+    min_width: f32,
+) -> egui::Response {
+    let selected = *current == mode;
+    let button = egui::Button::selectable(selected, text).min_size(egui::vec2(min_width, 0.0));
+    let response = ui.add(button);
+    if response.clicked() {
+        *current = if selected { PlotBoundMode::Epoch } else { mode };
+    }
+    response
 }

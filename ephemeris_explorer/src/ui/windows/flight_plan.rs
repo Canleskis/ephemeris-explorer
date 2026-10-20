@@ -9,9 +9,9 @@ use crate::{
     load::{BurnDe, Ship, SystemRoot},
     prediction::PredictionPropagator,
     ui::{
-        IdentedInfo, Velocity, WindowsUiSet, acceleration_formatter, acceleration_parser,
-        duration_formatter, duration_parser, epoch_formatter, epoch_parser, get_name,
-        length_formatter, length_parser, show_tree, try_get_name,
+        CalendarDragValue, DurationDragValue, IdentedInfo, Velocity, WindowsUiSet,
+        acceleration_formatter, acceleration_parser, epoch_placeholder, get_name, length_formatter,
+        length_parser, show_tree, try_get_name,
     },
 };
 
@@ -124,6 +124,7 @@ impl FlightPlanWindow {
                                     fp.parameters.tol.position,
                                     start,
                                     fp.end,
+                                    fp.unbounded_end,
                                     sv.position,
                                     sv.velocity,
                                     fp.burns
@@ -440,22 +441,24 @@ impl FlightPlanWindow {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().interact_size.x = 220.0;
                         ui.label("End:");
-                        if ui
-                            .add(
-                                egui::DragValue::new(fp.end.mut_offset().mut_seconds())
-                                    .speed(Duration::from_hours(1.0).as_seconds())
-                                    .range(
-                                        min_time.as_offset_seconds()..=max_time.as_offset_seconds(),
-                                    )
-                                    .custom_formatter(epoch_formatter)
-                                    .custom_parser(epoch_parser),
-                            )
-                            .changed()
-                        {
+                        let end = match fp.unbounded_end {
+                            true => epoch_placeholder(ui, "∞")
+                                .on_disabled_hover_text("Follows the ephemerides"),
+                            false => ui.add(
+                                CalendarDragValue::new(&mut fp.end).range(min_time..=max_time),
+                            ),
+                        };
+                        let unbounded = ui
+                            .toggle_value(&mut fp.unbounded_end, "∞")
+                            .on_hover_text("Follow the ephemerides as they extend");
+                        if end.changed() || unbounded.changed() {
                             fp_changed = true;
                         }
                     });
-                    ui.label(format!("({})", fp.end - min_time));
+                    match fp.unbounded_end {
+                        true => ui.label("(∞)"),
+                        false => ui.label(format!("({})", fp.end - min_time)),
+                    };
 
                     ui.add_space(5.0);
 
@@ -590,12 +593,7 @@ impl FlightPlanWindow {
                     ui.add_space(3.0);
 
                     if ui
-                        .add(
-                            egui::DragValue::new(burn.start.mut_offset().mut_seconds())
-                                .range(min_time.as_offset_seconds()..=f64::INFINITY)
-                                .custom_formatter(epoch_formatter)
-                                .custom_parser(epoch_parser),
-                        )
+                        .add(CalendarDragValue::new(&mut burn.start).range(min_time..=Epoch::MAX))
                         .changed()
                     {
                         changed = true;
@@ -605,19 +603,10 @@ impl FlightPlanWindow {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().interact_size.x = 150.0;
 
-                    let speed = (burn.duration.max(Duration::from_seconds(0.1)) * 1e-3)
-                        .min(Duration::from_seconds(60.0));
-
                     ui.label("Length:");
                     ui.add_space(22.0);
                     if ui
-                        .add(
-                            egui::DragValue::new(burn.duration.mut_seconds())
-                                .speed(speed.as_seconds())
-                                .range(0.0..=f64::INFINITY)
-                                .custom_formatter(duration_formatter)
-                                .custom_parser(duration_parser),
-                        )
+                        .add(DurationDragValue::new(&mut burn.duration).range(Duration::ZERO..))
                         .changed()
                     {
                         changed = true;

@@ -1,9 +1,11 @@
-use crate::{
-    MS_PER_DAY, MS_PER_HOUR, MS_PER_MIN, MS_PER_SEC, MS_PER_YEAR, SEC_PER_DAY, SEC_PER_HOUR,
-    SEC_PER_MICRO, SEC_PER_MILLI, SEC_PER_MIN, SEC_PER_NANO, SEC_PER_YEAR,
+use crate::{SEC_PER_DAY, SEC_PER_HOUR, SEC_PER_MIN, SEC_PER_YEAR, Unit};
+use std::{
+    cmp::Ordering,
+    fmt,
+    hash::{Hash, Hasher},
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Duration(f64);
 
 impl Duration {
@@ -13,27 +15,24 @@ impl Duration {
 
     pub const MAX: Self = Duration(f64::MAX);
 
-    pub const NAN: Self = Duration(f64::NAN);
-
     #[inline]
     pub const fn from_seconds(seconds: f64) -> Self {
-        assert!(seconds.is_finite());
         Self(seconds)
     }
 
     #[inline]
     pub const fn from_nanoseconds(nanoseconds: f64) -> Self {
-        Self::from_seconds(nanoseconds * SEC_PER_NANO)
+        Self::from_seconds(nanoseconds / Unit::Nanosecond.per_second())
     }
 
     #[inline]
     pub const fn from_microseconds(microseconds: f64) -> Self {
-        Self::from_seconds(microseconds * SEC_PER_MICRO)
+        Self::from_seconds(microseconds / Unit::Microsecond.per_second())
     }
 
     #[inline]
     pub const fn from_milliseconds(milliseconds: f64) -> Self {
-        Self::from_seconds(milliseconds * SEC_PER_MILLI)
+        Self::from_seconds(milliseconds / Unit::Millisecond.per_second())
     }
 
     #[inline]
@@ -100,6 +99,11 @@ impl Duration {
     pub fn round(self, to: Self) -> Self {
         Duration((self.0 / to.0).round() * to.0)
     }
+
+    #[inline]
+    fn key(self) -> f64 {
+        self.0 + 0.0
+    }
 }
 
 impl std::ops::Add for Duration {
@@ -161,31 +165,33 @@ impl std::ops::Neg for Duration {
     }
 }
 
+impl PartialEq for Duration {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Duration {}
+
 impl PartialOrd for Duration {
     #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Duration {
     #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (self.0 <= other.0, self.0 >= other.0) {
-            (false, true) => std::cmp::Ordering::Greater,
-            (true, false) => std::cmp::Ordering::Less,
-            (true, true) => std::cmp::Ordering::Equal,
-            (false, false) => unreachable!(),
-        }
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.key().total_cmp(&other.key())
     }
 }
 
-impl Eq for Duration {}
-
-impl std::hash::Hash for Duration {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let bits = self.0 + 0.0;
-        bits.to_bits().hash(state)
+impl Hash for Duration {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key().to_bits().hash(state)
     }
 }
 
@@ -201,147 +207,260 @@ pub enum DurationParseError {
     Empty,
     InvalidNumber(String),
     UnknownUnit(String),
+    MissingUnit(String),
     Overflow,
 }
 
-impl std::fmt::Display for DurationParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for DurationParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DurationParseError::Empty => write!(f, "empty duration string"),
             DurationParseError::InvalidNumber(s) => write!(f, "invalid number: {s}"),
             DurationParseError::UnknownUnit(u) => write!(f, "unknown unit: {u}"),
+            DurationParseError::MissingUnit(n) => write!(f, "missing unit after {n}"),
             DurationParseError::Overflow => write!(f, "duration overflow"),
         }
     }
 }
+
 impl std::error::Error for DurationParseError {}
 
-impl std::fmt::Display for Duration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let sign = if self.0.is_sign_negative() { "-" } else { "" };
-        let t = self.0.abs();
+#[inline]
+fn split_whole_seconds(seconds: u64) -> [u64; 5] {
+    const YEAR: u64 = SEC_PER_YEAR as u64;
+    const DAY: u64 = SEC_PER_DAY as u64;
+    const HOUR: u64 = SEC_PER_HOUR as u64;
+    const MINUTE: u64 = SEC_PER_MIN as u64;
+    let (years, seconds) = (seconds / YEAR, seconds % YEAR);
+    let (days, seconds) = (seconds / DAY, seconds % DAY);
+    let (hours, seconds) = (seconds / HOUR, seconds % HOUR);
+    [years, days, hours, seconds / MINUTE, seconds % MINUTE]
+}
 
-        // Split into whole seconds and fractional seconds
-        let secs_f = t.trunc();
-        let frac = t.fract();
-
-        // Convert fractional seconds to milliseconds (round once)
-        let mut ms = (frac * 1e3).round() as u16;
-        let mut secs_int = secs_f as u128;
-        if ms == 1000 {
-            ms = 0;
-            secs_int = secs_int.saturating_add(1);
+fn write_parts(f: &mut fmt::Formatter<'_>, parts: &[(u64, &str)]) -> fmt::Result {
+    let mut separator = "";
+    for &(value, unit) in parts {
+        if value > 0 {
+            write!(f, "{separator}{value} {unit}")?;
+            separator = " ";
         }
-
-        // unit sizes (in seconds)
-        const SEC_PER_MIN: u128 = 60;
-        const SEC_PER_HOUR: u128 = 60 * SEC_PER_MIN;
-        const SEC_PER_DAY: u128 = 24 * SEC_PER_HOUR; // 86,400 s
-        const SEC_PER_YEAR: u128 = 31_557_600; // 365.25 d (Julian year)
-
-        // Decompose whole seconds
-        let y = secs_int / SEC_PER_YEAR;
-        secs_int %= SEC_PER_YEAR;
-        let days = secs_int / SEC_PER_DAY;
-        secs_int %= SEC_PER_DAY;
-        let hours = secs_int / SEC_PER_HOUR;
-        secs_int %= SEC_PER_HOUR;
-        let mins = secs_int / SEC_PER_MIN;
-        secs_int %= SEC_PER_MIN;
-        let secs = secs_int;
-
-        // Build output (skip zero units, show "0 ms" if everything is zero)
-        let mut parts = Vec::with_capacity(6);
-        if y > 0 {
-            parts.push(format!("{} y", y));
-        }
-        if days > 0 {
-            parts.push(format!("{} d", days));
-        }
-        if hours > 0 {
-            parts.push(format!("{} h", hours));
-        }
-        if mins > 0 {
-            parts.push(format!("{} m", mins));
-        }
-        if secs > 0 {
-            parts.push(format!("{} s", secs));
-        }
-        if ms > 0 {
-            parts.push(format!("{} ms", ms));
-        }
-        if parts.is_empty() {
-            parts.push("0 s".to_string());
-        }
-
-        write!(f, "{}{}", sign, parts.join(" "))
     }
+    Ok(())
+}
+
+impl Duration {
+    fn fmt_exact(self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sign = if self.0 < 0.0 { "-" } else { "" };
+        let seconds = self.0.abs();
+        let whole = seconds.trunc();
+        let Some(whole_seconds) = (whole < u64::MAX as f64).then_some(whole as u64) else {
+            return write!(f, "{sign}{seconds} s");
+        };
+        let [years, days, hours, minutes, rest] = split_whole_seconds(whole_seconds);
+        let parts = [(years, "y"), (days, "d"), (hours, "h"), (minutes, "m")];
+        let prefix = format!("{sign}{}", fmt::from_fn(|f| write_parts(f, &parts)));
+        let separator = if years + days + hours + minutes > 0 {
+            " "
+        } else {
+            ""
+        };
+        // Exact: less than a minute, with the resolution of `seconds`.
+        let rest = rest as f64 + (seconds - whole);
+        if rest == 0.0 && !separator.is_empty() {
+            return f.write_str(&prefix);
+        }
+        // The fewest decimals of the rest that parse back to this duration once added to the larger
+        // units. The shortest representation of the rest alone always does, as the rest is exact.
+        let with_rest = |rest: &str| format!("{prefix}{separator}{rest} s");
+        let text = (0..=17)
+            .map(|decimals| with_rest(&format!("{rest:.decimals$}")))
+            .find(|text| text.parse() == Ok(self))
+            .unwrap_or_else(|| with_rest(&rest.to_string()));
+        f.write_str(&text)
+    }
+
+    #[inline]
+    pub fn expanded(self) -> impl fmt::Display {
+        fmt::from_fn(move |f| self.fmt_rounded(f, false))
+    }
+
+    fn fmt_rounded(self, f: &mut fmt::Formatter<'_>, compact: bool) -> fmt::Result {
+        let milliseconds = (self.0.abs() * 1e3).round();
+        let sign = if self.0 < 0.0 && milliseconds > 0.0 {
+            "-"
+        } else {
+            ""
+        };
+        let Some(milliseconds) = (milliseconds < u64::MAX as f64).then_some(milliseconds as u64)
+        else {
+            return write!(f, "{sign}{:.3e} s", self.0.abs());
+        };
+        const DAY: u64 = SEC_PER_DAY as u64 * 1000;
+        const HOUR: u64 = SEC_PER_HOUR as u64 * 1000;
+        const MINUTE: u64 = SEC_PER_MIN as u64 * 1000;
+        let (days, rest) = (milliseconds / DAY, milliseconds % DAY);
+        let (hours, rest) = (rest / HOUR, rest % HOUR);
+        let (minutes, rest) = (rest / MINUTE, rest % MINUTE);
+        let (seconds, milliseconds) = (rest / 1000, rest % 1000);
+
+        f.write_str(sign)?;
+        let mut separator = None;
+        for (value, unit) in [(days, "d"), (hours, "h"), (minutes, "m")] {
+            match separator {
+                None if value > 0 => write!(f, "{value}{unit}")?,
+                Some(separator) if value > 0 || !compact => {
+                    write!(f, "{separator}{value:02}{unit}")?
+                }
+                _ => continue,
+            }
+            separator = Some(" ");
+        }
+        let separator = separator.unwrap_or("");
+        match (compact, seconds, milliseconds) {
+            (false, ..) => write!(f, "{separator}{seconds:02}.{milliseconds:03}s"),
+            (true, 0, 0) if !separator.is_empty() => Ok(()),
+            (true, _, 0) if separator.is_empty() => write!(f, "{seconds}s"),
+            (true, _, 0) => write!(f, " {seconds:02}s"),
+            (true, ..) if separator.is_empty() => write!(f, "{seconds}.{milliseconds:03}s"),
+            (true, ..) => write!(f, " {seconds:02}.{milliseconds:03}s"),
+        }
+    }
+}
+
+impl fmt::Display for Duration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            self.fmt_exact(f)
+        } else {
+            self.fmt_rounded(f, true)
+        }
+    }
+}
+
+fn parse_unit(unit: &str) -> Option<Unit> {
+    Some(match unit.to_lowercase().as_str() {
+        "y" | "yr" | "yrs" | "year" | "years" => Unit::Year,
+        "d" | "day" | "days" => Unit::Day,
+        "h" | "hr" | "hrs" | "hour" | "hours" => Unit::Hour,
+        "m" | "min" | "mins" | "minute" | "minutes" => Unit::Minute,
+        "s" | "sec" | "secs" | "second" | "seconds" => Unit::Second,
+        "ms" | "msec" | "msecs" | "millisecond" | "milliseconds" => Unit::Millisecond,
+        "us" | "µs" | "μs" | "usec" | "usecs" | "microsecond" | "microseconds" => {
+            Unit::Microsecond
+        }
+        "ns" | "nsec" | "nsecs" | "nanosecond" | "nanoseconds" => Unit::Nanosecond,
+        _ => return None,
+    })
 }
 
 impl std::str::FromStr for Duration {
     type Err = DurationParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let mut s = input.trim();
-        if s.is_empty() {
+        let input = input.trim();
+        let (negative, mut rest) = match input.strip_prefix('-') {
+            Some(rest) => (true, rest.trim_start()),
+            None => (false, input.strip_prefix('+').unwrap_or(input).trim_start()),
+        };
+        if rest.is_empty() {
             return Err(DurationParseError::Empty);
         }
 
-        // Leading sign applies to the whole value
-        let mut sign = 1.0f64;
-        if let Some(rest) = s.strip_prefix('+') {
-            s = rest.trim_start();
-        } else if let Some(rest) = s.strip_prefix('-') {
-            sign = -1.0;
-            s = rest.trim_start();
-        }
+        let mut whole: u128 = 0;
+        // The decimals of the seconds, parsed with the whole seconds as one number, so that a duration
+        // split into larger units (`1 m 0.3 s`) is the same as in seconds (`60.3 s`).
+        let mut decimals = None;
+        let mut fraction = 0.0;
+        let mut first = true;
+        while !rest.is_empty() {
+            let component = rest;
+            let token = || {
+                let token = component.split_whitespace().next().unwrap_or(component);
+                DurationParseError::InvalidNumber(token.to_string())
+            };
 
-        fn unit_to_ms(unit_raw: &str) -> Option<u128> {
-            // Normalize case and μ->µ
-            let mut u = unit_raw.trim().to_lowercase();
-            u = u.replace('μ', "µ"); // Greek mu -> MICRO SIGN (U+00B5)
-            match u.as_str() {
-                // years
-                "y" | "yr" | "yrs" | "year" | "years" => Some(MS_PER_YEAR as u128),
-                // days
-                "d" | "day" | "days" => Some(MS_PER_DAY as u128),
-                // hours
-                "h" | "hr" | "hrs" | "hour" | "hours" => Some(MS_PER_HOUR as u128),
-                // minutes
-                "m" | "min" | "mins" | "minute" | "minutes" => Some(MS_PER_MIN as u128),
-                // seconds
-                "s" | "sec" | "secs" | "second" | "seconds" => Some(MS_PER_SEC as u128),
-                // milliseconds
-                "ms" | "msec" | "msecs" | "millisecond" | "milliseconds" => Some(1),
-                _ => None,
+            let number_end = rest
+                .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .unwrap_or(rest.len());
+            let (number, tail) = rest.split_at(number_end);
+            let tail = tail.trim_start();
+            let unit_end = tail
+                .find(|c: char| !c.is_alphabetic())
+                .unwrap_or(tail.len());
+            let (unit, tail) = tail.split_at(unit_end);
+            rest = tail.trim_start();
+
+            if !number.bytes().any(|b| b.is_ascii_digit()) || number.matches('.').count() > 1 {
+                return Err(token());
+            }
+            let unit = match unit {
+                "" if first && rest.is_empty() => Unit::Second,
+                "" => return Err(DurationParseError::MissingUnit(number.to_string())),
+                unit => parse_unit(unit)
+                    .ok_or_else(|| DurationParseError::UnknownUnit(unit.to_string()))?,
+            };
+            first = false;
+
+            if let (Unit::Second, None, Some((integer, digits))) =
+                (unit, decimals, number.split_once('.'))
+                && let Ok(integer) = match integer {
+                    "" => Ok(0),
+                    integer => integer.parse::<u128>(),
+                }
+            {
+                whole = whole
+                    .checked_add(integer)
+                    .ok_or(DurationParseError::Overflow)?;
+                decimals = Some(digits);
+                continue;
+            }
+            match (unit.whole_seconds(), number.parse::<u128>()) {
+                (Some(scale), Ok(value)) => {
+                    whole = value
+                        .checked_mul(scale as u128)
+                        .and_then(|value| whole.checked_add(value))
+                        .ok_or(DurationParseError::Overflow)?;
+                }
+                (scale, _) => {
+                    let value: f64 = number.parse().map_err(|_| token())?;
+                    fraction += match scale {
+                        Some(scale) => value * scale as f64,
+                        None => value / unit.per_second(),
+                    };
+                }
             }
         }
 
-        let mut total_ms: u128 = 0;
-        for (num, unit) in s
-            .split_whitespace()
-            .zip(s.split_whitespace().skip(1))
-            .step_by(2)
-        {
-            // integers only; adjust if decimal per-unit magnitudes are needed
-            let value: u128 = num
-                .parse::<u128>()
-                .map_err(|_| DurationParseError::InvalidNumber(num.to_string()))?;
-
-            let scale_ms = unit_to_ms(unit)
-                .ok_or_else(|| DurationParseError::UnknownUnit(unit.to_string()))?;
-
-            let add = value
-                .checked_mul(scale_ms)
-                .ok_or(DurationParseError::Overflow)?;
-            total_ms = total_ms
-                .checked_add(add)
-                .ok_or(DurationParseError::Overflow)?;
+        let seconds = format!("{whole}.{}", decimals.unwrap_or_default())
+            .parse::<f64>()
+            .map_or(f64::INFINITY, |seconds| seconds + fraction);
+        if !seconds.is_finite() {
+            return Err(DurationParseError::Overflow);
         }
+        Ok(Duration(if negative { -seconds } else { seconds }))
+    }
+}
 
-        // Single conversion to f64 seconds at the end
-        let seconds = (total_ms as f64) * 1e-3;
-        // let seconds = 52944172.426;
-        Ok(Self(sign * seconds))
+#[cfg(feature = "serde")]
+impl serde::Serialize for Duration {
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_str(&format_args!("{self:#}"))
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Duration {
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }

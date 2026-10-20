@@ -30,6 +30,30 @@ pub enum Unit {
     Year,
 }
 
+impl Unit {
+    #[inline]
+    pub(crate) const fn whole_seconds(self) -> Option<u64> {
+        match self {
+            Unit::Second => Some(1),
+            Unit::Minute => Some(SEC_PER_MIN as u64),
+            Unit::Hour => Some(SEC_PER_HOUR as u64),
+            Unit::Day => Some(SEC_PER_DAY as u64),
+            Unit::Year => Some(SEC_PER_YEAR as u64),
+            Unit::Nanosecond | Unit::Microsecond | Unit::Millisecond => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn per_second(self) -> f64 {
+        match self {
+            Unit::Nanosecond => 1e9,
+            Unit::Microsecond => 1e6,
+            Unit::Millisecond => 1e3,
+            _ => 1.0,
+        }
+    }
+}
+
 impl std::ops::Mul<f64> for Unit {
     type Output = Duration;
 

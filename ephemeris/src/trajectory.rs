@@ -478,9 +478,10 @@ where
     }
 }
 
+pub type Knot<V> = (Epoch, KinematicState<V>);
+
 #[derive(Clone, Copy, Debug)]
-pub struct QuinticHermiteSegment<V> {
-    bounds: (f64, f64),
+pub struct QuinticHermitePolynomial<V> {
     a0: V,
     a1: V,
     a2: V,
@@ -489,24 +490,15 @@ pub struct QuinticHermiteSegment<V> {
     a5: V,
 }
 
-impl<V> QuinticHermiteSegment<V> {
+impl<V> QuinticHermitePolynomial<V> {
     #[inline]
-    pub fn new(t1: Epoch, s1: KinematicState<V>, t2: Epoch, s2: KinematicState<V>) -> Self
+    pub fn new(s1: KinematicState<V>, s2: KinematicState<V>, dt: f64) -> Self
     where
-        V: std::ops::Add<Output = V>
-            + std::ops::Sub<Output = V>
-            + std::ops::Mul<f64, Output = V>
-            + PartialEq
-            + Default
-            + Copy,
+        V: Add<Output = V> + Sub<Output = V> + Mul<f64, Output = V> + PartialEq + Default + Copy,
     {
-        debug_assert!(t1 <= t2, "segment start {t1} is after its end {t2}");
-
-        let bounds = (t1.as_offset_seconds(), t2.as_offset_seconds());
         let a0 = s1.position;
         let a1 = s1.velocity;
         let a2 = s1.acceleration * 0.5;
-        let dt = bounds.1 - bounds.0;
 
         let (a3, a4, a5) = if dt == 0.0
             && s1.position == s2.position
@@ -535,7 +527,6 @@ impl<V> QuinticHermiteSegment<V> {
         };
 
         Self {
-            bounds,
             a0,
             a1,
             a2,
@@ -546,14 +537,73 @@ impl<V> QuinticHermiteSegment<V> {
     }
 
     #[inline]
+    pub fn position(&self, dt: f64) -> V
+    where
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
+    {
+        (((((self.a5 * dt + self.a4) * dt) + self.a3) * dt + self.a2) * dt + self.a1) * dt + self.a0
+    }
+
+    #[inline]
+    pub fn velocity(&self, dt: f64) -> V
+    where
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
+    {
+        ((((self.a5 * dt * 5.0 + self.a4 * 4.0) * dt) + self.a3 * 3.0) * dt + self.a2 * 2.0) * dt
+            + self.a1
+    }
+
+    #[inline]
+    pub fn acceleration(&self, dt: f64) -> V
+    where
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
+    {
+        (((self.a5 * dt * 20.0 + self.a4 * 12.0) * dt) + self.a3 * 6.0) * dt + self.a2 * 2.0
+    }
+
+    #[inline]
+    pub fn state_vector(&self, dt: f64) -> StateVector<V>
+    where
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
+    {
+        StateVector::new(self.position(dt), self.velocity(dt))
+    }
+
+    #[inline]
+    pub fn kinematic_state(&self, dt: f64) -> KinematicState<V>
+    where
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
+    {
+        KinematicState::new(self.position(dt), self.velocity(dt), self.acceleration(dt))
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct QuinticHermiteSegment<V> {
+    start: Epoch,
+    end: Epoch,
+    polynomial: QuinticHermitePolynomial<V>,
+}
+
+impl<V> QuinticHermiteSegment<V> {
+    #[inline]
+    pub fn new(t1: Epoch, s1: KinematicState<V>, t2: Epoch, s2: KinematicState<V>) -> Self
+    where
+        V: Add<Output = V> + Sub<Output = V> + Mul<f64, Output = V> + PartialEq + Default + Copy,
+    {
+        debug_assert!(t1 <= t2, "segment start {t1} is after its end {t2}");
+
+        Self {
+            start: t1,
+            end: t2,
+            polynomial: QuinticHermitePolynomial::new(s1, s2, (t2 - t1).as_seconds()),
+        }
+    }
+
+    #[inline]
     pub fn new_unordered(t1: Epoch, s1: KinematicState<V>, t2: Epoch, s2: KinematicState<V>) -> Self
     where
-        V: std::ops::Add<Output = V>
-            + std::ops::Sub<Output = V>
-            + std::ops::Mul<f64, Output = V>
-            + PartialEq
-            + Default
-            + Copy,
+        V: Add<Output = V> + Sub<Output = V> + Mul<f64, Output = V> + PartialEq + Default + Copy,
     {
         if t1 <= t2 {
             Self::new(t1, s1, t2, s2)
@@ -563,76 +613,48 @@ impl<V> QuinticHermiteSegment<V> {
     }
 
     #[inline]
-    fn eval(&self, t: f64) -> V
-    where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
-    {
-        let dt = t - self.bounds.0;
-        (((((self.a5 * dt + self.a4) * dt) + self.a3) * dt + self.a2) * dt + self.a1) * dt + self.a0
+    pub fn polynomial(&self) -> &QuinticHermitePolynomial<V> {
+        &self.polynomial
     }
 
     #[inline]
-    fn eval_derivative(&self, t: f64) -> V
-    where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
-    {
-        let dt = t - self.bounds.0;
-        ((((self.a5 * dt * 5.0 + self.a4 * 4.0) * dt) + self.a3 * 3.0) * dt + self.a2 * 2.0) * dt
-            + self.a1
+    pub fn offset(&self, at: Epoch) -> f64 {
+        (at - self.start).as_seconds()
     }
 
-    #[inline]
-    fn eval_second_derivative(&self, t: f64) -> V
-    where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
-    {
-        let dt = t - self.bounds.0;
-        (((self.a5 * dt * 20.0 + self.a4 * 12.0) * dt) + self.a3 * 6.0) * dt + self.a2 * 2.0
-    }
-
-    /// The acceleration at `at`, if the segment contains it.
     #[inline]
     pub fn acceleration(&self, at: Epoch) -> Option<V>
     where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
     {
         self.contains(at)
-            .then(|| self.eval_second_derivative(at.as_offset_seconds()))
+            .then(|| self.polynomial.acceleration(self.offset(at)))
     }
 
-    /// The position, velocity and acceleration at `at`, if the segment contains it.
     #[inline]
     pub fn kinematic_state(&self, at: Epoch) -> Option<KinematicState<V>>
     where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
     {
-        self.contains(at).then(|| {
-            let t = at.as_offset_seconds();
-            KinematicState::new(
-                self.eval(t),
-                self.eval_derivative(t),
-                self.eval_second_derivative(t),
-            )
-        })
+        self.contains(at)
+            .then(|| self.polynomial.kinematic_state(self.offset(at)))
     }
 }
 
 impl<V> BoundedTrajectory for QuinticHermiteSegment<V> {
     #[inline]
     fn start(&self) -> Epoch {
-        Epoch::from_offset_seconds(self.bounds.0)
+        self.start
     }
 
     #[inline]
     fn end(&self) -> Epoch {
-        Epoch::from_offset_seconds(self.bounds.1)
+        self.end
     }
 
     #[inline]
     fn contains(&self, time: Epoch) -> bool {
-        let t = time.as_offset_seconds();
-        let (start, end) = self.bounds;
-        t == start || (start < t && t < end)
+        time == self.start || (self.start < time && time < self.end)
     }
 
     #[inline]
@@ -643,69 +665,69 @@ impl<V> BoundedTrajectory for QuinticHermiteSegment<V> {
 
 impl<V> EvaluateTrajectory for QuinticHermiteSegment<V>
 where
-    V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    V: Add<Output = V> + Mul<f64, Output = V> + Copy,
 {
     type Vector = V;
 
     #[inline]
     fn position(&self, at: Epoch) -> Option<V> {
-        self.contains(at).then(|| self.eval(at.as_offset_seconds()))
+        self.contains(at)
+            .then(|| self.polynomial.position(self.offset(at)))
     }
 
     #[inline]
     fn state_vector(&self, at: Epoch) -> Option<StateVector<V>> {
-        let t = at.as_offset_seconds();
         self.contains(at)
-            .then(|| StateVector::new(self.eval(t), self.eval_derivative(t)))
+            .then(|| self.polynomial.state_vector(self.offset(at)))
     }
 }
 
-// A segment alone excludes its end (it belongs to the next segment of a spline).
+/// A segment including its end knot.
 #[derive(Clone, Copy, Debug)]
 pub struct ClosedQuinticHermiteSegment<V> {
     segment: QuinticHermiteSegment<V>,
-    end: (Epoch, KinematicState<V>),
+    end: KinematicState<V>,
 }
 
 impl<V> ClosedQuinticHermiteSegment<V> {
     #[inline]
     pub fn new(t1: Epoch, s1: KinematicState<V>, t2: Epoch, s2: KinematicState<V>) -> Self
     where
-        V: std::ops::Add<Output = V>
-            + std::ops::Sub<Output = V>
-            + std::ops::Mul<f64, Output = V>
-            + PartialEq
-            + Default
-            + Copy,
+        V: Add<Output = V> + Sub<Output = V> + Mul<f64, Output = V> + PartialEq + Default + Copy,
     {
         Self {
             segment: QuinticHermiteSegment::new(t1, s1, t2, s2),
-            end: (t2, s2),
+            end: s2,
         }
+    }
+
+    #[inline]
+    fn offset(&self, at: Epoch) -> Option<f64> {
+        (at != self.segment.end && self.contains(at)).then(|| self.segment.offset(at))
     }
 
     #[inline]
     pub fn acceleration(&self, at: Epoch) -> Option<V>
     where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
     {
-        if at == self.end.0 {
-            Some(self.end.1.acceleration)
-        } else {
-            self.segment.acceleration(at)
+        if at == self.segment.end {
+            return Some(self.end.acceleration);
         }
+        let dt = self.offset(at)?;
+        Some(self.segment.polynomial.acceleration(dt))
     }
 
     #[inline]
     pub fn kinematic_state(&self, at: Epoch) -> Option<KinematicState<V>>
     where
-        V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+        V: Add<Output = V> + Mul<f64, Output = V> + Copy,
     {
-        if at == self.end.0 {
-            Some(self.end.1)
-        } else {
-            self.segment.kinematic_state(at)
+        if at == self.segment.end {
+            return Some(self.end);
         }
+        let dt = self.offset(at)?;
+        Some(self.segment.polynomial.kinematic_state(dt))
     }
 }
 
@@ -717,7 +739,7 @@ impl<V> BoundedTrajectory for ClosedQuinticHermiteSegment<V> {
 
     #[inline]
     fn end(&self) -> Epoch {
-        self.end.0
+        self.segment.end
     }
 
     #[inline]
@@ -728,30 +750,28 @@ impl<V> BoundedTrajectory for ClosedQuinticHermiteSegment<V> {
 
 impl<V> EvaluateTrajectory for ClosedQuinticHermiteSegment<V>
 where
-    V: std::ops::Add<Output = V> + std::ops::Mul<f64, Output = V> + Copy,
+    V: Add<Output = V> + Mul<f64, Output = V> + Copy,
 {
     type Vector = V;
 
     #[inline]
     fn position(&self, at: Epoch) -> Option<V> {
-        if at == self.end.0 {
-            Some(self.end.1.position)
-        } else {
-            self.segment.position(at)
+        if at == self.segment.end {
+            return Some(self.end.position);
         }
+        let dt = self.offset(at)?;
+        Some(self.segment.polynomial.position(dt))
     }
 
     #[inline]
     fn state_vector(&self, at: Epoch) -> Option<StateVector<V>> {
-        if at == self.end.0 {
-            Some(self.end.1.into())
-        } else {
-            self.segment.state_vector(at)
+        if at == self.segment.end {
+            return Some(self.end.into());
         }
+        let dt = self.offset(at)?;
+        Some(self.segment.polynomial.state_vector(dt))
     }
 }
-
-pub type Knot<V> = (Epoch, KinematicState<V>);
 
 #[derive(Clone, Debug)]
 pub struct QuinticHermiteSpline<V> {
@@ -914,7 +934,6 @@ impl<V> QuinticHermiteSpline<V> {
         let change_at_start = self.knots.get(i + 1).is_some_and(|(t, _)| *t == start);
         self.knots.truncate(i + usize::from(change_at_start));
         self.knots.extend(other.knots);
-        // A single knot after a change leaves the change at the end.
         self.remove_change_at_end();
     }
 
